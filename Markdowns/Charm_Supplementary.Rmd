@@ -1,0 +1,187 @@
+---
+title: "CHARM: Data Processing"
+subtitle: "Comprehensive Hub for Alternative Regulatory Mapping"
+author: 
+  - name: "Alexandre Kaizeler^[Disease Transcriptomics Group, Gulbenkian Institute of Molecular Medicine]"
+    email: alexandreafonso@gimm.pt
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: 
+  rmdformats::downcute:
+    downcute_theme: "chaos"
+---
+
+# General
+
+## Import libraries
+
+```{r libraries, echo=FALSE}
+# These are all the libraries I used throughout the analysis. Not all of them will be required on this guidebook
+library(Rsubread)
+library(limma)
+library(edgeR)
+library(DESeq2)
+library(magrittr)
+library(ggrepel)
+library(tidyverse)
+library(vsn)
+library(ggplot2)
+library(NMF)
+library(biomaRt)
+library(ggpubr)
+library(factoextra)
+library(ggfortify)
+library(plotly)
+library(reshape2)
+library(fgsea)
+library(msigdbr)
+library(data.table)
+library(colorspace)
+library(readxl)
+library(fs)
+
+set.seed(1906)
+```
+
+# A. Data Processing 
+
+*Date: August 19th 2025*
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Setup
+
+### Import data
+
+To create the R object that we will use for CHARM, we need three data types:
+
+Expression: Differential expression upon RBP knockdown/knockout, with pathway-level insights from Gene Set Enrichment Analysis.
+
+Splicing: Alternative splicing changes quantified with betAS (Ferreira et al., 2024), using VastDB nomenclature (Tapial et al., 2017).
+
+Binding: Altered RNA binding patterns of the silenced RBP and other RBPs, characterized with the eCLIPSE tool.
+
+#### Expression
+
+Preparation of the read count table, of K562 and HEPG2 cells exposed to knockdown/knockout of RBP and their respective control. All of these samples were obtained from the ENCODE project (Luo et al., 2020), and processed through the vast-tools pipeline (Tapial et al., 2017). As such, the raw fastq samples obtained from ENCODE were aligned with Bowtie.
+
+```{r}
+#All of these different raw counts were obtained on an RBP by RBP basis. They are separated by folders. First I will create a list with all of this information.
+#By nature, Bowtie also gives us FPKM. I will focus on Counts, and so will remove all unnecessary information. For rows with the same gene names, I simply merge the counts together.
+#You will notice the function has some failsafe parts to note errors where there was some human error on my part. 
+#In theory, this should be fine now.
+
+build_rawcounts_list <- function(
+  base_path = "~/Projects/StressGranules/AS.WC_Transcriptome/shRNAExp"
+) {
+  base_path <- fs::path_expand(base_path)
+
+  subdirs <- fs::dir_ls(base_path, type = "directory", recurse = FALSE)
+  folder_names <- fs::path_file(subdirs)
+
+  out <- setNames(
+    lapply(folder_names, function(folder) {
+      vast_dir <- fs::path(base_path, folder, "TrimmedSamples", "vast_out")
+      if (!fs::dir_exists(vast_dir)) {
+        message("Missing directory: ", vast_dir)
+        return(list(rawcounts = NULL))
+      }
+
+      matches <- fs::dir_ls(vast_dir, type = "file", regexp = "cRPKM_AND_COUNTS")
+      if (length(matches) == 0) {
+        message("No 'cRPKM_AND_COUNTS' file in: ", vast_dir)
+        return(list(rawcounts = NULL))
+      }
+      if (length(matches) > 1) {
+        info <- fs::file_info(matches)
+        matches <- matches[order(info$modification_time, decreasing = TRUE)]
+        message("Multiple matches in ", vast_dir, "; using latest: ", fs::path_file(matches[1]))
+      }
+
+      dt <- data.table::fread(matches[1])
+
+      # --- 1) Drop columns named exactly "ID" or containing "RPKM"
+      cols_to_drop <- grep("^ID$|RPKM", names(dt), value = TRUE)
+      if (length(cols_to_drop) > 0) {
+        dt[, (cols_to_drop) := NULL]
+      }
+
+      # --- 2) Normalise "Name" column casing and aggregate duplicates (NA -> 0)
+      name_idx <- which(tolower(names(dt)) == "name")
+      if (length(name_idx) == 1L) {
+        setnames(dt, name_idx, "Name")
+      }
+      if ("Name" %in% names(dt)) {
+        num_cols <- names(dt)[vapply(dt, is.numeric, logical(1))]
+        dt <- dt[, lapply(.SD, function(x) sum(x, na.rm = TRUE)), by = Name, .SDcols = num_cols]
+      }
+
+      # --- 3) Flag columns that CONTAIN a digits_digits substring anywhere (e.g. "1_1")
+      suspicious_cols <- grep("\\d+_\\d+", names(dt), value = TRUE)
+      if (length(suspicious_cols) > 0) {
+        message("⚠️ Folder ", folder, " has columns with integer_integer substrings: ",
+                paste(suspicious_cols, collapse = ", "))
+      }
+
+      list(rawcounts = dt)
+    }),
+    folder_names
+  )
+
+  out
+}
+
+# Run
+#This creates the CharmObj
+CharmObj <- build_rawcounts_list()
+
+```
+##### Single Charm
+
+In this version, every RBP is processed sepparetely, as if they were their own expression/tissue.
+
+```{r}
+densityforfilter <- function(charmobj, rbp){
+  RBP_rawcounts <- charmobj[[rbp]]$rawcounts
+  alternew <- log10(rowSums(RBP_rawcounts[,-1]))
+  alternew <- data.frame(Reads = alternew)  # rename column for clarity
+  
+  densyplot <- ggplot(alternew, aes(x = Reads)) + 
+    geom_density() + 
+    theme_bw() + 
+    geom_vline(xintercept = 4, linetype = "dashed") + 
+    ylab("Events") + 
+    xlab("Number of Reads (log10)") +
+    theme(
+      axis.line = element_line(colour = "black"),
+      panel.grid.minor = element_blank(),
+      panel.border = element_blank(),
+      panel.background = element_blank()
+    ) + 
+    ggtitle(paste("Density of Reads -", rbp))
+
+  return(densyplot)
+}
+
+# Collect all plots in a list
+plt_list <- list()
+for (rbp in names(CharmObj)){
+  plt_list[[rbp]] <- densityforfilter(CharmObj, rbp)
+}
+
+# Decide on number of columns
+ncol_plot <- 8   # you can adjust
+nrow_plot <- ceiling(length(plt_list)/ncol_plot)
+
+# Arrange all plots in a single grid
+grid.arrange(
+  grobs = plt_list,
+  ncol = ncol_plot,
+  nrow = nrow_plot,
+  left = textGrob("Frequency", gp = gpar(fontsize=20), rot = 90),
+  bottom = textGrob("Number of Reads (log10)", gp = gpar(fontsize=20)),
+  top = textGrob("Density of Reads - All RBPs", gp = gpar(fontsize=25, fontface="bold"))
+)
+```
+
