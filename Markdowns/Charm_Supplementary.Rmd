@@ -134,54 +134,866 @@ build_rawcounts_list <- function(
 
 # Run
 #This creates the CharmObj
-CharmObj <- build_rawcounts_list()
+CharmObj_rbp <- build_rawcounts_list()
 
 ```
-##### Single Charm
+
+#### Metadata
+
+```{r}
+add_metadata <- function(obj) {
+  lapply(names(obj), function(folder) {
+    rc <- obj[[folder]]$rawcounts
+    
+    if (is.null(rc)) {
+      return(list(rawcounts = NULL, SampleType = NULL, Cell = NULL, Experiment = NULL))
+    }
+    
+    cols <- names(rc)[-1]  # drop first column (Name)
+    
+    # SampleType
+    sample_type <- vapply(cols, function(col) {
+      if (grepl("control", col, ignore.case = TRUE)) {
+        "Control"
+      } else if (grepl("shrna", col, ignore.case = TRUE)) {
+        folder
+      } else {
+        NA_character_
+      }
+    }, character(1))
+    
+    # Cell type
+    cell <- vapply(cols, function(col) {
+      if (grepl("K562", col, ignore.case = TRUE)) {
+        "K562"
+      } else if (grepl("HEPG2", col, ignore.case = TRUE)) {
+        "HEPG2"
+      } else {
+        NA_character_
+      }
+    }, character(1))
+    
+    # Experiment: just the folder name repeated for all columns
+    experiment <- rep(folder, length(cols))
+    
+    list(
+      rawcounts  = rc,
+      SampleType = sample_type,
+      Cell       = cell,
+      Experiment = experiment
+    )
+  }) |> setNames(names(obj))
+}
+
+# ---- Apply to your CharmObj ----
+CharmObj_rbp <- add_metadata(CharmObj_rbp)
+
+```
+
+#### Create CHARM Object
+
+```{r}
+collapse_charmobj <- function(obj) {
+  expr_list       <- list()
+  sampletype_list <- list()
+  cell_list       <- list()
+  experiment_list <- list()  # NEW
+
+  for (folder in names(obj)) {
+    rc <- obj[[folder]]$rawcounts
+    if (is.null(rc)) next
+
+    # normalize 'Name' column casing
+    name_idx <- which(tolower(names(rc)) == "name")
+    if (length(name_idx) == 1L) setnames(rc, name_idx, "Name")
+
+    # new column names: just add _folder for uniqueness
+    orig_cols <- names(rc)[-1]
+    new_cols  <- paste0(orig_cols, "_", folder)
+    setnames(rc, c("Name", new_cols))
+
+    expr_list[[folder]]       <- rc
+    sampletype_list[[folder]] <- obj[[folder]]$SampleType
+    cell_list[[folder]]       <- obj[[folder]]$Cell
+    experiment_list[[folder]] <- obj[[folder]]$Experiment  # NEW
+  }
+
+  if (!length(expr_list)) {
+    return(list(rawcounts = NULL, SampleType = NULL, Cell = NULL, Experiment = NULL))
+  }
+
+  # merge expression tables by Name
+  rawcounts <- Reduce(
+    function(x, y) merge(x, y, by = "Name", all = TRUE, sort = FALSE),
+    expr_list
+  )
+  setDT(rawcounts)
+
+  # concatenate metadata across all folders
+  SampleType <- unlist(sampletype_list, use.names = FALSE)
+  Cell       <- unlist(cell_list,       use.names = FALSE)
+  Experiment <- unlist(experiment_list, use.names = FALSE)  # NEW
+
+  stopifnot(length(SampleType) == ncol(rawcounts) - 1L,
+            length(Cell)       == ncol(rawcounts) - 1L,
+            length(Experiment) == ncol(rawcounts) - 1L)  # NEW
+
+  list(
+    rawcounts  = rawcounts,
+    SampleType = SampleType,
+    Cell       = Cell,
+    Experiment = Experiment  # NEW
+  )
+}
+
+# ---- Run it ----
+Charm.object <- collapse_charmobj(CharmObj_rbp)
+
+Charm.object$rawcounts <- as.data.frame(Charm.object$rawcounts)
+row.names(Charm.object$rawcounts) <- Charm.object$rawcounts$Name
+Charm.object$rawcounts$Name <- NULL
+
+```
+
+
+#### Filtration (Density Plot)
 
 In this version, every RBP is processed sepparetely, as if they were their own expression/tissue.
 
 ```{r}
-densityforfilter <- function(charmobj, rbp){
-  RBP_rawcounts <- charmobj[[rbp]]$rawcounts
-  alternew <- log10(rowSums(RBP_rawcounts[,-1]))
-  alternew <- data.frame(Reads = alternew)  # rename column for clarity
+alternew <- log10(rowSums(Charm.object$rawcounts))
+alternew <- as.data.frame(alternew)
+
+ggplot(alternew, aes(x=alternew)) + geom_density() + theme_bw() + geom_vline(xintercept = 5, linetype = "dashed") + ylab("Events") + xlab("Number of Reads (log10)") +
+  theme(axis.line = element_line(colour = "black"),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank()) + ggtitle("Density of Reads - All Samples")
+
+filterednew <- subset(Charm.object$rawcounts, alternew>5)
+
+
+#after cutting, its a good idea to visualize again
+falternew <- log10(rowSums(filterednew))
+falternew <- as.data.frame(falternew)
+ggplot(falternew, aes(x=falternew)) + geom_density() + theme_bw() + ylab("Events") + xlab("Number of Reads (log10)") +
+  theme(axis.line = element_line(colour = "black"),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank())
+
+#lets save the genes which we maintain
+impgenes <- c(row.names(falternew))
+
+
+#Now we need to select only the rows which have those genes.
+Charm.object$filtcounts <- Charm.object$rawcounts[row.names(Charm.object$rawcounts)%in%impgenes,]
+```
+
+
+
+#### Matrix Design
+
+Good! Now we can proceed by designing our matrices. 
+
+```{r}
+#To be able to use Voom, we must first convert our read count table into a special DGE object.
+D0 <- DGEList(Charm.object$filtcounts)
+
+
+#Then we calculate the normalisation factors for these new generated data frames
+#Bear in mind this step calculates the normalisation factors, but does not normalise itself.
+D0 <- calcNormFactors(D0)
+
+metadata <- data.frame(Sample=Charm.object$SampleType, Cell=Charm.object$Cell, Experiment=Charm.object$Experiment)
+
+
+#Now we do the matrixes
+mm <- model.matrix(~0+Sample+Cell+Experiment, metadata)
+
+
+#and now we normalise. This step also turns our counts into log2-counts per million.
+y <- voom(D0, mm, plot = T)
+Charm.object$normcounts <- as.data.frame(y$E)
+```
+
+#### Normalisation
+
+Now, we are almost ready to move on to the differential gene expression analysis. I will first check to see if any issues arose during the normalisation process, by looking at samples before and after this process.
+
+```{r}
+
+# Function to filter top 10 and bottom 10 samples
+select_extreme_samples <- function(counts_matrix) {
+  # Compute total reads per sample
+  sample_sums <- colSums(counts_matrix)
+
+  # Select 10 highest and 10 lowest
+  selected_samples <- c(
+    names(sort(sample_sums, decreasing = TRUE)[1:10]),
+    names(sort(sample_sums, decreasing = FALSE)[1:10])
+  )
+
+  # Subset counts matrix
+  counts_matrix[, selected_samples, drop = FALSE]
+}
+
+# ----------------------------
+# Prior to Normalisation
+# ----------------------------
+dfforboxy <- Charm.object$filtcounts
+dfforboxy <- select_extreme_samples(dfforboxy)
+
+dfforboxy <- reshape2::melt(dfforboxy)
+colnames(dfforboxy) <- c("Sample", "Expression")
+
+prenorm <- ggplot(dfforboxy, aes(x = Sample, y = log2(Expression + 1))) +
+  geom_boxplot(alpha = 0.6) +
+  theme_bw() +
+  ylab("Read Counts (Log2)") +
+  xlab("Samples") +
+  theme(
+    axis.line = element_line(colour = "black"),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    legend.position = "None"
+  ) +
+  ggtitle("Prior to Normalisation")
+
+# ----------------------------
+# After Normalisation
+# ----------------------------
+dfforboxy <- Charm.object$normcounts
+dfforboxy <- select_extreme_samples(dfforboxy)
+
+dfforboxy <- reshape2::melt(dfforboxy)
+colnames(dfforboxy) <- c("Sample", "Expression")
+
+
+postnorm <- ggplot(dfforboxy, aes(x = Sample, y = Expression)) +
+  geom_boxplot(alpha = 0.6) +
+  theme_bw() +
+  ylab("Read Counts (Log2CPM)") +
+  xlab("Samples") +
+  theme(
+    axis.line = element_line(colour = "black"),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    legend.position = "None"
+  ) +
+  ggtitle("After Normalisation")
+
+ggarrange(prenorm, postnorm, nrow = 1)
+```
+
+Normalisation isn't ideal, but it isn't too bad either.
+
+#### Batch Correction
+
+As an extra layer, we can also consider "cell type" as a batch factor. Here is the process I used to do so. For more information, please consult Schneider et al (voyAGEr).
+
+```{r}
+batch_cols <- c("Cell","Experiment")
+metadata_cols <- c("Sample")
+mmbatch <- model.matrix(reformulate(paste0("~0 + ",paste0( batch_cols,collapse = " + "))), data=metadata)
+mmkeep <- model.matrix(reformulate(paste0("~0 + ",paste0( metadata_cols,collapse =  "+" ))), data=metadata)
+mm <- cbind(mmkeep,mmbatch)
+D0 <- DGEList(2^y$E) 
+D0 <- calcNormFactors(D0)
+y <- voom(D0, mm, plot = F)
+fit <- lmFit(y, mm)
+beta <- fit$coefficients[,-(1:ncol(mmkeep)),drop=FALSE]
+beta[is.na(beta)] <- 0
+corrcounts_v1 <- as.matrix(y$E) - beta %*% t(mmbatch)
+offset <- apply(corrcounts_v1,1,min) - apply(y$E,1,min)
+corrcounts_v1 <- as.data.frame(corrcounts_v1-offset)
+corrcounts_v1 <- 2^corrcounts_v1
+
+mm <- model.matrix(~0+Sample, metadata)
+
+y <- voom(corrcounts_v1, mm, plot = T)
+Charm.object$corcounts <- as.data.frame(y$E)
+
+saveRDS(Charm.object, "../Data_Objects/Charm.object.RDS")
+```
+
+#### Data Exploration (PCA) Part 1
+
+I will be using PCA to find out what most influences the expression.
+
+##### PCA without Batch Correction, All Samples
+
+```{r fig.height=4, fig.width=12}
+#This prepares my data for the PCA
+dfforpca <- Charm.object$normcounts
+dfforpca <- t(dfforpca)
+dfforpca <- as.data.frame(dfforpca) # needs to be a data.frame
+dfforpca <- apply(dfforpca, 2, as.numeric) # Ensure numeric
+dfforpca <- as.data.frame(dfforpca) # still needs to be a data.frame
+
+# Add metadata, which we will then use to plot
+dfforpca$Sample <- Charm.object$SampleType
+dfforpca$Cell <- Charm.object$Cell
+
+dfforpca$Sample <- ifelse(dfforpca$Sample == "Control", "Control", "Other")
+
+# PCA computation itself. I do one PCA for each variable I want to see.
+pca_res <- prcomp(dfforpca[, 1:(ncol(dfforpca)-2)], scale = FALSE)
+p_sample<- autoplot(pca_res, data = dfforpca, x = 1, y = 2, colour = "Sample",  size = 4, alpha=0.6) +
+  theme_bw() +
+  scale_colour_manual(name = "Sample", values = c("#7272AB", "#283D3B")) +
+  ggtitle("PCA - Coloured by Sample") +
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.line = element_line(colour = "black"),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank())
+
+p_cell <- autoplot(pca_res, data = dfforpca, x = 1, y = 2, colour = "Cell", size = 4, alpha=0.6) +
+  theme_bw() +
+  scale_colour_manual(name = "Cell", values = c("#80B192", "#8E4A49")) +
+  ggtitle("PCA - Coloured by Cell") +
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.line = element_line(colour = "black"),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank())
+
+ggarrange(p_cell, p_sample)
+
+#in case you want to see most important genes for PCA yourself
+contribs1 <- pca_res$rotation[,1]
+contribs2 <- pca_res$rotation[,2]
+
+#These are the biggest contributors to the PCA1 (right side)
+(pos1genes <- sort(contribs1, decreasing=T)[1:10])
+#These are the biggest contributors to the PCA1 (left side)
+(neg1genes <- sort(contribs1, decreasing=F)[1:10])
+
+#These are the biggest contributors to the PCA2 (up side)
+(pos2genes <- sort(contribs2, decreasing=T)[1:10])
+#These are the biggest contributors to the PCA2 (down side)
+(neg2genes <- sort(contribs2, decreasing=F)[1:10])
+
+```
+
+
+##### PCA without Batch Correction, Separated Cells
+
+```{r fig.height=4, fig.width=12}
+#---------------------------------------
+# Function to run PCA and plot for a given cell type
+#---------------------------------------
+plot_pca_by_cell <- function(Charm.object, cell_type, control_color = "#7272AB", other_color = "#283D3B") {
   
-  densyplot <- ggplot(alternew, aes(x = Reads)) + 
-    geom_density() + 
-    theme_bw() + 
-    geom_vline(xintercept = 4, linetype = "dashed") + 
-    ylab("Events") + 
-    xlab("Number of Reads (log10)") +
+  # Prepare the data
+  dfforpca <- Charm.object$normcounts
+  dfforpca <- t(dfforpca)
+  dfforpca <- as.data.frame(dfforpca)
+  dfforpca <- apply(dfforpca, 2, as.numeric)
+  dfforpca <- as.data.frame(dfforpca)
+  
+  # Add metadata
+  dfforpca$Sample <- Charm.object$SampleType
+  dfforpca$Cell <- Charm.object$Cell
+  
+  # Subset to the requested cell type
+  dfforpca <- dfforpca[dfforpca$Cell == cell_type, ]
+  
+  # Highlight Control vs Other
+  dfforpca$Sample <- ifelse(dfforpca$Sample == "Control", "Control", "Other")
+  
+  # PCA computation
+  pca_res <- prcomp(dfforpca[, 1:(ncol(dfforpca)-2)], scale = FALSE)
+  
+  # PCA plot
+  p_sample <- autoplot(pca_res, data = dfforpca, x = 1, y = 2, colour = "Sample", size = 4, alpha = 0.6) +
+    theme_bw() +
+    scale_colour_manual(name = "Sample", values = c("Control" = control_color, "Other" = other_color)) +
+    ggtitle(paste("PCA - Coloured by Sample (", cell_type, ")", sep = "")) +
     theme(
+      plot.title = element_text(hjust = 0.5),
       axis.line = element_line(colour = "black"),
       panel.grid.minor = element_blank(),
       panel.border = element_blank(),
       panel.background = element_blank()
-    ) + 
-    ggtitle(paste("Density of Reads -", rbp))
-
-  return(densyplot)
+    )
+  
+  # Optional: check most important genes
+  contribs1 <- pca_res$rotation[,1]
+  contribs2 <- pca_res$rotation[,2]
+  
+  pos1genes <- sort(contribs1, decreasing = TRUE)[1:10]
+  neg1genes <- sort(contribs1, decreasing = FALSE)[1:10]
+  pos2genes <- sort(contribs2, decreasing = TRUE)[1:10]
+  neg2genes <- sort(contribs2, decreasing = FALSE)[1:10]
+  
+  list(plot = p_sample, pos1genes = pos1genes, neg1genes = neg1genes,
+       pos2genes = pos2genes, neg2genes = neg2genes)
 }
 
-# Collect all plots in a list
-plt_list <- list()
-for (rbp in names(CharmObj)){
-  plt_list[[rbp]] <- densityforfilter(CharmObj, rbp)
-}
+#---------------------------------------
+# Run for HEPG2
+#---------------------------------------
+hepg2_results <- plot_pca_by_cell(Charm.object, "HEPG2")
 
-# Decide on number of columns
-ncol_plot <- 8   # you can adjust
-nrow_plot <- ceiling(length(plt_list)/ncol_plot)
 
-# Arrange all plots in a single grid
-grid.arrange(
-  grobs = plt_list,
-  ncol = ncol_plot,
-  nrow = nrow_plot,
-  left = textGrob("Frequency", gp = gpar(fontsize=20), rot = 90),
-  bottom = textGrob("Number of Reads (log10)", gp = gpar(fontsize=20)),
-  top = textGrob("Density of Reads - All RBPs", gp = gpar(fontsize=25, fontface="bold"))
-)
+#---------------------------------------
+# Run for K562
+#---------------------------------------
+k562_results <- plot_pca_by_cell(Charm.object, "K562")
+
+
+
+ggarrange(hepg2_results$plot, k562_results$plot)
 ```
 
+
+##### PCA without Batch Correction, No Controls
+
+```{r fig.height=4, fig.width=12}
+#---------------------------------------
+# Function to run PCA and plot for a given cell type
+#---------------------------------------
+plot_pca_by_cell <- function(Charm.object, cell_type, other_color = "#283D3B") {
+  
+  # Prepare the data
+  dfforpca <- Charm.object$normcounts
+  dfforpca <- t(dfforpca)
+  dfforpca <- as.data.frame(dfforpca)
+  dfforpca <- apply(dfforpca, 2, as.numeric)
+  dfforpca <- as.data.frame(dfforpca)
+  
+  # Add metadata
+  dfforpca$Sample <- Charm.object$SampleType
+  dfforpca$Cell   <- Charm.object$Cell
+  
+  # Subset to the requested cell type AND remove controls
+  dfforpca <- dfforpca[dfforpca$Cell == cell_type & dfforpca$Sample != "Control", ]
+  
+  # Relabel everything as "Other" (since controls are gone)
+  dfforpca$Sample <- "Other"
+  
+  # PCA computation
+  pca_res <- prcomp(dfforpca[, 1:(ncol(dfforpca)-2)], scale = FALSE)
+  
+  # PCA plot
+  p_sample <- autoplot(pca_res, data = dfforpca, x = 1, y = 2, colour = "Sample", size = 4, alpha = 0.6) +
+    theme_bw() +
+    scale_colour_manual(name = "Sample", values = c("Other" = other_color)) +
+    ggtitle(paste("PCA - Only shRNA samples (", cell_type, ")", sep = "")) +
+    theme(
+      plot.title = element_text(hjust = 0.5),
+      axis.line = element_line(colour = "black"),
+      panel.grid.minor = element_blank(),
+      panel.border = element_blank(),
+      panel.background = element_blank()
+    )
+  
+  # Optional: check most important genes
+  contribs1 <- pca_res$rotation[,1]
+  contribs2 <- pca_res$rotation[,2]
+  
+  pos1genes <- sort(contribs1, decreasing = TRUE)[1:10]
+  neg1genes <- sort(contribs1, decreasing = FALSE)[1:10]
+  pos2genes <- sort(contribs2, decreasing = TRUE)[1:10]
+  neg2genes <- sort(contribs2, decreasing = FALSE)[1:10]
+  
+  list(plot = p_sample, pos1genes = pos1genes, neg1genes = neg1genes,
+       pos2genes = pos2genes, neg2genes = neg2genes)
+}
+
+#---------------------------------------
+# Run for HEPG2 (no controls)
+#---------------------------------------
+hepg2_results <- plot_pca_by_cell(Charm.object, "HEPG2")
+
+#---------------------------------------
+# Run for K562 (no controls)
+#---------------------------------------
+k562_results <- plot_pca_by_cell(Charm.object, "K562")
+
+# Combine plots
+ggarrange(hepg2_results$plot, k562_results$plot)
+
+```
+
+#### Data Exploration (PCA) Part 2
+
+I will be using PCA to find out what most influences the expression.
+
+##### PCA with Batch Correction, All Samples
+
+```{r fig.height=4, fig.width=12}
+#This prepares my data for the PCA
+dfforpca <- Charm.object$corcounts
+dfforpca <- t(dfforpca)
+dfforpca <- as.data.frame(dfforpca) # needs to be a data.frame
+dfforpca <- apply(dfforpca, 2, as.numeric) # Ensure numeric
+dfforpca <- as.data.frame(dfforpca) # still needs to be a data.frame
+
+# Add metadata, which we will then use to plot
+dfforpca$Sample <- Charm.object$SampleType
+dfforpca$Cell <- Charm.object$Cell
+
+dfforpca$Sample <- ifelse(dfforpca$Sample == "Control", "Control", "Other")
+
+# PCA computation itself. I do one PCA for each variable I want to see.
+pca_res <- prcomp(dfforpca[, 1:(ncol(dfforpca)-2)], scale = FALSE)
+p_sample<- autoplot(pca_res, data = dfforpca, x = 1, y = 2, colour = "Sample",  size = 4, alpha=0.6) +
+  theme_bw() +
+  scale_colour_manual(name = "Sample", values = c("#7272AB", "#283D3B")) +
+  ggtitle("PCA - Coloured by Sample") +
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.line = element_line(colour = "black"),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank())
+
+p_cell <- autoplot(pca_res, data = dfforpca, x = 1, y = 2, colour = "Cell", size = 4, alpha=0.6) +
+  theme_bw() +
+  scale_colour_manual(name = "Cell", values = c("#80B192", "#8E4A49")) +
+  ggtitle("PCA - Coloured by Cell") +
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.line = element_line(colour = "black"),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank())
+
+ggarrange(p_cell, p_sample)
+
+#in case you want to see most important genes for PCA yourself
+contribs1 <- pca_res$rotation[,1]
+contribs2 <- pca_res$rotation[,2]
+
+#These are the biggest contributors to the PCA1 (right side)
+(pos1genes <- sort(contribs1, decreasing=T)[1:10])
+#These are the biggest contributors to the PCA1 (left side)
+(neg1genes <- sort(contribs1, decreasing=F)[1:10])
+
+#These are the biggest contributors to the PCA2 (up side)
+(pos2genes <- sort(contribs2, decreasing=T)[1:10])
+#These are the biggest contributors to the PCA2 (down side)
+(neg2genes <- sort(contribs2, decreasing=F)[1:10])
+
+```
+
+
+##### PCA with Batch Correction, Separated Cells
+
+```{r fig.height=4, fig.width=12}
+#---------------------------------------
+# Function to run PCA and plot for a given cell type
+#---------------------------------------
+plot_pca_by_cell <- function(Charm.object, cell_type, control_color = "#7272AB", other_color = "#283D3B") {
+  
+  # Prepare the data
+  dfforpca <- Charm.object$corcounts
+  dfforpca <- t(dfforpca)
+  dfforpca <- as.data.frame(dfforpca)
+  dfforpca <- apply(dfforpca, 2, as.numeric)
+  dfforpca <- as.data.frame(dfforpca)
+  
+  # Add metadata
+  dfforpca$Sample <- Charm.object$SampleType
+  dfforpca$Cell <- Charm.object$Cell
+  
+  # Subset to the requested cell type
+  dfforpca <- dfforpca[dfforpca$Cell == cell_type, ]
+  
+  # Highlight Control vs Other
+  dfforpca$Sample <- ifelse(dfforpca$Sample == "Control", "Control", "Other")
+  
+  # PCA computation
+  pca_res <- prcomp(dfforpca[, 1:(ncol(dfforpca)-2)], scale = FALSE)
+  
+  # PCA plot
+  p_sample <- autoplot(pca_res, data = dfforpca, x = 1, y = 2, colour = "Sample", size = 4, alpha = 0.6) +
+    theme_bw() +
+    scale_colour_manual(name = "Sample", values = c("Control" = control_color, "Other" = other_color)) +
+    ggtitle(paste("PCA - Coloured by Sample (", cell_type, ")", sep = "")) +
+    theme(
+      plot.title = element_text(hjust = 0.5),
+      axis.line = element_line(colour = "black"),
+      panel.grid.minor = element_blank(),
+      panel.border = element_blank(),
+      panel.background = element_blank()
+    )
+  
+  # Optional: check most important genes
+  contribs1 <- pca_res$rotation[,1]
+  contribs2 <- pca_res$rotation[,2]
+  
+  pos1genes <- sort(contribs1, decreasing = TRUE)[1:10]
+  neg1genes <- sort(contribs1, decreasing = FALSE)[1:10]
+  pos2genes <- sort(contribs2, decreasing = TRUE)[1:10]
+  neg2genes <- sort(contribs2, decreasing = FALSE)[1:10]
+  
+  list(plot = p_sample, pos1genes = pos1genes, neg1genes = neg1genes,
+       pos2genes = pos2genes, neg2genes = neg2genes)
+}
+
+#---------------------------------------
+# Run for HEPG2
+#---------------------------------------
+hepg2_results <- plot_pca_by_cell(Charm.object, "HEPG2")
+
+
+#---------------------------------------
+# Run for K562
+#---------------------------------------
+k562_results <- plot_pca_by_cell(Charm.object, "K562")
+
+
+
+ggarrange(hepg2_results$plot, k562_results$plot)
+```
+
+##### PCA with Batch Correction, No Controls, Separated
+
+```{r fig.height=4, fig.width=12}
+#---------------------------------------
+# Function to run PCA and plot for a given cell type
+#---------------------------------------
+plot_pca_by_cell <- function(Charm.object, cell_type, other_color = "#283D3B") {
+  
+  # Prepare the data
+  dfforpca <- Charm.object$corcounts
+  dfforpca <- t(dfforpca)
+  dfforpca <- as.data.frame(dfforpca)
+  dfforpca <- apply(dfforpca, 2, as.numeric)
+  dfforpca <- as.data.frame(dfforpca)
+  
+  # Add metadata
+  dfforpca$Sample <- Charm.object$SampleType
+  dfforpca$Cell   <- Charm.object$Cell
+  
+  # Subset to the requested cell type AND remove controls
+  dfforpca <- dfforpca[dfforpca$Cell == cell_type & dfforpca$Sample != "Control", ]
+  
+  # Relabel everything as "Other" (since controls are gone)
+  dfforpca$Sample <- "Other"
+  
+  # PCA computation
+  pca_res <- prcomp(dfforpca[, 1:(ncol(dfforpca)-2)], scale = FALSE)
+  
+  # PCA plot
+  p_sample <- autoplot(pca_res, data = dfforpca, x = 1, y = 2, colour = "Sample", size = 4, alpha = 0.6) +
+    theme_bw() +
+    scale_colour_manual(name = "Sample", values = c("Other" = other_color)) +
+    ggtitle(paste("PCA - Only shRNA samples (", cell_type, ")", sep = "")) +
+    theme(
+      plot.title = element_text(hjust = 0.5),
+      axis.line = element_line(colour = "black"),
+      panel.grid.minor = element_blank(),
+      panel.border = element_blank(),
+      panel.background = element_blank()
+    )
+  
+  # Optional: check most important genes
+  contribs1 <- pca_res$rotation[,1]
+  contribs2 <- pca_res$rotation[,2]
+  
+  pos1genes <- sort(contribs1, decreasing = TRUE)[1:10]
+  neg1genes <- sort(contribs1, decreasing = FALSE)[1:10]
+  pos2genes <- sort(contribs2, decreasing = TRUE)[1:10]
+  neg2genes <- sort(contribs2, decreasing = FALSE)[1:10]
+  
+  list(plot = p_sample, pos1genes = pos1genes, neg1genes = neg1genes,
+       pos2genes = pos2genes, neg2genes = neg2genes)
+}
+
+#---------------------------------------
+# Run for HEPG2 (no controls)
+#---------------------------------------
+hepg2_results <- plot_pca_by_cell(Charm.object, "HEPG2")
+
+#---------------------------------------
+# Run for K562 (no controls)
+#---------------------------------------
+k562_results <- plot_pca_by_cell(Charm.object, "K562")
+
+# Combine plots
+ggarrange(hepg2_results$plot, k562_results$plot)
+
+```
+
+
+##### PCA with Batch Correction, No Controls
+
+
+```{r fig.height=5, fig.width=6}
+#---------------------------------------
+# PCA for both cell types together (no controls, generic coloring)
+#---------------------------------------
+plot_pca_no_controls <- function(Charm.object, other_color = "#283D3B") {
+  
+  # Prepare the data
+  dfforpca <- Charm.object$corcounts
+  dfforpca <- t(dfforpca)
+  dfforpca <- as.data.frame(dfforpca)
+  dfforpca <- apply(dfforpca, 2, as.numeric)
+  dfforpca <- as.data.frame(dfforpca)
+  
+  # Add metadata
+  dfforpca$Sample <- Charm.object$SampleType
+  dfforpca$Cell   <- Charm.object$Cell
+  
+  # Remove controls only
+  dfforpca <- dfforpca[dfforpca$Sample != "Control", ]
+  
+  # Relabel everything as "Other"
+  dfforpca$Sample <- "Other"
+  
+  # PCA computation
+  pca_res <- prcomp(dfforpca[, 1:(ncol(dfforpca)-2)], scale = FALSE)
+  
+  # PCA plot (all same color)
+  p_sample <- autoplot(pca_res, data = dfforpca, x = 1, y = 2, 
+                       colour = "Sample", size = 4, alpha = 0.6) +
+    theme_bw() +
+    scale_colour_manual(values = c("Other" = other_color)) +
+    ggtitle("PCA - Only shRNA samples (HEPG2 + K562)") +
+    theme(
+      plot.title = element_text(hjust = 0.5),
+      axis.line = element_line(colour = "black"),
+      panel.grid.minor = element_blank(),
+      panel.border = element_blank(),
+      panel.background = element_blank()
+    )
+  
+  # Optional: check most important genes
+  contribs1 <- pca_res$rotation[,1]
+  contribs2 <- pca_res$rotation[,2]
+  
+  pos1genes <- sort(contribs1, decreasing = TRUE)[1:10]
+  neg1genes <- sort(contribs1, decreasing = FALSE)[1:10]
+  pos2genes <- sort(contribs2, decreasing = TRUE)[1:10]
+  neg2genes <- sort(contribs2, decreasing = FALSE)[1:10]
+  
+  list(plot = p_sample, pos1genes = pos1genes, neg1genes = neg1genes,
+       pos2genes = pos2genes, neg2genes = neg2genes)
+}
+
+#---------------------------------------
+# Run PCA for both cells (no controls, generic coloring)
+#---------------------------------------
+all_results <- plot_pca_no_controls(Charm.object)
+
+all_results$plot
+```
+##### TSNE
+
+```{r}
+
+library(Rtsne)
+
+plot_tsne <- function(Charm.object, other_color = "#283D3B", seed = 42, perplexity = 30) {
+  
+  # Prepare the data
+  dffortsne <- Charm.object$corcounts
+  dffortsne <- t(dffortsne)
+  dffortsne <- as.data.frame(dffortsne)
+  dffortsne <- apply(dffortsne, 2, as.numeric)
+  dffortsne <- as.data.frame(dffortsne)
+  
+  # Add metadata
+  dffortsne$Sample <- Charm.object$SampleType
+  dffortsne$Cell   <- Charm.object$Cell
+  
+  # Remove controls
+  dffortsne <- dffortsne[dffortsne$Sample != "Control", ]
+  
+  # Relabel everything as "Other"
+  dffortsne$Sample <- "Other"
+  
+  # Run t-SNE on expression data only
+  set.seed(seed)
+  tsne_res <- Rtsne(dffortsne[, 1:(ncol(dffortsne)-2)], 
+                    perplexity = perplexity, 
+                    verbose = TRUE, 
+                    check_duplicates = FALSE)
+  
+  tsne_df <- data.frame(
+    Dim1   = tsne_res$Y[,1],
+    Dim2   = tsne_res$Y[,2],
+    Sample = dffortsne$Sample,
+    Cell   = dffortsne$Cell
+  )
+  
+  # Plot
+  p_tsne <- ggplot(tsne_df, aes(x = Dim1, y = Dim2, colour = Sample)) +
+    geom_point(size = 4, alpha = 0.6) +
+    theme_bw() +
+    scale_colour_manual(name = "Sample", values = c("Other" = other_color)) +
+    ggtitle("t-SNE - Only shRNA samples (HEPG2 + K562)") +
+    theme(
+      plot.title = element_text(hjust = 0.5),
+      axis.line = element_line(colour = "black"),
+      panel.grid.minor = element_blank(),
+      panel.border = element_blank(),
+      panel.background = element_blank()
+    )
+  
+  return(p_tsne)
+}
+
+# Run it
+tsne_plot <- plot_tsne(Charm.object)
+tsne_plot
+```
+
+
+##### Knockdown/knockout Integrity
+
+I first check if indeed there is a knockdown of treated RBP.
+
+```{r}
+
+shRNA_integrity <- function(Charmobj, rbp, varoi){
+  # Expression matrix
+  expr <- Charmobj$corcounts
+  
+  # Build design matrix
+  group <- Charmobj[[varoi]]
+  mm <- model.matrix(~0 + group)
+  colnames(mm) <- gsub("group", "", colnames(mm))  # cleaner names
+  
+  # Fit linear model
+  fitted <- lmFit(expr, mm)
+  
+  # Build contrast (rbp vs Control)
+  contrast_formula <- paste0(rbp, " - Control")
+  contr <- makeContrasts(contrasts = contrast_formula, levels = colnames(coef(fitted)))
+  
+  tmp_contr <- contrasts.fit(fitted, contr)
+  tmp <- eBayes(tmp_contr)
+  
+  # Get results
+  top.table <- topTable(tmp, sort.by = "logFC", n=Inf)
+  
+  # Extract effect for this RBP (assuming rownames = genes)
+  if (rbp %in% rownames(top.table)) {
+    sh_effect <- top.table[rbp, , drop = FALSE]
+  } else {
+    sh_effect <- data.frame()
+  }
+  
+  return(sh_effect)
+}
+
+# Loop over all RBPs
+sh_effect_vector <- data.frame()
+for (rbp in unique(Charm.object$Experiment)) {
+  sh_effect <- shRNA_integrity(Charm.object, rbp, varoi = "SampleType")
+  sh_effect_vector <- rbind(sh_effect_vector, sh_effect)
+}
+
+saveRDS(sh_effect_vector, "../Data_Objects/shRNA_Efficiency.Rds")
+```

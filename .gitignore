@@ -4,6 +4,10 @@
 .RData
 .Ruserdata
 =======
+
+# Big Data, only stored locally
+Data_Objects/
+
 # History files
 .Rhistory
 .Rapp.history
