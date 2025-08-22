@@ -190,7 +190,9 @@ CharmObj_rbp <- add_metadata(CharmObj_rbp)
 
 ```
 
-#### Create CHARM Object
+# B.1 Expression object
+
+### Create CHARM Object (Both Cells)
 
 ```{r}
 collapse_charmobj <- function(obj) {
@@ -256,7 +258,7 @@ Charm.object$rawcounts$Name <- NULL
 ```
 
 
-#### Filtration (Density Plot)
+##### Filtration (Density Plot)
 
 In this version, every RBP is processed sepparetely, as if they were their own expression/tissue.
 
@@ -292,7 +294,7 @@ Charm.object$filtcounts <- Charm.object$rawcounts[row.names(Charm.object$rawcoun
 
 
 
-#### Matrix Design
+##### Matrix Design
 
 Good! Now we can proceed by designing our matrices. 
 
@@ -317,7 +319,7 @@ y <- voom(D0, mm, plot = T)
 Charm.object$normcounts <- as.data.frame(y$E)
 ```
 
-#### Normalisation
+##### Normalisation
 
 Now, we are almost ready to move on to the differential gene expression analysis. I will first check to see if any issues arose during the normalisation process, by looking at samples before and after this process.
 
@@ -394,7 +396,7 @@ ggarrange(prenorm, postnorm, nrow = 1)
 
 Normalisation isn't ideal, but it isn't too bad either.
 
-#### Batch Correction
+##### Batch Correction
 
 As an extra layer, we can also consider "cell type" as a batch factor. Here is the process I used to do so. For more information, please consult Schneider et al (voyAGEr).
 
@@ -420,14 +422,14 @@ mm <- model.matrix(~0+Sample, metadata)
 y <- voom(corrcounts_v1, mm, plot = T)
 Charm.object$corcounts <- as.data.frame(y$E)
 
-saveRDS(Charm.object, "../Data_Objects/Charm.object.RDS")
+#saveRDS(Charm.object, "../Data_Objects/Charm.object.RDS")
 ```
 
-#### Data Exploration (PCA) Part 1
+##### Data Exploration (PCA) Part 1
 
 I will be using PCA to find out what most influences the expression.
 
-##### PCA without Batch Correction, All Samples
+###### PCA without Batch Correction, All Samples
 
 ```{r fig.height=4, fig.width=12}
 #This prepares my data for the PCA
@@ -484,7 +486,7 @@ contribs2 <- pca_res$rotation[,2]
 ```
 
 
-##### PCA without Batch Correction, Separated Cells
+###### PCA without Batch Correction, Separated Cells
 
 ```{r fig.height=4, fig.width=12}
 #---------------------------------------
@@ -555,7 +557,7 @@ ggarrange(hepg2_results$plot, k562_results$plot)
 ```
 
 
-##### PCA without Batch Correction, No Controls
+###### PCA without Batch Correction, No Controls
 
 ```{r fig.height=4, fig.width=12}
 #---------------------------------------
@@ -624,11 +626,11 @@ ggarrange(hepg2_results$plot, k562_results$plot)
 
 ```
 
-#### Data Exploration (PCA) Part 2
+##### Data Exploration (PCA) Part 2
 
 I will be using PCA to find out what most influences the expression.
 
-##### PCA with Batch Correction, All Samples
+###### PCA with Batch Correction, All Samples
 
 ```{r fig.height=4, fig.width=12}
 #This prepares my data for the PCA
@@ -685,7 +687,7 @@ contribs2 <- pca_res$rotation[,2]
 ```
 
 
-##### PCA with Batch Correction, Separated Cells
+###### PCA with Batch Correction, Separated Cells
 
 ```{r fig.height=4, fig.width=12}
 #---------------------------------------
@@ -755,7 +757,7 @@ k562_results <- plot_pca_by_cell(Charm.object, "K562")
 ggarrange(hepg2_results$plot, k562_results$plot)
 ```
 
-##### PCA with Batch Correction, No Controls, Separated
+###### PCA with Batch Correction, No Controls, Separated
 
 ```{r fig.height=4, fig.width=12}
 #---------------------------------------
@@ -825,7 +827,7 @@ ggarrange(hepg2_results$plot, k562_results$plot)
 ```
 
 
-##### PCA with Batch Correction, No Controls
+###### PCA with Batch Correction, No Controls
 
 
 ```{r fig.height=5, fig.width=6}
@@ -888,7 +890,7 @@ all_results <- plot_pca_no_controls(Charm.object)
 
 all_results$plot
 ```
-##### TSNE
+###### TSNE
 
 ```{r}
 
@@ -949,8 +951,85 @@ tsne_plot <- plot_tsne(Charm.object)
 tsne_plot
 ```
 
+#### Expression Violins
 
-##### Knockdown/knockout Integrity
+```{r}
+
+violinplotter <- function(charmobj, rbp, control_color = "#7272AB", other_color = "#283D3B", highlight_color = "red") {
+  # Get expression matrix
+  expr <- charmobj$corcounts
+  
+  # Keep only Control and requested RBP samples
+  keep_samples <- charmobj$SampleType %in% c("Control", rbp)
+  expr <- expr[rbp, keep_samples]
+  
+  # Build dataframe for ggplot
+  df <- data.frame(
+    Expression = as.numeric(expr),
+    Group = charmobj$SampleType[keep_samples],
+    Sample = names(expr)  # keep sample names for matching
+  )
+  
+  # Highlight control points that are also in Experiment for this RBP
+  control_samples <- charmobj$SampleType == "Control"
+  df$Highlight <- FALSE
+  df$Highlight[df$Group == "Control" & charmobj$Experiment[keep_samples] == rbp] <- TRUE
+# Compute mean expression per group
+mean_expr <- df %>%
+  group_by(Group) %>%
+  summarise(mean_exp = mean(Expression, na.rm = TRUE))
+
+# Log2 fold-change = difference of means (rbp - Control)
+logFC <- mean_expr$mean_exp[mean_expr$Group == rbp] -
+         mean_expr$mean_exp[mean_expr$Group == "Control"]
+
+# Create plot
+p <- ggplot(df, aes(x = Group, y = Expression, fill = Group)) +
+  
+  # All points (low alpha)
+  geom_jitter(data = df, aes(x = Group, y = Expression),
+              width = 0.15, alpha = 0.3, color = "#7272AB") +
+  
+  # Violin plot
+  geom_violin(trim = FALSE, alpha = 0.6) +
+  
+  # Highlighted points on top
+  geom_jitter(data = df[df$Highlight, ],
+              aes(x = Group, y = Expression),
+              width = 0.15, color = "#E54B4B", size = 3, alpha = 0.8) +
+  
+  # Fill colors for violins
+  scale_fill_manual(values = c("Control" = "#7272AB", rbp = "#283D3B")) +
+  
+  # Labels and theme
+  labs(
+    title = paste("Expression of", rbp, "vs Control"),
+    subtitle = paste0("Log2 Fold-Change: ", round(logFC, 2))
+  ) +
+  theme_bw() +
+  theme(
+    axis.line = element_line(colour = "black"),
+    panel.grid = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank(),
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5),
+    text = element_text(size = 15, family = "Arial MS"),
+    legend.position = "none"
+  ) +
+  xlab("") + ylab("Expression") +
+  ylim(0, max(df$Expression) * 1.05)
+
+return(p)
+
+}
+
+rbp <- "RBFOX2"
+violinplotter(Charm.object, rbp)
+```
+
+
+#### Knockdown/knockout Integrity
 
 I first check if indeed there is a knockdown of treated RBP.
 
@@ -997,3 +1076,1252 @@ for (rbp in unique(Charm.object$Experiment)) {
 
 saveRDS(sh_effect_vector, "../Data_Objects/shRNA_Efficiency.Rds")
 ```
+
+
+```{r}
+rbp <- "RBFOX2"
+ndegs <- 20
+markers_to_plot <- as.data.frame(sh_effect_vector[rbp,] )
+
+ggplot(data = sh_effect_vector,
+       aes(x = logFC, y = B)) +
+  geom_point(color = "#CCCCCC") +
+  geom_point(data = markers, aes(x = logFC, y = B), color = "#A10702", size = 5) +
+  geom_label_repel(
+    data = markers_to_plot,
+    aes(label = rownames(markers_to_plot)),
+    size = 4,
+    point.padding = -0.5,
+    color = "#A10702",
+    max.overlaps = 20,
+    fontface = "italic"
+  ) +
+  theme_bw() +
+  xlab("Log Fold-Change") + 
+  ylab("B-Statistic") +
+  ggtitle("shRNA Effect") +
+  theme(
+    axis.line = element_line(colour = "black"),
+    panel.grid = element_blank(),        # 🚀 removes all gridlines
+    panel.border = element_blank(),
+    panel.background = element_blank(),
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5),
+    text = element_text(size = 15, family = "Arial MS")
+  )
+
+
+```
+
+#### Volcano 
+
+```{r}
+
+plot_rbp_volcano <- function(Charmobj, rbp, varoi = "SampleType", other_genes = NULL) {
+  #----------------------------
+  # Step 1: Differential Expression
+  #----------------------------
+  expr <- Charmobj$corcounts
+  group <- Charmobj[[varoi]]
+  
+  # Design matrix
+  mm <- model.matrix(~0 + group)
+  colnames(mm) <- gsub("group", "", colnames(mm))
+  
+  # Fit linear model
+  fitted <- lmFit(expr, mm)
+  
+  # Contrast: RBP vs Control
+  contrast_formula <- paste0(rbp, " - Control")
+  contr <- makeContrasts(contrasts = contrast_formula, levels = colnames(coef(fitted)))
+  
+  tmp_contr <- contrasts.fit(fitted, contr)
+  tmp <- eBayes(tmp_contr)
+  
+  # Get results for all genes
+  top.table <- topTable(tmp, sort.by = "none", n = Inf)
+  
+  # Check provided genes
+  if (!is.null(other_genes)) {
+    not_found <- setdiff(other_genes, rownames(top.table))
+    if (length(not_found) > 0) {
+      for (gene in not_found) {
+        message(paste0("The gene '", gene, "' was not found. This may be because of prior filtration."))
+      }
+    }
+    other_genes <- intersect(other_genes, rownames(top.table))
+  }
+  
+  # Add highlight categories
+  top.table$highlight <- "None"
+  top.table$highlight[rownames(top.table) == rbp] <- "RBP"
+  if (!is.null(other_genes)) {
+    top.table$highlight[rownames(top.table) %in% other_genes] <- "Other"
+  }
+  
+  # Order by absolute t-statistic
+  top.table <- top.table[order(-abs(top.table$t)), ]
+  
+  #----------------------------
+  # Step 2: Volcano Plot
+  #----------------------------
+  volcano_plot <- ggplot() +
+    # Base layer: all genes grey
+    geom_point(data = subset(top.table, highlight == "None"),
+               aes(x = logFC, y = B), color = "#CCCCCC", alpha = 0.6) +
+    # Blue layer: other genes
+    geom_point(data = subset(top.table, highlight == "Other"),
+               aes(x = logFC, y = B), color = "#23586C", alpha = 0.8, size = 2) +
+    # Red layer: rbp gene
+    geom_point(data = subset(top.table, highlight == "RBP"),
+               aes(x = logFC, y = B), color = "#A10702", alpha = 0.9, size = 2.5) +
+    # Labels for RBP
+    geom_text_repel(
+      data = subset(top.table, highlight == "RBP"),
+      aes(x = logFC, y = B, label = rownames(subset(top.table, highlight == "RBP"))),
+      size = 5, fontface = "italic",color = "#A10702", nudge_y = 1
+    ) +
+    # Labels for Other genes
+    geom_text_repel(
+      data = subset(top.table, highlight == "Other"),
+      aes(x = logFC, y = B, label = rownames(subset(top.table, highlight == "Other"))),
+      size = 4, fontface = "italic", color = "#23586C", nudge_y = 1
+    ) +
+    theme_bw() +
+    theme(
+      plot.title = element_text(hjust = 0.5),
+      axis.line = element_line(colour = "black"),
+      panel.grid.minor = element_blank(),
+      panel.border = element_blank(),
+      panel.background = element_blank(),
+      legend.position = "none"
+    ) +
+    labs(title = paste("Volcano plot:", rbp),
+         x = "Log Fold-Change", y = "B-statistic")
+  
+  return(list(top_table = top.table, volcano_plot = volcano_plot))
+}
+
+rbp <- "RBFOX2"
+result <- plot_rbp_volcano(Charm.object, rbp, other_genes = c("PTBP1", "CDKN2A", "GAPDH"))
+
+# Get full DE table
+head(result$top_table)
+
+# Show volcano plot
+result$volcano_plot
+```
+
+
+#### GSEA 
+
+```{r fig.height=6, fig.width=8}
+plot_gsea <- function(Charmobj, rbp, varoi = "SampleType", thresh = 0.05,
+                      species = "Homo sapiens",
+                      collection = "H", subcollection = NULL,
+                      up_color = "#BA3B46", down_color = "#53A2BE",
+                      show_legend = FALSE) {
+  #----------------------------
+  # Step 1: Differential Expression
+  #----------------------------
+  expr <- Charmobj$corcounts
+  group <- Charmobj[[varoi]]
+  
+  # Design matrix
+  mm <- model.matrix(~0 + group)
+  colnames(mm) <- gsub("group", "", colnames(mm))
+  
+  # Fit linear model
+  fitted <- limma::lmFit(expr, mm)
+  
+  # Contrast: RBP vs Control
+  contrast_formula <- paste0(rbp, " - Control")
+  contr <- limma::makeContrasts(contrasts = contrast_formula, levels = colnames(coef(fitted)))
+  
+  tmp_contr <- limma::contrasts.fit(fitted, contr)
+  tmp <- limma::eBayes(tmp_contr)
+  
+  # Get results for all genes
+  top.table <- limma::topTable(tmp, sort.by = "none", n = Inf)
+  
+  #----------------------------
+  # Step 2: Prepare ranks for GSEA
+  #----------------------------
+  DEGenes <- top.table[order(top.table$t, decreasing = TRUE), ]
+  vectorranks <- DEGenes$t
+  names(vectorranks) <- rownames(DEGenes)
+  
+  #----------------------------
+  # Step 3: Load gene sets
+  #----------------------------
+  hallmarks.gs <- msigdbr(species = species, collection = collection, subcollection = subcollection)
+  hallmarks.gsets <- split(hallmarks.gs$gene_symbol, hallmarks.gs$gs_name)
+  hallmarks.gsets <- lapply(hallmarks.gsets, toupper)
+  
+  #----------------------------
+  # Step 4: Run fgsea
+  #----------------------------
+  hallmarks.res <- fgsea(pathways = hallmarks.gsets, stats = vectorranks)
+  
+  hallmarks.res.tidy <- hallmarks.res %>%
+    as_tibble() %>%
+    arrange(desc(NES)) %>%
+    mutate(Status = ifelse(NES > 0, "Upregulated", "Downregulated")) %>%
+    arrange(padj)
+  
+  #----------------------------
+  # Step 5: Filter significant results
+  #----------------------------
+  data_to_plot <- hallmarks.res.tidy %>% 
+    filter(padj < thresh) %>%
+    arrange(-abs(NES))
+  
+  #----------------------------
+  # Step 6: Plot
+  #----------------------------
+  gsea_plot_hall <- ggplot(data_to_plot, aes(x = reorder(pathway, NES), y = NES)) +
+    geom_col(aes(fill = Status), alpha = 0.8) +
+    scale_fill_manual(values = c("Upregulated" = up_color, "Downregulated" = down_color)) +
+    coord_flip() +
+    labs(x = "Gene Set", 
+         y = "Normalised Enrichment Score (NES)",
+         title = "Enriched Gene Sets",
+         subtitle = paste0("Comparison: ", rbp, "KD vs Control"),
+         caption = paste0("padj < ", thresh)) +
+    theme_bw(base_family = "Arial MS") +
+    theme(
+      plot.title = element_text(hjust = 0.5, size = 18, face = "bold"),
+      plot.subtitle = element_text(hjust = 0.5, size = 14),
+      text = element_text(size = 14),
+      legend.position = if (show_legend) "right" else "none"
+    )
+  
+  #----------------------------
+  # Return both results and plot
+  #----------------------------
+  return(list(geneset_table = hallmarks.res.tidy, gsea_plot = gsea_plot_hall))
+}
+
+
+
+
+rbp <- "RBFOX2"
+result <- plot_gsea(Charm.object, rbp)
+
+# Get full DE table
+head(result$geneset_table)
+
+# Show volcano plot
+result$gsea_plot
+```
+
+
+
+
+# B.2 Expression Object
+
+### Create CHARM Object (K562)
+
+```{r}
+
+# Collapse all Charm objects
+Charm.object <- collapse_charmobj(CharmObj_rbp)
+
+# Convert rawcounts to data.frame and set rownames
+Charm.object$rawcounts <- as.data.frame(Charm.object$rawcounts)
+row.names(Charm.object$rawcounts) <- Charm.object$rawcounts$Name
+Charm.object$rawcounts$Name <- NULL
+
+# ----------------------------
+# Filter for Cell == "K562"
+# ----------------------------
+keep_idx <- which(Charm.object$Cell == "K562")
+
+Charm.object.K562 <- list(
+  rawcounts  = Charm.object$rawcounts[, keep_idx, drop = FALSE],
+  SampleType = Charm.object$SampleType[keep_idx],
+  Cell       = Charm.object$Cell[keep_idx],
+  Experiment = Charm.object$Experiment[keep_idx]
+)
+
+```
+
+
+##### Filtration (Density Plot)
+
+In this version, every RBP is processed sepparetely, as if they were their own expression/tissue.
+
+```{r}
+alternew <- log10(rowSums(Charm.object.K562$rawcounts))
+alternew <- as.data.frame(alternew)
+
+ggplot(alternew, aes(x=alternew)) + geom_density() + theme_bw() + geom_vline(xintercept = 4.5, linetype = "dashed") + ylab("Events") + xlab("Number of Reads (log10)") +
+  theme(axis.line = element_line(colour = "black"),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank()) + ggtitle("Density of Reads - All Samples")
+
+filterednew <- subset(Charm.object.K562$rawcounts, alternew>4.5)
+
+
+#after cutting, its a good idea to visualize again
+falternew <- log10(rowSums(filterednew))
+falternew <- as.data.frame(falternew)
+ggplot(falternew, aes(x=falternew)) + geom_density() + theme_bw() + ylab("Events") + xlab("Number of Reads (log10)") +
+  theme(axis.line = element_line(colour = "black"),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank())
+
+#lets save the genes which we maintain
+impgenes <- c(row.names(falternew))
+
+
+#Now we need to select only the rows which have those genes.
+Charm.object.K562$filtcounts <- Charm.object.K562$rawcounts[row.names(Charm.object.K562$rawcounts)%in%impgenes,]
+```
+
+
+
+##### Matrix Design
+
+Good! Now we can proceed by designing our matrices. 
+
+```{r}
+#To be able to use Voom, we must first convert our read count table into a special DGE object.
+D0 <- DGEList(Charm.object.K562$filtcounts)
+
+
+#Then we calculate the normalisation factors for these new generated data frames
+#Bear in mind this step calculates the normalisation factors, but does not normalise itself.
+D0 <- calcNormFactors(D0)
+
+metadata <- data.frame(Sample=Charm.object.K562$SampleType, Experiment=Charm.object.K562$Experiment)
+
+
+#Now we do the matrixes
+mm <- model.matrix(~0+Sample+Experiment, metadata)
+
+
+#and now we normalise. This step also turns our counts into log2-counts per million.
+y <- voom(D0, mm, plot = T)
+Charm.object.K562$normcounts <- as.data.frame(y$E)
+```
+
+##### Normalisation
+
+Now, we are almost ready to move on to the differential gene expression analysis. I will first check to see if any issues arose during the normalisation process, by looking at samples before and after this process.
+
+```{r}
+
+# ----------------------------
+# Prior to Normalisation
+# ----------------------------
+dfforboxy <- Charm.object.K562$filtcounts
+dfforboxy <- select_extreme_samples(dfforboxy)
+
+dfforboxy <- reshape2::melt(dfforboxy)
+colnames(dfforboxy) <- c("Sample", "Expression")
+
+prenorm <- ggplot(dfforboxy, aes(x = Sample, y = log2(Expression + 1))) +
+  geom_boxplot(alpha = 0.6) +
+  theme_bw() +
+  ylab("Read Counts (Log2)") +
+  xlab("Samples") +
+  theme(
+    axis.line = element_line(colour = "black"),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    legend.position = "None"
+  ) +
+  ggtitle("Prior to Normalisation")
+
+# ----------------------------
+# After Normalisation
+# ----------------------------
+dfforboxy <- Charm.object.K562$normcounts
+dfforboxy <- select_extreme_samples(dfforboxy)
+
+dfforboxy <- reshape2::melt(dfforboxy)
+colnames(dfforboxy) <- c("Sample", "Expression")
+
+
+postnorm <- ggplot(dfforboxy, aes(x = Sample, y = Expression)) +
+  geom_boxplot(alpha = 0.6) +
+  theme_bw() +
+  ylab("Read Counts (Log2CPM)") +
+  xlab("Samples") +
+  theme(
+    axis.line = element_line(colour = "black"),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    legend.position = "None"
+  ) +
+  ggtitle("After Normalisation")
+
+ggarrange(prenorm, postnorm, nrow = 1)
+```
+
+Normalisation isn't ideal, but it isn't too bad either.
+
+##### Batch Correction
+
+As an extra layer, we can also consider "cell type" as a batch factor. Here is the process I used to do so. For more information, please consult Schneider et al (voyAGEr).
+
+```{r}
+batch_cols <- c("Experiment")
+metadata_cols <- c("Sample")
+mmbatch <- model.matrix(reformulate(paste0("~0 + ",paste0( batch_cols,collapse = " + "))), data=metadata)
+mmkeep <- model.matrix(reformulate(paste0("~0 + ",paste0( metadata_cols,collapse =  "+" ))), data=metadata)
+mm <- cbind(mmkeep,mmbatch)
+D0 <- DGEList(2^y$E) 
+D0 <- calcNormFactors(D0)
+y <- voom(D0, mm, plot = F)
+fit <- lmFit(y, mm)
+beta <- fit$coefficients[,-(1:ncol(mmkeep)),drop=FALSE]
+beta[is.na(beta)] <- 0
+corrcounts_v1 <- as.matrix(y$E) - beta %*% t(mmbatch)
+offset <- apply(corrcounts_v1,1,min) - apply(y$E,1,min)
+corrcounts_v1 <- as.data.frame(corrcounts_v1-offset)
+corrcounts_v1 <- 2^corrcounts_v1
+
+mm <- model.matrix(~0+Sample, metadata)
+
+y <- voom(corrcounts_v1, mm, plot = T)
+Charm.object.K562$corcounts <- as.data.frame(y$E)
+
+saveRDS(Charm.object.K562, "../Data_Objects/Charm.object_K562.RDS")
+```
+
+#### Expression Violins
+
+```{r}
+rbp <- "RBFOX2"
+violinplotter(Charm.object.K562, rbp)
+```
+
+
+#### Knockdown/knockout Integrity
+
+I first check if indeed there is a knockdown of treated RBP.
+
+```{r}
+# Loop over all RBPs
+sh_effect_vector <- data.frame()
+for (rbp in unique(Charm.object.K562$Experiment)) {
+  sh_effect <- shRNA_integrity(Charm.object.K562, rbp, varoi = "SampleType")
+  sh_effect_vector <- rbind(sh_effect_vector, sh_effect)
+}
+
+saveRDS(sh_effect_vector, "../Data_Objects/shRNA_Efficiency_K562.Rds")
+```
+
+
+```{r}
+rbp <- "RBFOX2"
+ndegs <- 20
+markers_to_plot <- as.data.frame(sh_effect_vector[rbp,] )
+
+ggplot(data = sh_effect_vector,
+       aes(x = logFC, y = B)) +
+  geom_point(color = "#CCCCCC") +
+  geom_point(data = markers, aes(x = logFC, y = B), color = "#A10702", size = 5) +
+  geom_label_repel(
+    data = markers_to_plot,
+    aes(label = rownames(markers_to_plot)),
+    size = 4,
+    point.padding = -0.5,
+    color = "#A10702",
+    max.overlaps = 20,
+    fontface = "italic"
+  ) +
+  theme_bw() +
+  xlab("Log Fold-Change") + 
+  ylab("B-Statistic") +
+  ggtitle("shRNA Effect") +
+  theme(
+    axis.line = element_line(colour = "black"),
+    panel.grid = element_blank(),        # 🚀 removes all gridlines
+    panel.border = element_blank(),
+    panel.background = element_blank(),
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5),
+    text = element_text(size = 15, family = "Arial MS")
+  )
+
+
+```
+
+#### Volcano 
+
+```{r}
+rbp <- "RBFOX2"
+result <- plot_rbp_volcano(Charm.object.K562, rbp)
+
+# Get full DE table
+head(result$top_table)
+
+# Show volcano plot
+result$volcano_plot
+```
+#### GSEA 
+
+```{r fig.height=6, fig.width=8}
+
+rbp <- "RBFOX2"
+result <- plot_gsea(Charm.object.K562, rbp)
+
+# Get full DE table
+head(result$geneset_table)
+
+# Show volcano plot
+result$gsea_plot
+```
+# B.3 Expression Object
+
+### Create CHARM Object (HEPG2)
+
+```{r}
+
+# Collapse all Charm objects
+Charm.object <- collapse_charmobj(CharmObj_rbp)
+
+# Convert rawcounts to data.frame and set rownames
+Charm.object$rawcounts <- as.data.frame(Charm.object$rawcounts)
+row.names(Charm.object$rawcounts) <- Charm.object$rawcounts$Name
+Charm.object$rawcounts$Name <- NULL
+
+# ----------------------------
+# Filter for Cell == "HEPG2"
+# ----------------------------
+keep_idx <- which(Charm.object$Cell == "HEPG2")
+
+Charm.object.HEPG2 <- list(
+  rawcounts  = Charm.object$rawcounts[, keep_idx, drop = FALSE],
+  SampleType = Charm.object$SampleType[keep_idx],
+  Cell       = Charm.object$Cell[keep_idx],
+  Experiment = Charm.object$Experiment[keep_idx]
+)
+
+```
+
+
+##### Filtration (Density Plot)
+
+In this version, every RBP is processed sepparetely, as if they were their own expression/tissue.
+
+```{r}
+alternew <- log10(rowSums(Charm.object.HEPG2$rawcounts))
+alternew <- as.data.frame(alternew)
+
+ggplot(alternew, aes(x=alternew)) + geom_density() + theme_bw() + geom_vline(xintercept = 4.5, linetype = "dashed") + ylab("Events") + xlab("Number of Reads (log10)") +
+  theme(axis.line = element_line(colour = "black"),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank()) + ggtitle("Density of Reads - All Samples")
+
+filterednew <- subset(Charm.object.HEPG2$rawcounts, alternew>4.5)
+
+
+#after cutting, its a good idea to visualize again
+falternew <- log10(rowSums(filterednew))
+falternew <- as.data.frame(falternew)
+ggplot(falternew, aes(x=falternew)) + geom_density() + theme_bw() + ylab("Events") + xlab("Number of Reads (log10)") +
+  theme(axis.line = element_line(colour = "black"),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank())
+
+#lets save the genes which we maintain
+impgenes <- c(row.names(falternew))
+
+
+#Now we need to select only the rows which have those genes.
+Charm.object.HEPG2$filtcounts <- Charm.object.HEPG2$rawcounts[row.names(Charm.object.HEPG2$rawcounts)%in%impgenes,]
+```
+
+
+
+##### Matrix Design
+
+Good! Now we can proceed by designing our matrices. 
+
+```{r}
+#To be able to use Voom, we must first convert our read count table into a special DGE object.
+D0 <- DGEList(Charm.object.HEPG2$filtcounts)
+
+
+#Then we calculate the normalisation factors for these new generated data frames
+#Bear in mind this step calculates the normalisation factors, but does not normalise itself.
+D0 <- calcNormFactors(D0)
+
+metadata <- data.frame(Sample=Charm.object.HEPG2$SampleType, Experiment=Charm.object.HEPG2$Experiment)
+
+
+#Now we do the matrixes
+mm <- model.matrix(~0+Sample+Experiment, metadata)
+
+
+#and now we normalise. This step also turns our counts into log2-counts per million.
+y <- voom(D0, mm, plot = T)
+Charm.object.HEPG2$normcounts <- as.data.frame(y$E)
+```
+
+##### Normalisation
+
+Now, we are almost ready to move on to the differential gene expression analysis. I will first check to see if any issues arose during the normalisation process, by looking at samples before and after this process.
+
+```{r}
+
+# ----------------------------
+# Prior to Normalisation
+# ----------------------------
+dfforboxy <- Charm.object.HEPG2$filtcounts
+dfforboxy <- select_extreme_samples(dfforboxy)
+
+dfforboxy <- reshape2::melt(dfforboxy)
+colnames(dfforboxy) <- c("Sample", "Expression")
+
+prenorm <- ggplot(dfforboxy, aes(x = Sample, y = log2(Expression + 1))) +
+  geom_boxplot(alpha = 0.6) +
+  theme_bw() +
+  ylab("Read Counts (Log2)") +
+  xlab("Samples") +
+  theme(
+    axis.line = element_line(colour = "black"),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    legend.position = "None"
+  ) +
+  ggtitle("Prior to Normalisation")
+
+# ----------------------------
+# After Normalisation
+# ----------------------------
+dfforboxy <- Charm.object.HEPG2$normcounts
+dfforboxy <- select_extreme_samples(dfforboxy)
+
+dfforboxy <- reshape2::melt(dfforboxy)
+colnames(dfforboxy) <- c("Sample", "Expression")
+
+
+postnorm <- ggplot(dfforboxy, aes(x = Sample, y = Expression)) +
+  geom_boxplot(alpha = 0.6) +
+  theme_bw() +
+  ylab("Read Counts (Log2CPM)") +
+  xlab("Samples") +
+  theme(
+    axis.line = element_line(colour = "black"),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    legend.position = "None"
+  ) +
+  ggtitle("After Normalisation")
+
+ggarrange(prenorm, postnorm, nrow = 1)
+```
+
+Normalisation isn't ideal, but it isn't too bad either.
+
+##### Batch Correction
+
+As an extra layer, we can also consider "cell type" as a batch factor. Here is the process I used to do so. For more information, please consult Schneider et al (voyAGEr).
+
+```{r}
+batch_cols <- c("Experiment")
+metadata_cols <- c("Sample")
+mmbatch <- model.matrix(reformulate(paste0("~0 + ",paste0( batch_cols,collapse = " + "))), data=metadata)
+mmkeep <- model.matrix(reformulate(paste0("~0 + ",paste0( metadata_cols,collapse =  "+" ))), data=metadata)
+mm <- cbind(mmkeep,mmbatch)
+D0 <- DGEList(2^y$E) 
+D0 <- calcNormFactors(D0)
+y <- voom(D0, mm, plot = F)
+fit <- lmFit(y, mm)
+beta <- fit$coefficients[,-(1:ncol(mmkeep)),drop=FALSE]
+beta[is.na(beta)] <- 0
+corrcounts_v1 <- as.matrix(y$E) - beta %*% t(mmbatch)
+offset <- apply(corrcounts_v1,1,min) - apply(y$E,1,min)
+corrcounts_v1 <- as.data.frame(corrcounts_v1-offset)
+corrcounts_v1 <- 2^corrcounts_v1
+
+mm <- model.matrix(~0+Sample, metadata)
+
+y <- voom(corrcounts_v1, mm, plot = T)
+Charm.object.HEPG2$corcounts <- as.data.frame(y$E)
+
+saveRDS(Charm.object.HEPG2, "../Data_Objects/Charm.object_HEPG2.RDS")
+```
+
+#### Expression Violins
+
+```{r}
+rbp <- "RBFOX2"
+violinplotter(Charm.object.HEPG2, rbp)
+```
+
+
+#### Knockdown/knockout Integrity
+
+I first check if indeed there is a knockdown of treated RBP.
+
+```{r}
+# Loop over all RBPs
+sh_effect_vector <- data.frame()
+for (rbp in unique(Charm.object.HEPG2$Experiment)) {
+  sh_effect <- shRNA_integrity(Charm.object.HEPG2, rbp, varoi = "SampleType")
+  sh_effect_vector <- rbind(sh_effect_vector, sh_effect)
+}
+
+saveRDS(sh_effect_vector, "../Data_Objects/shRNA_Efficiency_HEPG2.Rds")
+```
+
+
+```{r}
+rbp <- "RBFOX2"
+ndegs <- 20
+markers_to_plot <- as.data.frame(sh_effect_vector[rbp,] )
+
+ggplot(data = sh_effect_vector,
+       aes(x = logFC, y = B)) +
+  geom_point(color = "#CCCCCC") +
+  geom_point(data = markers, aes(x = logFC, y = B), color = "#A10702", size = 5) +
+  geom_label_repel(
+    data = markers_to_plot,
+    aes(label = rownames(markers_to_plot)),
+    size = 4,
+    point.padding = -0.5,
+    color = "#A10702",
+    max.overlaps = 20,
+    fontface = "italic"
+  ) +
+  theme_bw() +
+  xlab("Log Fold-Change") + 
+  ylab("B-Statistic") +
+  ggtitle("shRNA Effect") +
+  theme(
+    axis.line = element_line(colour = "black"),
+    panel.grid = element_blank(),        # 🚀 removes all gridlines
+    panel.border = element_blank(),
+    panel.background = element_blank(),
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5),
+    text = element_text(size = 15, family = "Arial MS")
+  )
+
+
+```
+
+#### Volcano 
+
+```{r}
+rbp <- "RBFOX2"
+result <- plot_rbp_volcano(Charm.object.HEPG2, rbp)
+
+# Get full DE table
+head(result$top_table)
+
+# Show volcano plot
+result$volcano_plot
+```
+
+#### GSEA 
+
+```{r fig.height=6, fig.width=8}
+
+rbp <- "RBFOX2"
+result <- plot_gsea(Charm.object.HEPG2, rbp)
+
+# Get full DE tablew
+head(result$geneset_table)
+
+# Show volcano plot
+result$gsea_plot
+```
+
+# B.4 Similarity Object
+
+### Functions
+
+#### Expression
+
+```{r}
+exp_correl <- function(rbp_results, rbp, correl_num = NULL,
+                       n_pos = NULL, n_neg = NULL, other_rbps = NULL) {
+  #----------------------------
+  # Step 1: Extract the reference RBP
+  #----------------------------
+  if (!(rbp %in% names(rbp_results))) {
+    stop("RBP not found in rbp_results")
+  }
+  
+  ref_df <- rbp_results[[rbp]]
+  stopifnot(all(c("Gene", "t") %in% colnames(ref_df)))
+  ref_vec <- ref_df$t
+  names(ref_vec) <- ref_df$Gene
+  
+  #----------------------------
+  # Step 2: Correlate with all other RBPs
+  #----------------------------
+  cor_results <- data.frame(RBP = character(), Correlation = numeric(), Pvalue = numeric())
+  
+  for (other_rbp in setdiff(names(rbp_results), rbp)) {
+    other_df <- rbp_results[[other_rbp]]
+    merged <- merge(ref_df, other_df, by = "Gene", suffixes = c("_ref", "_other"))
+    
+    if (nrow(merged) > 2) {
+      test <- suppressWarnings(cor.test(merged$t_ref, merged$t_other, method = "spearman"))
+      cor_results <- rbind(
+        cor_results,
+        data.frame(RBP = other_rbp,
+                   Correlation = unname(test$estimate),
+                   Pvalue = test$p.value)
+      )
+    }
+  }
+  
+  #----------------------------
+  # Step 3: Select RBPs to plot
+  #----------------------------
+  if (!is.null(other_rbps)) {
+    # Check which are valid
+    not_found <- setdiff(other_rbps, names(rbp_results))
+    if (length(not_found) > 0) {
+      for (gene in not_found) {
+        message(paste0("'", gene, "' is not a valid RBP name."))
+      }
+    }
+    valid_rbps <- intersect(other_rbps, cor_results$RBP)
+    top_cor <- cor_results[cor_results$RBP %in% valid_rbps, ]
+    
+  } else if (!is.null(correl_num)) {
+    cor_results <- cor_results[order(-abs(cor_results$Correlation)), ]
+    top_cor <- head(cor_results, correl_num)
+    
+  } else if (!is.null(n_pos) | !is.null(n_neg)) {
+    pos <- cor_results[order(-cor_results$Correlation), ]
+    neg <- cor_results[order(cor_results$Correlation), ]
+    top_cor <- rbind(head(pos, n_pos), head(neg, n_neg))
+    
+  } else {
+    stop("Please provide either other_rbps, correl_num, or (n_pos and/or n_neg)")
+  }
+  
+  # Order rows by correlation strength
+  top_cor <- top_cor[order(top_cor$Correlation, decreasing = TRUE), ]
+  top_cor$RBP <- factor(top_cor$RBP, levels = top_cor$RBP)
+  
+  #----------------------------
+  # Step 4: Heatmap
+  #----------------------------
+  heatmap_plot <- ggplot(top_cor, aes(x = rbp, y = RBP, fill = Correlation)) +
+    geom_tile(color = "white") +
+    geom_text(aes(label = sprintf("%.2f", Correlation)), color = "white", size = 5) +
+    scale_fill_gradient2(low = "black", mid = "white", high = "#601700", midpoint = 0,
+                         limits = c(-1, 1)) +
+    labs(title = paste("Spearman correlations with", rbp, "- Expression"),
+         x = "Reference RBP", y = "Other RBPs") +
+    theme_minimal(base_size = 14) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  return(list(correlation_table = cor_results,
+              top_table = top_cor,
+              heatmap = heatmap_plot))
+}
+
+
+```
+
+#### GSEA
+
+```{r}
+gsea_correl <- function(gsea_results, rbp, correl_num = NULL,
+                        n_pos = NULL, n_neg = NULL, other_rbps = NULL) {
+  #----------------------------
+  # Step 1: Extract the reference RBP
+  #----------------------------
+  if (!(rbp %in% names(gsea_results))) {
+    stop("RBP not found in gsea_results")
+  }
+  
+  ref_df <- gsea_results[[rbp]]
+  stopifnot(all(c("pathway", "NES") %in% colnames(ref_df)))
+  ref_vec <- ref_df$NES
+  names(ref_vec) <- ref_df$pathway
+  
+  #----------------------------
+  # Step 2: Correlate with all other RBPs
+  #----------------------------
+  cor_results <- data.frame(RBP = character(), Correlation = numeric(), Pvalue = numeric())
+  
+  for (other_rbp in setdiff(names(gsea_results), rbp)) {
+    other_df <- gsea_results[[other_rbp]]
+    merged <- merge(ref_df, other_df, by = "pathway", suffixes = c("_ref", "_other"))
+    
+    if (nrow(merged) > 2) {
+      test <- suppressWarnings(cor.test(merged$NES_ref, merged$NES_other, method = "spearman"))
+      cor_results <- rbind(
+        cor_results,
+        data.frame(RBP = other_rbp,
+                   Correlation = unname(test$estimate),
+                   Pvalue = test$p.value)
+      )
+    }
+  }
+  
+  #----------------------------
+  # Step 3: Select RBPs to plot
+  #----------------------------
+  if (!is.null(other_rbps)) {
+    # Check which are valid
+    not_found <- setdiff(other_rbps, names(gsea_results))
+    if (length(not_found) > 0) {
+      for (gene in not_found) {
+        message(paste0("'", gene, "' is not a valid RBP name."))
+      }
+    }
+    valid_rbps <- intersect(other_rbps, cor_results$RBP)
+    top_cor <- cor_results[cor_results$RBP %in% valid_rbps, ]
+    
+  } else if (!is.null(correl_num)) {
+    cor_results <- cor_results[order(-abs(cor_results$Correlation)), ]
+    top_cor <- head(cor_results, correl_num)
+    
+  } else if (!is.null(n_pos) | !is.null(n_neg)) {
+    pos <- cor_results[order(-cor_results$Correlation), ]
+    neg <- cor_results[order(cor_results$Correlation), ]
+    top_cor <- rbind(head(pos, n_pos), head(neg, n_neg))
+    
+  } else {
+    stop("Please provide either other_rbps, correl_num, or (n_pos and/or n_neg)")
+  }
+  
+  # Order rows by correlation strength
+  top_cor <- top_cor[order(top_cor$Correlation, decreasing = TRUE), ]
+  top_cor$RBP <- factor(top_cor$RBP, levels = top_cor$RBP)
+  
+  #----------------------------
+  # Step 4: Heatmap
+  #----------------------------
+  heatmap_plot <- ggplot(top_cor, aes(x = rbp, y = RBP, fill = Correlation)) +
+    geom_tile(color = "white") +
+    geom_text(aes(label = sprintf("%.2f", Correlation)), color = "white", size = 5) +
+    scale_fill_gradient2(low = "black", mid = "white", high = "#601700", midpoint = 0,
+                         limits = c(-1, 1)) +
+    labs(title = paste("Spearman correlations with", rbp, "- GSEA"),
+         x = "Reference RBP", y = "Other RBPs") +
+    theme_minimal(base_size = 14) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  return(list(correlation_table = cor_results,
+              top_table = top_cor,
+              heatmap = heatmap_plot))
+}
+
+
+```
+
+#### Scatters
+
+##### Expression
+
+```{r}
+correl_exp_rbp <- function(rbp_results, rbp, other_rbp) {
+  #----------------------------
+  # Step 1: Input checks
+  #----------------------------
+  if (!(rbp %in% names(rbp_results))) {
+    stop(paste("'", rbp, "' not found in rbp_results"))
+  }
+  if (!(other_rbp %in% names(rbp_results))) {
+    stop(paste("'", other_rbp, "' not found in rbp_results"))
+  }
+  
+  ref_df <- rbp_results[[rbp]]
+  other_df <- rbp_results[[other_rbp]]
+  
+  stopifnot(all(c("Gene", "t") %in% colnames(ref_df)))
+  stopifnot(all(c("Gene", "t") %in% colnames(other_df)))
+  
+  #----------------------------
+  # Step 2: Merge data
+  #----------------------------
+  merged <- merge(ref_df, other_df, by = "Gene", suffixes = c(paste0("_", rbp), paste0("_", other_rbp)))
+  
+  #----------------------------
+  # Step 3: Scatter plot with correlation
+  #----------------------------
+  p <- ggplot(merged, aes_string(x = paste0("t_", rbp), y = paste0("t_", other_rbp))) +
+    geom_point(fill = "#DDDDDD", alpha = 0.3, size = 5, shape = 21, colour = "black") +
+    geom_density2d(color = "#800020", size = 1.2) +
+    theme_bw() +
+    xlab(paste(rbp, "t-statistics")) +
+    ylab(paste(other_rbp, "t-statistics")) +
+    theme(axis.line = element_line(colour = "black"),
+          panel.grid.minor = element_blank(),
+          panel.border = element_blank(),
+          panel.background = element_blank(),
+          panel.grid.major = element_blank(),
+          plot.title = element_text(hjust = 0.5),
+          text = element_text(size = 20, family = "Arial")) +
+    ggtitle(paste("Correlation between", rbp, "and", other_rbp)) +
+    ggpubr::stat_cor(method = "spearman", cor.coef.name = "rho", size = 7)
+  
+  return(p)
+}
+
+```
+
+##### GSEA
+
+```{r}
+correl_scatter_gsea <- function(gsea_results, rbp, other_rbp) {
+  #----------------------------
+  # Step 1: Input checks
+  #----------------------------
+  if (!(rbp %in% names(gsea_results))) stop(paste0("'", rbp, "' not found in gsea_results"))
+  if (!(other_rbp %in% names(gsea_results))) stop(paste0("'", other_rbp, "' not found in gsea_results"))
+  
+  ref_df <- gsea_results[[rbp]]
+  other_df <- gsea_results[[other_rbp]]
+  
+  stopifnot(all(c("pathway", "NES") %in% colnames(ref_df)))
+  stopifnot(all(c("pathway", "NES") %in% colnames(other_df)))
+  
+  #----------------------------
+  # Step 2: Merge data
+  #----------------------------
+  merged <- merge(ref_df, other_df, by = "pathway", suffixes = c(paste0("_", rbp), paste0("_", other_rbp)))
+  
+  #----------------------------
+  # Step 3: Scatter plot
+  #----------------------------
+  p <- ggplot(merged, aes_string(x = paste0("NES_", rbp), y = paste0("NES_", other_rbp))) +
+    geom_point(fill = "#DDDDDD", alpha = 0.3, size = 5, shape = 21, colour = "black") +
+    theme_bw() +
+    xlab(paste(rbp, "NES")) +
+    ylab(paste(other_rbp, "NES")) +
+    ggtitle(paste("GSEA correlation between", rbp, "and", other_rbp)) +
+    theme(
+      axis.line = element_line(colour = "black"),
+      panel.grid.minor = element_blank(),
+      panel.border = element_blank(),
+      panel.background = element_blank(),
+      panel.grid.major = element_blank(),
+      plot.title = element_text(hjust = 0.5),
+      text = element_text(size = 20, family = "Arial MS")
+    ) +
+    ggpubr::stat_cor(method = "spearman", cor.coef.name = "rho", size = 7)
+  
+  return(p)
+}
+
+```
+
+
+## B.4.1 Both Cells
+
+#### Expression
+
+```{r}
+Charm.object <- readRDS("../Data_Objects/Charm.object.RDS")
+
+get_rbp_tvals <- function(Charmobj, rbp, varoi = "SampleType") {
+  #----------------------------
+  # Step 1: Differential Expression
+  #----------------------------
+  expr <- Charmobj$corcounts
+  group <- Charmobj[[varoi]]
+  
+  # Design matrix
+  mm <- model.matrix(~0 + group)
+  colnames(mm) <- gsub("group", "", colnames(mm))
+  
+  # Fit linear model
+  fitted <- limma::lmFit(expr, mm)
+  
+  # Contrast: RBP vs Control
+  contrast_formula <- paste0(rbp, " - Control")
+  contr <- limma::makeContrasts(contrasts = contrast_formula, levels = colnames(coef(fitted)))
+  
+  tmp_contr <- limma::contrasts.fit(fitted, contr)
+  tmp <- limma::eBayes(tmp_contr)
+  
+  # Get results for all genes (keep all)
+  top.table <- limma::topTable(tmp, sort.by = "none", n = Inf)
+  
+  # Keep only gene name + t-statistic
+  top.table <- data.frame(
+    Gene = rownames(top.table),
+    t = top.table$t
+  )
+  
+  # Order by absolute t
+  top.table <- top.table[order(-abs(top.table$t)), ]
+  rownames(top.table) <- NULL
+  
+  return(top.table)
+}
+
+rbp_results <- list()
+for (rbp in unique(Charm.object$Experiment)) {
+  rbp_results[[rbp]] <- get_rbp_tvals(Charm.object, rbp)
+}
+
+saveRDS(rbp_results, "../Data_Objects/RBPs.t_All.RDS")
+```
+
+#### GSEA
+
+```{r}
+run_gsea_from_tvals <- function(tvals_df, rbp,
+                                species = "Homo sapiens",
+                                collection = "H", subcollection = NULL) {
+  #----------------------------
+  # Step 1: Prepare ranks
+  #----------------------------
+  stopifnot(all(c("Gene", "t") %in% colnames(tvals_df)))
+  
+  DEGenes <- tvals_df[order(tvals_df$t, decreasing = TRUE), ]
+  vectorranks <- DEGenes$t
+  names(vectorranks) <- DEGenes$Gene
+  
+  #----------------------------
+  # Step 2: Load gene sets
+  #----------------------------
+  gs <- msigdbr(species = species, collection = collection, subcollection = subcollection)
+  gsets <- split(gs$gene_symbol, gs$gs_name)
+  gsets <- lapply(gsets, toupper)
+  
+  #----------------------------
+  # Step 3: Run fgsea
+  #----------------------------
+  res <- fgsea(pathways = gsets, stats = vectorranks)
+  
+  # keep only pathway + NES
+  res_tidy <- res %>%
+    as_tibble() %>%
+    dplyr::select(pathway, NES)
+  
+  return(res_tidy)
+}
+
+gsea_results <- list()
+for (rbp in names(rbp_results)) {
+  gsea_results[[rbp]] <- run_gsea_from_tvals(rbp_results[[rbp]], rbp)
+}
+
+saveRDS(gsea_results, "../Data_Objects/RBPs.gsea_All.RDS")
+```
+
+#### Results
+
+```{r}
+result <- exp_correl(rbp_results, "RBFOX2", correl_num = 10)
+
+head(result$top_table)      # table of top correlations
+result$heatmap              # ggplot heatmap
+
+result <- gsea_correl(gsea_results, "RBFOX2", correl_num = 10)
+
+head(result$top_table)      # table of top correlations
+result$heatmap              # ggplot heatmap
+
+correl_exp_rbp(rbp_results, "RBFOX2", "TIA1")
+correl_scatter_gsea(gsea_results, "RBFOX2", "TIA1")
+```
+## B.4.2 K562
+
+#### Expression
+
+```{r}
+Charm.object.K562 <- readRDS("../Data_Objects/Charm.object_K562.RDS")
+
+rbp_results <- list()
+for (rbp in unique(Charm.object.K562$Experiment)) {
+  rbp_results[[rbp]] <- get_rbp_tvals(Charm.object.K562, rbp)
+}
+
+saveRDS(rbp_results, "../Data_Objects/RBPs.t_K562.RDS")
+```
+
+#### GSEA
+
+```{r}
+
+gsea_results <- list()
+for (rbp in names(rbp_results)) {
+  gsea_results[[rbp]] <- run_gsea_from_tvals(rbp_results[[rbp]], rbp)
+}
+
+saveRDS(gsea_results, "../Data_Objects/RBPs.gsea_K562.RDS")
+```
+
+#### Results
+
+```{r}
+result <- exp_correl(rbp_results, "RBFOX2", correl_num = 10)
+
+head(result$top_table)      # table of top correlations
+result$heatmap              # ggplot heatmap
+
+result <- gsea_correl(gsea_results, "RBFOX2", correl_num = 10)
+
+head(result$top_table)      # table of top correlations
+result$heatmap              # ggplot heatmap
+
+```
+
+## B.4.3 HEPG2
+
+#### Expression
+
+```{r}
+Charm.object.HEPG2 <- readRDS("../Data_Objects/Charm.object_HEPG2.RDS")
+
+rbp_results <- list()
+for (rbp in unique(Charm.object.HEPG2$Experiment)) {
+  rbp_results[[rbp]] <- get_rbp_tvals(Charm.object.HEPG2, rbp)
+}
+
+saveRDS(rbp_results, "../Data_Objects/RBPs.t_HEPG2.RDS")
+```
+
+#### GSEA
+
+```{r}
+
+gsea_results <- list()
+for (rbp in names(rbp_results)) {
+  gsea_results[[rbp]] <- run_gsea_from_tvals(rbp_results[[rbp]], rbp)
+}
+
+saveRDS(gsea_results, "../Data_Objects/RBPs.gsea_HEPG2.RDS")
+```
+
+#### Results
+
+```{r}
+result <- exp_correl(rbp_results, "RBFOX2", correl_num = 10, other_rbps = c("TIA1", "U2AF1", "U2AF2", "ATXN2"))
+
+head(result$top_table)      # table of top correlations
+result$heatmap              # ggplot heatmap
+
+result <- gsea_correl(gsea_results, "RBFOX2", correl_num = 10, other_rbps = c("TIA1", "U2AF1", "U2AF2", "ATXN2"))
+
+head(result$top_table)      # table of top correlations
+result$heatmap              # ggplot heatmap
+
+```
+
