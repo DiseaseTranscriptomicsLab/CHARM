@@ -1074,7 +1074,7 @@ for (rbp in unique(Charm.object$Experiment)) {
   sh_effect_vector <- rbind(sh_effect_vector, sh_effect)
 }
 
-saveRDS(sh_effect_vector, "../Data_Objects/shRNA_Efficiency.Rds")
+saveRDS(sh_effect_vector, "../data/shRNA_Efficiency.Rds")
 ```
 
 

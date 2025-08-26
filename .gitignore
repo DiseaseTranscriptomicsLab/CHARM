@@ -6,7 +6,7 @@
 =======
 
 # Big Data, only stored locally
-Data_Objects/
+data/
 
 # History files
 .Rhistory
