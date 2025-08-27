@@ -1,12 +1,18 @@
 library(shiny)
 library(shinythemes)
 library(fontawesome)
+library(DT)
+library(plotly)
+library(ggplot2)
+library(limma)
+library(ggrepel)
+library(shinycssloaders)
 
 source("helper_functions.R")
 
 # Load CHARM object once when app starts
 Charm.object <- readRDS("data/Charm.object.RDS")
-shRNA_Efficiency <- readRDS("data/shRNA_Efficiency.Rds")
+sh_effect_vector <- readRDS("data/shRNA_Efficiency.Rds")
 
 
 ui <- fluidPage(
@@ -27,7 +33,12 @@ ui <- fluidPage(
       outline: none;
       box-shadow: 0 0 5px rgba(44,62,80,0.4);
     }
-  "))
+  ")),
+  tags$script(HTML("
+  Shiny.addCustomMessageHandler('toggleCursor', function(state) {
+    document.body.style.cursor = state ? 'wait' : 'default';
+  });
+"))
   ),
 
   # Tabset with 5 tabs
@@ -94,6 +105,7 @@ ui <- fluidPage(
 
         # Main layout: sidebar (left) + results (right)
         fluidRow(
+
           # Left sidebar for mode selection + search
           column(
             width = 3,
@@ -125,7 +137,7 @@ ui <- fluidPage(
                     choices = NULL,
                     multiple = FALSE,
                     options = list(placeholder = "RBP"),
-                    width = "400px"   # ⬅️ try 400px or "100%" if you want full row
+                    width = "400px"
                   ),
 
                   actionButton(
@@ -171,6 +183,8 @@ ui <- fluidPage(
           column(
             width = 9,
             tags$h3("Expression Data Results"),
+
+            # Top plots: Violin + shRNA
             fluidRow(
               column(
                 width = 6,
@@ -183,11 +197,28 @@ ui <- fluidPage(
                 uiOutput("shrna_warning")
               )
             ),
+
+            # Add vertical space before volcano + table
+            div(style = "margin-top: 50px;",
+                fluidRow(
+                  column(
+                    width = 6,
+                    plotlyOutput("volcano_plot", height = "600px")
+                  ),
+                  column(
+                    width = 6,
+                    DTOutput("volcano_table")
+                  )
+                )
+            ),
+
             uiOutput("expr_placeholder")
           )
+
         )
       )
-    ),
+    )
+    , # end tabPanel
     # Splicing tab
     tabPanel(
       tagList(fa("scissors", fill = "black", height = "1em"), " Splicing"),
@@ -480,19 +511,23 @@ ui <- fluidPage(
   )
 )
 
-#### SERVER
 server <- function(input, output, session) {
 
-  # ---- Populate the search bar ----
+  # reactive storage
+  display_table <- reactiveVal(NULL)
+  rbp_current <- reactiveVal(NULL)
+
+  # ---- Search bar population ----
   observe({
-    exp_choices <- unique(Charm.object$Experiment)
-    updateSelectizeInput(session, "expr_search", choices = exp_choices, server = TRUE)
+    req(Charm.object)
+    updateSelectizeInput(session, "expr_search",
+                         choices = unique(Charm.object$Experiment),
+                         server = TRUE)
   })
 
-  # ---- File upload validation ----
+  # ---- File upload validation (unchanged) ----
   observeEvent(input$user_file, {
     req(input$user_file)
-
     file_path <- input$user_file$datapath
     df <- tryCatch(
       read.table(file_path, header = FALSE, sep = "\t", stringsAsFactors = FALSE),
@@ -501,7 +536,6 @@ server <- function(input, output, session) {
 
     upload_ok <- TRUE
     error_msg <- NULL
-
     if (is.null(df)) {
       upload_ok <- FALSE
       error_msg <- "Could not read the file. Make sure it is tab-delimited."
@@ -516,62 +550,152 @@ server <- function(input, output, session) {
       error_msg <- "Second column must be numeric."
     }
 
-    if (!upload_ok) {
-      output$file_warning <- renderUI({
-        div(style = "color: red; font-weight: bold; margin-top: 10px;",
-            paste("Upload failed:", error_msg))
-      })
+    output$file_warning <- renderUI({
+      if (upload_ok) {
+        div(style="color:green;font-weight:bold;margin-top:10px;", "Upload complete!")
+      } else {
+        div(style="color:red;font-weight:bold;margin-top:10px;", paste("Upload failed:", error_msg))
+      }
+    })
+  })
+
+  # ---- Volcano plot helper ----
+  make_volcano_plot <- function(tbl, rbp) {
+    if (is.null(tbl) || nrow(tbl) == 0) {
+      ggplot() + annotate("text", x = 0, y = 0, label = paste("No results for", rbp)) + theme_void()
     } else {
-      output$file_warning <- renderUI({
-        div(style = "color: green; font-weight: bold; margin-top: 10px;",
-            "Upload complete!")
+      ggplot(tbl, aes(x = logFC, y = B,
+                      text = paste0("Gene: ", gene,
+                                    "<br>logFC: ", round(logFC,2),
+                                    "<br>B: ", round(B,2),
+                                    "<br>P: ", signif(P.Value,3)))) +
+        geom_point(aes(color = highlight), alpha = 0.7) +
+        scale_color_manual(values = c("None"="#CCCCCC","RBP"="#A10702","Selected"="#008057")) +
+        theme_bw() +
+        labs(title=paste(rbp,"KD"), x="Log Fold-Change", y="B-statistic") +
+        theme(legend.position="none", plot.title=element_text(hjust=0.5))
+    }
+  }
+
+  # ---- Main: search button triggers all plots ----
+  observeEvent(input$search_btn, {
+    req(input$expr_search)
+    rbp_sel <- input$expr_search
+    rbp_current(rbp_sel)
+
+    session$sendCustomMessage("toggleCursor", TRUE)  # start wait cursor
+
+    # Violin plot
+    output$expr_violin <- renderPlot({ violinplotter(Charm.object, rbp_sel) })
+    output$expr_note <- renderUI({
+      div(style="margin-top:10px;font-size:16px;font-weight:bold;color:red;",
+          "Red dots correspond to the controls from paired gene silencing experiment.")
+    })
+
+    # shRNA effect
+    output$shrna_plot <- renderPlot({ plot_shRNA_effect(sh_effect_vector, rbp_sel) })
+    output$shrna_warning <- renderUI({
+      stats <- sh_effect_vector[rbp_sel,,drop=FALSE]
+      if (is.null(stats) || nrow(stats)==0) return(NULL)
+      logFC <- stats$logFC
+      pval <- stats$P.Value
+      if (pval > 0.05 || logFC > -0.5) {
+        div(style="margin-top:10px;font-size:16px;font-weight:bold;color:red;",
+            "WARNING: The efficiency of this knockdown is uncertain. Proceed with caution.")
+      } else NULL
+    })
+
+    # Volcano computation
+    result <- plot_rbp_volcano(Charm.object, rbp_sel)
+    tbl <- as.data.frame(result$top_table)
+    if (!"gene" %in% colnames(tbl)) tbl$gene <- rownames(tbl)
+    tbl <- tbl[, c("gene", setdiff(colnames(tbl),"gene"))]
+    if (!"highlight" %in% colnames(tbl)) tbl$highlight <- ifelse(tbl$gene==rbp_sel,"RBP","None")
+    else tbl$highlight <- ifelse(tbl$gene==rbp_sel,"RBP","None")
+    display_table(tbl)
+
+    # render table
+    output$volcano_table <- renderDT({
+      datatable(
+        display_table(),
+        filter = "none",       # no per-column filters
+        selection = "single",
+        rownames = FALSE,
+        options = list(
+          pageLength = 10,
+          scrollX = TRUE,
+          searching = TRUE     # global search enabled
+        )
+      )
+    })
+    # render volcano
+    output$volcano_plot <- renderPlotly({
+      ggplotly(make_volcano_plot(display_table(), rbp_sel), tooltip="text", source="volcano") %>%
+        event_register("plotly_click")
+    })
+
+    session$sendCustomMessage("toggleCursor", FALSE)  # end wait cursor
+  })
+
+
+  # ---- React to clicking a point in the volcano ----
+  observeEvent(event_data("plotly_click", source = "volcano"), {
+    ed <- event_data("plotly_click", source = "volcano")
+    tbl <- display_table()   # get current table
+    if (!is.null(ed) && nrow(tbl) > 0) {
+      # Find closest gene to click
+      clicked_gene <- tbl$gene[which.min(abs(tbl$logFC - ed$x) + abs(tbl$B - ed$y))]
+
+      # Reorder table: clicked gene on top
+      tbl <- rbind(tbl[tbl$gene == clicked_gene, ], tbl[tbl$gene != clicked_gene, ])
+      display_table(tbl)  # update reactiveVal
+
+      # Highlight selected gene in the table for the plot
+      tmp_tbl <- tbl
+      tmp_tbl$highlight <- ifelse(tmp_tbl$gene == clicked_gene, "Selected", tmp_tbl$highlight)
+
+      # Re-render volcano plot
+      plt <- ggplot(tmp_tbl, aes(x = logFC, y = B,
+                                 text = paste0("Gene: ", gene,
+                                               "<br>logFC: ", round(logFC, 2),
+                                               "<br>B: ", round(B, 2),
+                                               "<br>P: ", signif(P.Value, 3)))) +
+        geom_point(aes(color = highlight), alpha = 0.7) +
+        scale_color_manual(values = c(
+          "None" = "#CCCCCC",
+          "Other" = "#23586C",
+          "RBP" = "#A10702",
+          "Selected" = "#008057"
+        )) +
+        theme_bw() +
+        labs(title = paste("Volcano plot:", rbp_current()),
+             x = "Log Fold-Change", y = "B-statistic") +
+        theme(legend.position = "none",
+              plot.title = element_text(hjust = 0.5))
+
+      output$volcano_plot <- renderPlotly({
+        ggplotly(plt, tooltip = "text", source = "volcano")
       })
     }
   })
 
-  # ---- Plot + explanatory text when Search is clicked ----
-  observeEvent(input$search_btn, {
-    req(input$expr_search)
+  # ---- React to selecting a row in the table ----
+  observeEvent(input$volcano_table_rows_selected, {
+    sel_row <- input$volcano_table_rows_selected
+    if (is.null(sel_row)) return()
+    tbl <- display_table()
+    sel_gene <- tbl$gene[sel_row]
+    tbl$highlight <- ifelse(tbl$gene==sel_gene,"Selected", ifelse(tbl$gene==rbp_current(),"RBP","None"))
+    display_table(tbl)
 
-    rbp_selected <- input$expr_search
-
-    # render violin plot
-    output$expr_violin <- renderPlot({
-      violinplotter(Charm.object, rbp_selected)
+    # re-render volcano
+    output$volcano_plot <- renderPlotly({
+      ggplotly(make_volcano_plot(display_table(), rbp_current()), tooltip="text", source="volcano") %>%
+        event_register("plotly_click")
     })
-
-    output$expr_note <- renderUI({
-      div(
-        style = "margin-top: 10px; font-size: 16px; font-weight: bold; color: red;",
-        "Red dots correspond to the controls from paired gene silencing experiment."
-      )
-    })
-
-    # render shRNA effect plot
-    output$shrna_plot <- renderPlot({
-      plot_shRNA_effect(sh_effect_vector, rbp_selected)
-    })
-
-    # conditional warning
-    output$shrna_warning <- renderUI({
-      stats <- sh_effect_vector[rbp_selected, , drop = FALSE]
-      logFC <- stats$logFC
-      pval <- stats$P.Value
-
-      if (pval > 0.05 || logFC > -0.5) {
-        div(
-          style = "margin-top: 10px; font-size: 16px; font-weight: bold; color: red;",
-          "WARNING: The efficiency of this knockdown is uncertain. Proceed with caution."
-        )
-      } else {
-        NULL
-      }
-    })
-
-    # remove placeholder text
-    output$expr_placeholder <- renderUI(NULL)
   })
-}
+
+} # end server
 
 
 shinyApp(ui, server)

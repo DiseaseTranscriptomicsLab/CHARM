@@ -111,3 +111,83 @@ plot_shRNA_effect <- function(sh_effect_vector, rbp) {
     )
 }
 
+
+plot_rbp_volcano <- function(Charmobj, rbp, varoi = "SampleType") {
+  #----------------------------
+  # Step 1: Differential Expression
+  #----------------------------
+  expr <- Charmobj$corcounts
+  group <- Charmobj[[varoi]]
+
+  # Design matrix
+  mm <- model.matrix(~0 + group)
+  colnames(mm) <- gsub("group", "", colnames(mm))
+
+  # Fit linear model
+  fitted <- lmFit(expr, mm)
+
+  contrast_formula <- paste0(rbp, " - Control")
+  contr <- makeContrasts(contrasts = contrast_formula, levels = colnames(coef(fitted)))
+
+  tmp_contr <- contrasts.fit(fitted, contr)
+  tmp <- eBayes(tmp_contr)
+
+  # Get results for all genes
+  top.table <- topTable(tmp, sort.by = "none", n = Inf)
+
+  # If no results, return placeholder
+  if (nrow(top.table) == 0) {
+    empty_plot <- ggplot() +
+      annotate("text", x = 0, y = 0, label = paste("No results for", rbp)) +
+      theme_void()
+    return(list(top_table = top.table, volcano_plot = empty_plot))
+  }
+
+  # Ensure gene column exists
+  if (!"gene" %in% colnames(top.table)) {
+    top.table$gene <- rownames(top.table)
+  }
+
+  # Move gene column to first position
+  top.table <- top.table[, c("gene", setdiff(colnames(top.table), "gene"))]
+
+
+  # Add highlight category
+  top.table$highlight <- "None"
+  if (rbp %in% top.table$gene) {
+    top.table$highlight[top.table$gene == rbp] <- "RBP"
+  }
+
+  # Order by absolute t-statistic
+  top.table <- top.table[order(-abs(top.table$t)), ]
+
+  #----------------------------
+  # Step 2: Volcano Plot
+  #----------------------------
+  volcano_plot <- ggplot() +
+    # Base layer: all genes grey
+    geom_point(data = subset(top.table, highlight == "None"),
+               aes(x = logFC, y = B), color = "#CCCCCC", alpha = 0.6) +
+    # Red layer: rbp gene
+    geom_point(data = subset(top.table, highlight == "RBP"),
+               aes(x = logFC, y = B), color = "#A10702", alpha = 0.9, size = 2.5) +
+    # Labels for RBP
+    geom_text_repel(
+      data = subset(top.table, highlight == "RBP"),
+      aes(x = logFC, y = B, label = rownames(subset(top.table, highlight == "RBP"))),
+      size = 5, fontface = "italic", color = "#A10702", nudge_y = 1
+    ) +
+    theme_bw() +
+    theme(
+      plot.title = element_text(hjust = 0.5),
+      axis.line = element_line(colour = "black"),
+      panel.grid.minor = element_blank(),
+      panel.border = element_blank(),
+      panel.background = element_blank(),
+      legend.position = "none"
+    ) +
+    labs(title = paste(rbp," KD"),
+         x = "Log Fold-Change", y = "B-statistic")
+
+  return(list(top_table = top.table, volcano_plot = volcano_plot))
+}
