@@ -211,7 +211,18 @@ ui <- fluidPage(
                   )
                 )
             ),
-
+            div(style = "margin-top: 50px;",
+                fluidRow(
+                  column(
+                    width = 6,
+                    plotOutput("gsea_plot", height = "600px")
+                  ),
+                  column(
+                    width = 6,
+                    DTOutput("geneset_table")
+                  )
+                )
+            ),
             uiOutput("expr_placeholder")
           )
 
@@ -513,9 +524,9 @@ ui <- fluidPage(
 
 server <- function(input, output, session) {
 
-  # reactive storage
+  # Reactive storage
   display_table <- reactiveVal(NULL)
-  rbp_current <- reactiveVal(NULL)
+  rbp_current   <- reactiveVal(NULL)
 
   # ---- Search bar population ----
   observe({
@@ -525,7 +536,7 @@ server <- function(input, output, session) {
                          server = TRUE)
   })
 
-  # ---- File upload validation (unchanged) ----
+  # ---- File upload validation ----
   observeEvent(input$user_file, {
     req(input$user_file)
     file_path <- input$user_file$datapath
@@ -570,7 +581,9 @@ server <- function(input, output, session) {
                                     "<br>B: ", round(B,2),
                                     "<br>P: ", signif(P.Value,3)))) +
         geom_point(aes(color = highlight), alpha = 0.7) +
-        scale_color_manual(values = c("None"="#CCCCCC","RBP"="#A10702","Selected"="#008057")) +
+        scale_color_manual(values = c("None"="#CCCCCC",
+                                      "RBP"="#A10702",
+                                      "Selected"="#008057")) +
         theme_bw() +
         labs(title=paste(rbp,"KD"), x="Log Fold-Change", y="B-statistic") +
         theme(legend.position="none", plot.title=element_text(hjust=0.5))
@@ -585,14 +598,14 @@ server <- function(input, output, session) {
 
     session$sendCustomMessage("toggleCursor", TRUE)  # start wait cursor
 
-    # Violin plot
+    # ---- Violin plot ----
     output$expr_violin <- renderPlot({ violinplotter(Charm.object, rbp_sel) })
     output$expr_note <- renderUI({
       div(style="margin-top:10px;font-size:16px;font-weight:bold;color:red;",
           "Red dots correspond to the controls from paired gene silencing experiment.")
     })
 
-    # shRNA effect
+    # ---- shRNA effect ----
     output$shrna_plot <- renderPlot({ plot_shRNA_effect(sh_effect_vector, rbp_sel) })
     output$shrna_warning <- renderUI({
       stats <- sh_effect_vector[rbp_sel,,drop=FALSE]
@@ -605,76 +618,65 @@ server <- function(input, output, session) {
       } else NULL
     })
 
-    # Volcano computation
+    # ---- Volcano plot ----
     result <- plot_rbp_volcano(Charm.object, rbp_sel)
     tbl <- as.data.frame(result$top_table)
     if (!"gene" %in% colnames(tbl)) tbl$gene <- rownames(tbl)
     tbl <- tbl[, c("gene", setdiff(colnames(tbl),"gene"))]
-    if (!"highlight" %in% colnames(tbl)) tbl$highlight <- ifelse(tbl$gene==rbp_sel,"RBP","None")
-    else tbl$highlight <- ifelse(tbl$gene==rbp_sel,"RBP","None")
+    tbl$highlight <- ifelse(tbl$gene==rbp_sel,"RBP","None")
     display_table(tbl)
 
-    # render table
     output$volcano_table <- renderDT({
       datatable(
         display_table(),
-        filter = "none",       # no per-column filters
-        selection = "single",
-        rownames = FALSE,
-        options = list(
-          pageLength = 10,
-          scrollX = TRUE,
-          searching = TRUE     # global search enabled
-        )
+        filter = "none", selection = "single", rownames = FALSE,
+        options = list(pageLength = 10, scrollX = TRUE, searching = TRUE)
       )
     })
-    # render volcano
+
     output$volcano_plot <- renderPlotly({
       ggplotly(make_volcano_plot(display_table(), rbp_sel), tooltip="text", source="volcano") %>%
         event_register("plotly_click")
     })
 
+    # ---- GSEA ----
+    gsea_result <- plot_gsea(Charm.object, rbp_sel, thresh = 0.05)
+
+    output$gsea_plot <- renderPlot({
+      gsea_result$gsea_plot
+    })
+
+    output$geneset_table <- renderDT({
+      datatable(
+        gsea_result$geneset_table,
+        filter = "none",
+        rownames = FALSE,
+        options = list(pageLength = 10, scrollX = TRUE)
+      )
+    })
+
     session$sendCustomMessage("toggleCursor", FALSE)  # end wait cursor
   })
-
 
   # ---- React to clicking a point in the volcano ----
   observeEvent(event_data("plotly_click", source = "volcano"), {
     ed <- event_data("plotly_click", source = "volcano")
-    tbl <- display_table()   # get current table
+    tbl <- display_table()
     if (!is.null(ed) && nrow(tbl) > 0) {
-      # Find closest gene to click
+      # Find closest gene
       clicked_gene <- tbl$gene[which.min(abs(tbl$logFC - ed$x) + abs(tbl$B - ed$y))]
 
-      # Reorder table: clicked gene on top
+      # Update highlights
+      tbl$highlight <- ifelse(tbl$gene == clicked_gene, "Selected",
+                              ifelse(tbl$gene == rbp_current(), "RBP", "None"))
+
+      # Reorder table with clicked on top
       tbl <- rbind(tbl[tbl$gene == clicked_gene, ], tbl[tbl$gene != clicked_gene, ])
-      display_table(tbl)  # update reactiveVal
+      display_table(tbl)
 
-      # Highlight selected gene in the table for the plot
-      tmp_tbl <- tbl
-      tmp_tbl$highlight <- ifelse(tmp_tbl$gene == clicked_gene, "Selected", tmp_tbl$highlight)
-
-      # Re-render volcano plot
-      plt <- ggplot(tmp_tbl, aes(x = logFC, y = B,
-                                 text = paste0("Gene: ", gene,
-                                               "<br>logFC: ", round(logFC, 2),
-                                               "<br>B: ", round(B, 2),
-                                               "<br>P: ", signif(P.Value, 3)))) +
-        geom_point(aes(color = highlight), alpha = 0.7) +
-        scale_color_manual(values = c(
-          "None" = "#CCCCCC",
-          "Other" = "#23586C",
-          "RBP" = "#A10702",
-          "Selected" = "#008057"
-        )) +
-        theme_bw() +
-        labs(title = paste("Volcano plot:", rbp_current()),
-             x = "Log Fold-Change", y = "B-statistic") +
-        theme(legend.position = "none",
-              plot.title = element_text(hjust = 0.5))
-
+      # Re-render volcano
       output$volcano_plot <- renderPlotly({
-        ggplotly(plt, tooltip = "text", source = "volcano")
+        ggplotly(make_volcano_plot(display_table(), rbp_current()), tooltip="text", source="volcano")
       })
     }
   })
@@ -685,17 +687,40 @@ server <- function(input, output, session) {
     if (is.null(sel_row)) return()
     tbl <- display_table()
     sel_gene <- tbl$gene[sel_row]
-    tbl$highlight <- ifelse(tbl$gene==sel_gene,"Selected", ifelse(tbl$gene==rbp_current(),"RBP","None"))
+
+    # Update highlights
+    tbl$highlight <- ifelse(tbl$gene == sel_gene, "Selected",
+                            ifelse(tbl$gene == rbp_current(), "RBP", "None"))
     display_table(tbl)
 
-    # re-render volcano
+    # Re-render volcano
     output$volcano_plot <- renderPlotly({
       ggplotly(make_volcano_plot(display_table(), rbp_current()), tooltip="text", source="volcano") %>%
         event_register("plotly_click")
     })
   })
+  observeEvent(input$reset_btn, {
+    # Clear all plots
+    output$expr_violin    <- renderPlot(NULL)
+    output$expr_note      <- renderUI(NULL)
+    output$shrna_plot     <- renderPlot(NULL)
+    output$shrna_warning  <- renderUI(NULL)
+    output$volcano_plot   <- renderPlotly(NULL)
+    output$volcano_table  <- renderDT(NULL)
+    output$gsea_plot      <- renderPlot(NULL)
+    output$geneset_table  <- renderDT(NULL)
 
-} # end server
+    # Reset reactive values
+    display_table(NULL)
+    rbp_current(NULL)
+
+    # Optional: reset select input
+    updateSelectizeInput(session, "expr_search", selected = "")
+  })
+
+}
+
+# end server
 
 
 shinyApp(ui, server)

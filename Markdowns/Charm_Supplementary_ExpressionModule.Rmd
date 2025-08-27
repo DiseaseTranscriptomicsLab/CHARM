@@ -1203,7 +1203,13 @@ plot_rbp_volcano <- function(Charmobj, rbp, varoi = "SampleType", other_genes = 
 }
 
 rbp <- "RBFOX2"
-result <- plot_rbp_volcano(Charm.object, rbp, other_genes = c("PTBP1", "CDKN2A", "GAPDH"))
+result <- plot_rbp_volcano(Charm.object, rbp)$toptable
+
+volcano_results <- list()
+for (rbp in unique(Charm.object$Experiment)) {
+  Charm.object$DEGenes[[rbp]] <- plot_rbp_volcano(Charm.object, rbp)$top_table
+}
+
 
 # Get full DE table
 head(result$top_table)
@@ -1267,7 +1273,8 @@ plot_gsea <- function(Charmobj, rbp, varoi = "SampleType", thresh = 0.05,
     as_tibble() %>%
     arrange(desc(NES)) %>%
     mutate(Status = ifelse(NES > 0, "Upregulated", "Downregulated")) %>%
-    arrange(padj)
+    arrange(padj) %>%
+  mutate(pathway = gsub("^HALLMARK_", "", pathway))
   
   #----------------------------
   # Step 5: Filter significant results
@@ -1304,15 +1311,22 @@ plot_gsea <- function(Charmobj, rbp, varoi = "SampleType", thresh = 0.05,
 
 
 
+for (rbp in unique(Charm.object$Experiment)) {
+  Charm.object$GSEA[[rbp]] <- plot_gsea(Charm.object, rbp)$geneset_table
+}
 
-rbp <- "RBFOX2"
-result <- plot_gsea(Charm.object, rbp)
 
-# Get full DE table
-head(result$geneset_table)
+saveRDS(Charm.object, "../data/Charm.object.RDS")
 
-# Show volcano plot
-result$gsea_plot
+# 
+# rbp <- "RBFOX2"
+# result <- plot_gsea(Charm.object, rbp)
+# 
+# # Get full DE table
+# head(result$geneset_table)
+# 
+# # Show volcano plot
+# result$gsea_plot
 ```
 
 

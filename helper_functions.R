@@ -112,51 +112,15 @@ plot_shRNA_effect <- function(sh_effect_vector, rbp) {
 }
 
 
-plot_rbp_volcano <- function(Charmobj, rbp, varoi = "SampleType") {
+plot_rbp_volcano <- function(Charmobj, rbp) {
   #----------------------------
   # Step 1: Differential Expression
   #----------------------------
-  expr <- Charmobj$corcounts
-  group <- Charmobj[[varoi]]
-
-  # Design matrix
-  mm <- model.matrix(~0 + group)
-  colnames(mm) <- gsub("group", "", colnames(mm))
-
-  # Fit linear model
-  fitted <- lmFit(expr, mm)
-
-  contrast_formula <- paste0(rbp, " - Control")
-  contr <- makeContrasts(contrasts = contrast_formula, levels = colnames(coef(fitted)))
-
-  tmp_contr <- contrasts.fit(fitted, contr)
-  tmp <- eBayes(tmp_contr)
-
-  # Get results for all genes
-  top.table <- topTable(tmp, sort.by = "none", n = Inf)
-
-  # If no results, return placeholder
-  if (nrow(top.table) == 0) {
-    empty_plot <- ggplot() +
-      annotate("text", x = 0, y = 0, label = paste("No results for", rbp)) +
-      theme_void()
-    return(list(top_table = top.table, volcano_plot = empty_plot))
-  }
-
-  # Ensure gene column exists
-  if (!"gene" %in% colnames(top.table)) {
-    top.table$gene <- rownames(top.table)
-  }
-
+  top.table <- as.data.frame(Charmobj$DEGenes[rbp])
+  colnames(top.table) <- c("logFC", "AveExpr", "t", "P.Value", "adj.P.Val", "B", "highlight")
+  top.table$gene <- row.names(top.table)
   # Move gene column to first position
   top.table <- top.table[, c("gene", setdiff(colnames(top.table), "gene"))]
-
-
-  # Add highlight category
-  top.table$highlight <- "None"
-  if (rbp %in% top.table$gene) {
-    top.table$highlight[top.table$gene == rbp] <- "RBP"
-  }
 
   # Order by absolute t-statistic
   top.table <- top.table[order(-abs(top.table$t)), ]
@@ -190,4 +154,44 @@ plot_rbp_volcano <- function(Charmobj, rbp, varoi = "SampleType") {
          x = "Log Fold-Change", y = "B-statistic")
 
   return(list(top_table = top.table, volcano_plot = volcano_plot))
+}
+
+plot_gsea <- function(Charmobj, rbp, varoi = "SampleType", thresh = 0.05,
+                      species = "Homo sapiens",
+                      collection = "H", subcollection = NULL,
+                      up_color = "#BA3B46", down_color = "#53A2BE",
+                      show_legend = FALSE) {
+
+  # Use the Charmobj argument and the rbp string properly
+  hallmarks.res.tidy <- as.data.frame(Charmobj$GSEA[[rbp]])
+  colnames(hallmarks.res.tidy) <- c("pathway","pval","padj","log2err","ES","NES","size","leadingEdge","Status")
+
+  #----------------------------
+  # Step 1: Filter significant results
+  #----------------------------
+  data_to_plot <- hallmarks.res.tidy %>%
+    filter(padj < thresh) %>%
+    arrange(-abs(NES))
+
+  #----------------------------
+  # Step 2: Plot
+  #----------------------------
+  gsea_plot_hall <- ggplot(data_to_plot, aes(x = reorder(pathway, NES), y = NES)) +
+    geom_col(aes(fill = Status), alpha = 0.8) +
+    scale_fill_manual(values = c("Upregulated" = up_color, "Downregulated" = down_color)) +
+    coord_flip() +
+    labs(x = "Gene Set",
+         y = "Normalised Enrichment Score (NES)",
+         title = "Enriched Gene Sets",
+         subtitle = paste0("Comparison: ", rbp, " KD vs Control"),
+         caption = paste0("padj < ", thresh)) +
+    theme_bw(base_family = "Arial MS") +
+    theme(
+      plot.title = element_text(hjust = 0.5, size = 18, face = "bold"),
+      plot.subtitle = element_text(hjust = 0.5, size = 14),
+      text = element_text(size = 14),
+      legend.position = if (show_legend) "right" else "none"
+    )
+
+  return(list(geneset_table = hallmarks.res.tidy, gsea_plot = gsea_plot_hall))
 }
