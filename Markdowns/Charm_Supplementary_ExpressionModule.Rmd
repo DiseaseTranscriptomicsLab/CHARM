@@ -285,7 +285,7 @@ ggplot(falternew, aes(x=falternew)) + geom_density() + theme_bw() + ylab("Events
         panel.background = element_blank())
 
 #lets save the genes which we maintain
-impgenes <- c(row.names(falternew))
+impgenes <- unique(c(row.names(falternew), unique(Charm.object$Experiment)))
 
 
 #Now we need to select only the rows which have those genes.
@@ -422,7 +422,7 @@ mm <- model.matrix(~0+Sample, metadata)
 y <- voom(corrcounts_v1, mm, plot = T)
 Charm.object$corcounts <- as.data.frame(y$E)
 
-#saveRDS(Charm.object, "../Data_Objects/Charm.object.RDS")
+saveRDS(Charm.object, "../data/Charm.object.RDS")
 ```
 
 ##### Data Exploration (PCA) Part 1
@@ -1388,8 +1388,7 @@ ggplot(falternew, aes(x=falternew)) + geom_density() + theme_bw() + ylab("Events
         panel.background = element_blank())
 
 #lets save the genes which we maintain
-impgenes <- c(row.names(falternew))
-
+impgenes <- unique(c(row.names(falternew), unique(Charm.object.K562$Experiment)))
 
 #Now we need to select only the rows which have those genes.
 Charm.object.K562$filtcounts <- Charm.object.K562$rawcounts[row.names(Charm.object.K562$rawcounts)%in%impgenes,]
@@ -1510,7 +1509,7 @@ mm <- model.matrix(~0+Sample, metadata)
 y <- voom(corrcounts_v1, mm, plot = T)
 Charm.object.K562$corcounts <- as.data.frame(y$E)
 
-saveRDS(Charm.object.K562, "../Data_Objects/Charm.object_K562.RDS")
+saveRDS(Charm.object.K562, "../data/Charm.object_K562.RDS")
 ```
 
 #### Expression Violins
@@ -1533,7 +1532,7 @@ for (rbp in unique(Charm.object.K562$Experiment)) {
   sh_effect_vector <- rbind(sh_effect_vector, sh_effect)
 }
 
-saveRDS(sh_effect_vector, "../Data_Objects/shRNA_Efficiency_K562.Rds")
+saveRDS(sh_effect_vector, "../data/shRNA_Efficiency_K562.Rds")
 ```
 
 
@@ -1583,6 +1582,14 @@ head(result$top_table)
 
 # Show volcano plot
 result$volcano_plot
+
+
+
+for (rbp in unique(Charm.object.K562$Experiment)) {
+  Charm.object.K562$DEGenes[[rbp]] <- plot_rbp_volcano(Charm.object.K562, rbp)$top_table
+}
+  
+
 ```
 #### GSEA 
 
@@ -1596,6 +1603,14 @@ head(result$geneset_table)
 
 # Show volcano plot
 result$gsea_plot
+
+for (rbp in unique(Charm.object.K562$Experiment)) {
+  Charm.object.K562$GSEA[[rbp]] <- plot_gsea(Charm.object.K562, rbp)$geneset_table
+}
+
+
+saveRDS(Charm.object.K562, "../data/Charm.object_K562.RDS")
+
 ```
 # B.3 Expression Object
 
@@ -1653,7 +1668,7 @@ ggplot(falternew, aes(x=falternew)) + geom_density() + theme_bw() + ylab("Events
         panel.background = element_blank())
 
 #lets save the genes which we maintain
-impgenes <- c(row.names(falternew))
+impgenes <- unique(c(row.names(falternew), unique(Charm.object.HEPG2$Experiment)))
 
 
 #Now we need to select only the rows which have those genes.
@@ -1775,7 +1790,7 @@ mm <- model.matrix(~0+Sample, metadata)
 y <- voom(corrcounts_v1, mm, plot = T)
 Charm.object.HEPG2$corcounts <- as.data.frame(y$E)
 
-saveRDS(Charm.object.HEPG2, "../Data_Objects/Charm.object_HEPG2.RDS")
+saveRDS(Charm.object.HEPG2, "../data/Charm.object_HEPG2.RDS")
 ```
 
 #### Expression Violins
@@ -1798,7 +1813,7 @@ for (rbp in unique(Charm.object.HEPG2$Experiment)) {
   sh_effect_vector <- rbind(sh_effect_vector, sh_effect)
 }
 
-saveRDS(sh_effect_vector, "../Data_Objects/shRNA_Efficiency_HEPG2.Rds")
+saveRDS(sh_effect_vector, "../data/shRNA_Efficiency_HEPG2.Rds")
 ```
 
 
@@ -1848,6 +1863,11 @@ head(result$top_table)
 
 # Show volcano plot
 result$volcano_plot
+
+for (rbp in unique(Charm.object.HEPG2$Experiment)) {
+  Charm.object.HEPG2$DEGenes[[rbp]] <- plot_rbp_volcano(Charm.object.HEPG2, rbp)$top_table
+}
+  
 ```
 
 #### GSEA 
@@ -1862,6 +1882,16 @@ head(result$geneset_table)
 
 # Show volcano plot
 result$gsea_plot
+
+
+
+for (rbp in unique(Charm.object.HEPG2$Experiment)) {
+  Charm.object.HEPG2$GSEA[[rbp]] <- plot_gsea(Charm.object.HEPG2, rbp)$geneset_table
+}
+
+
+saveRDS(Charm.object.HEPG2, "../data/Charm.object_HEPG2.RDS")
+
 ```
 
 # B.4 Similarity Object
