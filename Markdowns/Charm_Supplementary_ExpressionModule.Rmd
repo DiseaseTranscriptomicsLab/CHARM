@@ -1901,7 +1901,7 @@ saveRDS(Charm.object.HEPG2, "../data/Charm.object_HEPG2.RDS")
 #### Expression
 
 ```{r}
-exp_correl <- function(rbp_results, rbp, correl_num = NULL,
+exp_correl <- function(rbp_results, rbp, correl_num = 10,
                        n_pos = NULL, n_neg = NULL, other_rbps = NULL) {
   #----------------------------
   # Step 1: Extract the reference RBP
@@ -2179,43 +2179,17 @@ correl_scatter_gsea <- function(gsea_results, rbp, other_rbp) {
 #### Expression
 
 ```{r}
-Charm.object <- readRDS("../Data_Objects/Charm.object.RDS")
+Charm.object <- readRDS("../data/Charm.object.RDS")
 
-get_rbp_tvals <- function(Charmobj, rbp, varoi = "SampleType") {
-  #----------------------------
-  # Step 1: Differential Expression
-  #----------------------------
-  expr <- Charmobj$corcounts
-  group <- Charmobj[[varoi]]
+get_rbp_tvals <- function(Charmobj, rbp) {
+  # Suppose `rbp` is the name or index of your RBP
+  rbp_data <- Charmobj$DEGenes[[rbp]]  # extract the data.frame for that RBP
   
-  # Design matrix
-  mm <- model.matrix(~0 + group)
-  colnames(mm) <- gsub("group", "", colnames(mm))
-  
-  # Fit linear model
-  fitted <- limma::lmFit(expr, mm)
-  
-  # Contrast: RBP vs Control
-  contrast_formula <- paste0(rbp, " - Control")
-  contr <- limma::makeContrasts(contrasts = contrast_formula, levels = colnames(coef(fitted)))
-  
-  tmp_contr <- limma::contrasts.fit(fitted, contr)
-  tmp <- limma::eBayes(tmp_contr)
-  
-  # Get results for all genes (keep all)
-  top.table <- limma::topTable(tmp, sort.by = "none", n = Inf)
-  
-  # Keep only gene name + t-statistic
-  top.table <- data.frame(
-    Gene = rownames(top.table),
-    t = top.table$t
+  # Create new data.frame
+  Charmobj$rbp <- data.frame(
+    Gene = rownames(rbp_data),
+    t = rbp_data[["t"]]   # replace "t" with the column you want
   )
-  
-  # Order by absolute t
-  top.table <- top.table[order(-abs(top.table$t)), ]
-  rownames(top.table) <- NULL
-  
-  return(top.table)
 }
 
 rbp_results <- list()
@@ -2223,50 +2197,29 @@ for (rbp in unique(Charm.object$Experiment)) {
   rbp_results[[rbp]] <- get_rbp_tvals(Charm.object, rbp)
 }
 
-saveRDS(rbp_results, "../Data_Objects/RBPs.t_All.RDS")
+saveRDS(rbp_results, "../data/RBPs.t_All.RDS")
 ```
 
 #### GSEA
 
 ```{r}
-run_gsea_from_tvals <- function(tvals_df, rbp,
-                                species = "Homo sapiens",
-                                collection = "H", subcollection = NULL) {
-  #----------------------------
-  # Step 1: Prepare ranks
-  #----------------------------
-  stopifnot(all(c("Gene", "t") %in% colnames(tvals_df)))
-  
-  DEGenes <- tvals_df[order(tvals_df$t, decreasing = TRUE), ]
-  vectorranks <- DEGenes$t
-  names(vectorranks) <- DEGenes$Gene
-  
-  #----------------------------
-  # Step 2: Load gene sets
-  #----------------------------
-  gs <- msigdbr(species = species, collection = collection, subcollection = subcollection)
-  gsets <- split(gs$gene_symbol, gs$gs_name)
-  gsets <- lapply(gsets, toupper)
-  
-  #----------------------------
-  # Step 3: Run fgsea
-  #----------------------------
-  res <- fgsea(pathways = gsets, stats = vectorranks)
-  
-  # keep only pathway + NES
-  res_tidy <- res %>%
-    as_tibble() %>%
-    dplyr::select(pathway, NES)
-  
-  return(res_tidy)
+run_gsea_from_tvals <- function(charmobj, rbp) {
+# Extract the GSEA data for the specific RBP
+gsea_data <- charmobj$GSEA[[rbp]]
+
+# Create a new data.frame with the columns you want
+charmobj$rbp <- data.frame(
+  pathway = gsea_data[["pathway"]],
+  NES = gsea_data[["NES"]]
+)
 }
 
 gsea_results <- list()
 for (rbp in names(rbp_results)) {
-  gsea_results[[rbp]] <- run_gsea_from_tvals(rbp_results[[rbp]], rbp)
+  gsea_results[[rbp]] <- run_gsea_from_tvals(Charm.object, rbp)
 }
 
-saveRDS(gsea_results, "../Data_Objects/RBPs.gsea_All.RDS")
+saveRDS(gsea_results, "../data/RBPs.gsea_All.RDS")
 ```
 
 #### Results
@@ -2290,14 +2243,14 @@ correl_scatter_gsea(gsea_results, "RBFOX2", "TIA1")
 #### Expression
 
 ```{r}
-Charm.object.K562 <- readRDS("../Data_Objects/Charm.object_K562.RDS")
+Charm.object.K562 <- readRDS("../data/Charm.object_K562.RDS")
 
 rbp_results <- list()
 for (rbp in unique(Charm.object.K562$Experiment)) {
   rbp_results[[rbp]] <- get_rbp_tvals(Charm.object.K562, rbp)
 }
 
-saveRDS(rbp_results, "../Data_Objects/RBPs.t_K562.RDS")
+saveRDS(rbp_results, "../data/RBPs.t_K562.RDS")
 ```
 
 #### GSEA
@@ -2306,10 +2259,10 @@ saveRDS(rbp_results, "../Data_Objects/RBPs.t_K562.RDS")
 
 gsea_results <- list()
 for (rbp in names(rbp_results)) {
-  gsea_results[[rbp]] <- run_gsea_from_tvals(rbp_results[[rbp]], rbp)
+  gsea_results[[rbp]] <- run_gsea_from_tvals(Charm.object.K562, rbp)
 }
 
-saveRDS(gsea_results, "../Data_Objects/RBPs.gsea_K562.RDS")
+saveRDS(gsea_results, "../data/RBPs.gsea_K562.RDS")
 ```
 
 #### Results
@@ -2332,14 +2285,14 @@ result$heatmap              # ggplot heatmap
 #### Expression
 
 ```{r}
-Charm.object.HEPG2 <- readRDS("../Data_Objects/Charm.object_HEPG2.RDS")
+Charm.object.HEPG2 <- readRDS("../data/Charm.object_HEPG2.RDS")
 
 rbp_results <- list()
 for (rbp in unique(Charm.object.HEPG2$Experiment)) {
   rbp_results[[rbp]] <- get_rbp_tvals(Charm.object.HEPG2, rbp)
 }
 
-saveRDS(rbp_results, "../Data_Objects/RBPs.t_HEPG2.RDS")
+saveRDS(rbp_results, "../data/RBPs.t_HEPG2.RDS")
 ```
 
 #### GSEA
@@ -2348,10 +2301,10 @@ saveRDS(rbp_results, "../Data_Objects/RBPs.t_HEPG2.RDS")
 
 gsea_results <- list()
 for (rbp in names(rbp_results)) {
-  gsea_results[[rbp]] <- run_gsea_from_tvals(rbp_results[[rbp]], rbp)
+  gsea_results[[rbp]] <- run_gsea_from_tvals(Charm.object.HEPG2, rbp)
 }
 
-saveRDS(gsea_results, "../Data_Objects/RBPs.gsea_HEPG2.RDS")
+saveRDS(gsea_results, "../data/RBPs.gsea_HEPG2.RDS")
 ```
 
 #### Results

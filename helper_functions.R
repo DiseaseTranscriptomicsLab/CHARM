@@ -195,3 +195,127 @@ plot_gsea <- function(Charmobj, rbp, varoi = "SampleType", thresh = 0.05,
 
   return(list(geneset_table = hallmarks.res.tidy, gsea_plot = gsea_plot_hall))
 }
+correl_exp_rbp_plotly <- function(rbp_results, rbp, other_rbp, plot_title = NULL) {
+  ref_df <- rbp_results[[rbp]]
+  other_df <- rbp_results[[other_rbp]]
+
+  merged <- merge(
+    ref_df, other_df, by = "Gene",
+    suffixes = c(paste0("_", rbp), paste0("_", other_rbp))
+  )
+
+  # Spearman correlation + p-value
+  test <- suppressWarnings(cor.test(
+    merged[[paste0("t_", rbp)]],
+    merged[[paste0("t_", other_rbp)]],
+    method = "spearman"
+  ))
+  rho <- unname(test$estimate)
+  pval <- test$p.value
+
+  # Build title
+  title_txt <- paste0(
+    if (!is.null(plot_title)) paste0(plot_title, ": ") else "",
+    "Correlation between ", rbp, " and ", other_rbp,
+    " (Spearman ρ = ", round(rho, 2),
+    ", p = ", signif(pval, 3), ")"
+  )
+
+  # Create Plotly scatter
+  plot_ly(
+    merged,
+    x = ~get(paste0("t_", rbp)),
+    y = ~get(paste0("t_", other_rbp)),
+    type = 'scatter',
+    mode = 'markers',
+    text = ~paste("Gene:", Gene),
+    hoverinfo = 'text',
+    marker = list(size = 7, color = "#DDDDDD", line = list(width = 1, color = 'black'))
+  ) %>%
+    layout(
+      title = title_txt,
+      xaxis = list(title = paste0(rbp, " t-statistics")),
+      yaxis = list(title = paste0(other_rbp, " t-statistics")),
+      showlegend = FALSE
+    )
+}
+correl_scatter_gsea_plotly <- function(gsea_results, rbp, other_rbp, plot_title = NULL) {
+  ref_df <- gsea_results[[rbp]]
+  other_df <- gsea_results[[other_rbp]]
+
+  merged <- merge(
+    ref_df, other_df, by = "pathway",
+    suffixes = c(paste0("_", rbp), paste0("_", other_rbp))
+  )
+
+  # Spearman correlation + p-value
+  test <- suppressWarnings(cor.test(
+    merged[[paste0("NES_", rbp)]],
+    merged[[paste0("NES_", other_rbp)]],
+    method = "spearman"
+  ))
+  rho <- unname(test$estimate)
+  pval <- test$p.value
+
+  # Build title
+  title_txt <- paste0(
+    if (!is.null(plot_title)) paste0(plot_title, ": ") else "",
+    "GSEA correlation between ", rbp, " and ", other_rbp,
+    " (Spearman ρ = ", round(rho, 2),
+    ", p = ", signif(pval, 3), ")"
+  )
+
+  # Create Plotly scatter
+  plot_ly(
+    merged,
+    x = ~get(paste0("NES_", rbp)),
+    y = ~get(paste0("NES_", other_rbp)),
+    type = 'scatter',
+    mode = 'markers',
+    text = ~paste("Pathway:", pathway),
+    hoverinfo = 'text',
+    marker = list(size = 7, color = "#DDDDDD", line = list(width = 1, color = 'black'))
+  ) %>%
+    layout(
+      title = title_txt,
+      xaxis = list(title = paste0(rbp, " NES")),
+      yaxis = list(title = paste0(other_rbp, " NES")),
+      showlegend = FALSE
+    )
+}
+
+plot_similar_expr <- function(selected_rbp, selected_others, datasets,
+                              correl_num = 10, n_pos = NULL, n_neg = NULL) {
+
+  # datasets: a named list with 3 rbp_results objects
+  # e.g., list(All = similar_expression_all,
+  #            K562 = similar_expression_K562,
+  #            HEPG2 = similar_expression_HEPG2)
+
+  plots <- list()
+
+  for (ds_name in names(datasets)) {
+    rbp_results <- datasets[[ds_name]]
+
+    # Only one RBP selected → scatter plot
+    if (length(selected_others) == 1) {
+      p <- correl_exp_rbp(rbp_results, rbp = selected_rbp, other_rbp = selected_others)
+
+    } else {
+      # Multiple or no RBP selected → correlation heatmap
+      p <- exp_correl(rbp_results,
+                      rbp = selected_rbp,
+                      correl_num = correl_num,
+                      n_pos = n_pos,
+                      n_neg = n_neg,
+                      other_rbps = if (length(selected_others) > 0) selected_others else NULL)$heatmap
+    }
+
+    plots[[ds_name]] <- p
+  }
+
+  return(plots)
+}
+
+
+

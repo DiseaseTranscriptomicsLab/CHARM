@@ -18,7 +18,17 @@ sh_effect_vector_K562 <- readRDS("data/shRNA_Efficiency_K562.Rds")
 Charm.object_HEPG2 <- readRDS("data/Charm.object_HEPG2.RDS")
 sh_effect_vector_HEPG2 <- readRDS("data/shRNA_Efficiency_HEPG2.Rds")
 
+#Similarity stuff
+similar_expression_all <- readRDS("data/RBPs.t_All.RDS")
+similar_expression_K562 <- readRDS("data/RBPs.t_K562.RDS")
+similar_expression_HEPG2 <- readRDS("data/RBPs.t_HEPG2.RDS")
+similar_gsea_all <- readRDS("data/RBPs.gsea_All.RDS")
+similar_gsea_K562 <- readRDS("data/RBPs.gsea_K562.RDS")
+similar_gsea_HEPG2 <- readRDS("data/RBPs.gsea_HEPG2.RDS")
 
+
+
+###### UI
 ui <- fluidPage(
   theme = shinytheme("flatly"),
 
@@ -106,15 +116,14 @@ ui <- fluidPage(
     tabPanel(
       tagList(fa("dna", fill = "black", height = "1em"), " Expression"),
       fluidPage(
-
-        # Main layout: sidebar (left) + results (right)
         fluidRow(
 
-          # Left sidebar for mode selection + search
+          # Left sidebar
           column(
             width = 3,
             wellPanel(
-              # Choose mode: Explore or Discovery
+
+              # Choose mode
               radioButtons(
                 inputId = "expr_mode",
                 label = "Select mode:",
@@ -122,19 +131,19 @@ ui <- fluidPage(
                 selected = "Explore Mode"
               ),
 
-              # Conditional: show dropdown only in Explore Mode
+              # Conditional: Explore Mode
               conditionalPanel(
                 condition = "input.expr_mode == 'Explore Mode'",
+
                 selectInput(
                   inputId = "expr_dataset",
                   label = "Select option:",
                   choices = c("Both Cells", "K562", "HEPG2", "Similar RBPs")
                 ),
 
-                # Search bar + buttons below the dropdown
+                # Search bar (always visible)
                 div(
                   style = "display: flex; align-items: center; margin-top: 15px;",
-
                   selectizeInput(
                     inputId = "expr_search",
                     label = NULL,
@@ -144,23 +153,87 @@ ui <- fluidPage(
                     width = "400px"
                   ),
 
-                  actionButton(
-                    "search_btn",
-                    tagList(fa("search"), " Search"),
-                    class = "btn btn-primary",
-                    style = "margin-left: 10px; border-radius: 20px;"
+                  # Show Search/Reset buttons only if NOT Similar RBPs
+                  conditionalPanel(
+                    condition = "input.expr_dataset != 'Similar RBPs'",
+                    actionButton(
+                      "search_btn",
+                      tagList(fa("search"), " Search"),
+                      class = "btn btn-primary",
+                      style = "margin-left: 10px; border-radius: 20px;"
+                    ),
+                    actionButton(
+                      "reset_btn",
+                      tagList(fa("redo"), " Reset"),
+                      class = "btn btn-secondary",
+                      style = "margin-left: 10px; border-radius: 20px;"
+                    )
+                  )
+                ),
+
+                # Similar RBPs options
+                conditionalPanel(
+                  condition = "input.expr_dataset == 'Similar RBPs'",
+
+                  radioButtons(
+                    inputId = "similar_mode",
+                    label = "Select correlation type:",
+                    choices = c("By Gene Expression" = "expr",
+                                "By Gene Set Enrichment" = "gsea"),
+                    selected = "expr",
+                    inline = TRUE
                   ),
 
-                  actionButton(
-                    "reset_btn",
-                    tagList(fa("redo"), " Reset"),
-                    class = "btn btn-secondary",
-                    style = "margin-left: 10px; border-radius: 20px;"
+                  # Nested UI for Gene Expression
+                  conditionalPanel(
+                    condition = "input.similar_mode == 'expr'",
+                    selectizeInput(
+                      inputId = "similar_rbps_select_expr",
+                      label = "Compare with specific RBPs (optional). If only one is selected, a scatter plot will be shown:",
+                      choices = NULL,
+                      multiple = TRUE,
+                      options = list(placeholder = "Select RBPs")
+                    ),
+                    numericInput("correl_num_expr", "Top correlated RBPs (optional):", value = NA, min = 1),
+                    numericInput("n_pos_expr", "Top positive correlations (optional):", value = NA, min = 1),
+                    numericInput("n_neg_expr", "Top negative correlations (optional):", value = NA, min = 1)
+                  ),
+
+                  # Nested UI for GSEA
+                  conditionalPanel(
+                    condition = "input.similar_mode == 'gsea'",
+                    selectizeInput(
+                      inputId = "similar_rbps_select_gsea",
+                      label = "Compare with specific RBPs (optional). If only one is selected, a scatter plot will be shown:",
+                      choices = NULL,
+                      multiple = TRUE,
+                      options = list(placeholder = "Select RBPs")
+                    ),
+                    numericInput("correl_num_gsea", "Top correlated RBPs (optional):", value = NA, min = 1),
+                    numericInput("n_pos_gsea", "Top positive correlations (optional):", value = NA, min = 1),
+                    numericInput("n_neg_gsea", "Top negative correlations (optional):", value = NA, min = 1)
+                  ),
+
+                  # Plot / Reset buttons for Similar RBPs
+                  div(
+                    style = "display: flex; align-items: center; margin-top: 15px;",
+                    actionButton(
+                      "similar_plot_btn",
+                      tagList(fa("chart-line"), " Plot"),
+                      class = "btn btn-primary",
+                      style = "margin-right: 10px; border-radius: 20px;"
+                    ),
+                    actionButton(
+                      "similar_reset_btn",
+                      tagList(fa("redo"), " Reset"),
+                      class = "btn btn-secondary",
+                      style = "border-radius: 20px;"
+                    )
                   )
                 )
               ),
 
-              # Conditional: show file upload only in Discovery Mode
+              # Conditional: Discovery Mode
               conditionalPanel(
                 condition = "input.expr_mode == 'Discovery Mode'",
                 hr(),
@@ -170,14 +243,11 @@ ui <- fluidPage(
                   "and the second column are differential expression values (t-statistics). ",
                   "This table must be in .txt format and must not contain a header."
                 ),
-
                 fileInput(
                   inputId = "user_file",
                   label = "Upload your file:",
                   accept = c(".txt")
                 ),
-
-                # Placeholder for inline warning
                 uiOutput("file_warning")
               )
             )
@@ -186,53 +256,53 @@ ui <- fluidPage(
           # Right content area
           column(
             width = 9,
-            tags$h3("Expression Data Results"),
+            tags$h3("Expression Data Results (Please press reset after every plot!)"),
 
-            # Top plots: Violin + shRNA
-            fluidRow(
-              column(
-                width = 6,
-                plotOutput("expr_violin"),
-                uiOutput("expr_note")
+            # Similar RBPs plots (appear at the top if in that mode)
+            conditionalPanel(
+              condition = "input.expr_dataset == 'Similar RBPs'",
+              uiOutput("similar_expr_plots")
+            ),
+
+            # Top plots: Violin + shRNA (only show if NOT Similar RBPs)
+            conditionalPanel(
+              condition = "input.expr_dataset != 'Similar RBPs'",
+              fluidRow(
+                column(
+                  width = 6,
+                  plotOutput("expr_violin"),
+                  uiOutput("expr_note")
+                ),
+                column(
+                  width = 6,
+                  plotOutput("shrna_plot"),
+                  uiOutput("shrna_warning")
+                )
               ),
-              column(
-                width = 6,
-                plotOutput("shrna_plot"),
-                uiOutput("shrna_warning")
+
+              # Volcano + table
+              div(style = "margin-top: 50px;",
+                  fluidRow(
+                    column(width = 6, plotlyOutput("volcano_plot", height = "600px")),
+                    column(width = 6, DTOutput("volcano_table"))
+                  )
+              ),
+
+              # GSEA + table
+              div(style = "margin-top: 50px;",
+                  fluidRow(
+                    column(width = 6, plotOutput("gsea_plot", height = "600px")),
+                    column(width = 6, DTOutput("geneset_table"))
+                  )
               )
             ),
 
-            # Add vertical space before volcano + table
-            div(style = "margin-top: 50px;",
-                fluidRow(
-                  column(
-                    width = 6,
-                    plotlyOutput("volcano_plot", height = "600px")
-                  ),
-                  column(
-                    width = 6,
-                    DTOutput("volcano_table")
-                  )
-                )
-            ),
-            div(style = "margin-top: 50px;",
-                fluidRow(
-                  column(
-                    width = 6,
-                    plotOutput("gsea_plot", height = "600px")
-                  ),
-                  column(
-                    width = 6,
-                    DTOutput("geneset_table")
-                  )
-                )
-            ),
             uiOutput("expr_placeholder")
           )
-
         )
       )
     )
+
     , # end tabPanel
     # Splicing tab
     tabPanel(
@@ -525,7 +595,6 @@ ui <- fluidPage(
     )
   )
 )
-
 server <- function(input, output, session) {
 
   # ---- Helper functions to pick correct dataset ----
@@ -555,6 +624,13 @@ server <- function(input, output, session) {
     updateSelectizeInput(session, "expr_search",
                          choices = unique(Charm.object$Experiment),
                          server = TRUE)
+  })
+
+  observe({
+    rbp_choices <- unique(current_charm()$Experiment)
+
+    updateSelectizeInput(session, "similar_rbps_select_expr", choices = rbp_choices)
+    updateSelectizeInput(session, "similar_rbps_select_gsea", choices = rbp_choices)
   })
 
   # ---- File upload validation ----
@@ -620,7 +696,6 @@ server <- function(input, output, session) {
     charm_obj <- current_charm()
     shrna_obj <- current_shrna()
 
-    # ---- Check if RBP exists for selected cell line ----
     exp_list <- unique(charm_obj$Experiment)
     if (is.null(exp_list) || !(rbp_sel %in% exp_list)) {
       showModal(modalDialog(
@@ -634,14 +709,12 @@ server <- function(input, output, session) {
 
     session$sendCustomMessage("toggleCursor", TRUE)
 
-    # ---- Violin plot ----
     output$expr_violin <- renderPlot({ violinplotter(charm_obj, rbp_sel) })
     output$expr_note <- renderUI({
       div(style="margin-top:10px;font-size:16px;font-weight:bold;color:red;",
           "Red dots correspond to the controls from paired gene silencing experiment.")
     })
 
-    # ---- shRNA effect ----
     output$shrna_plot <- renderPlot({ plot_shRNA_effect(shrna_obj, rbp_sel) })
     output$shrna_warning <- renderUI({
       stats <- shrna_obj[rbp_sel,,drop=FALSE]
@@ -654,7 +727,6 @@ server <- function(input, output, session) {
       } else NULL
     })
 
-    # ---- Volcano plot ----
     result <- plot_rbp_volcano(charm_obj, rbp_sel)
     tbl <- as.data.frame(result$top_table)
     if (!"gene" %in% colnames(tbl)) tbl$gene <- rownames(tbl)
@@ -675,7 +747,6 @@ server <- function(input, output, session) {
         event_register("plotly_click")
     })
 
-    # ---- GSEA ----
     gsea_result <- plot_gsea(charm_obj, rbp_sel, thresh = 0.05)
     output$gsea_plot <- renderPlot({ gsea_result$gsea_plot })
     output$geneset_table <- renderDT({
@@ -688,38 +759,81 @@ server <- function(input, output, session) {
     session$sendCustomMessage("toggleCursor", FALSE)
   })
 
-  # ---- React to clicking a point in the volcano ----
-  observeEvent(event_data("plotly_click", source = "volcano"), {
-    ed <- event_data("plotly_click", source = "volcano")
-    tbl <- display_table()
-    if (!is.null(ed) && nrow(tbl) > 0) {
-      clicked_gene <- tbl$gene[which.min(abs(tbl$logFC - ed$x) + abs(tbl$B - ed$y))]
-      tbl$highlight <- ifelse(tbl$gene == clicked_gene, "Selected",
-                              ifelse(tbl$gene == rbp_current(), "RBP", "None"))
-      tbl <- rbind(tbl[tbl$gene == clicked_gene, ], tbl[tbl$gene != clicked_gene, ])
-      display_table(tbl)
-      output$volcano_plot <- renderPlotly({
-        ggplotly(make_volcano_plot(display_table(), rbp_current()), tooltip="text", source="volcano")
-      })
-    }
-  })
+  # ---- Similar RBPs: Expression/GSEA correlation ----
+  observeEvent(input$similar_plot_btn, {
+    req(input$expr_search)
+    rbp1 <- input$expr_search
+    mode <- input$similar_mode
 
-  # ---- React to selecting a row in the table ----
-  observeEvent(input$volcano_table_rows_selected, {
-    sel_row <- input$volcano_table_rows_selected
-    if (is.null(sel_row)) return()
-    tbl <- display_table()
-    sel_gene <- tbl$gene[sel_row]
-    tbl$highlight <- ifelse(tbl$gene == sel_gene, "Selected",
-                            ifelse(tbl$gene == rbp_current(), "RBP", "None"))
-    display_table(tbl)
-    output$volcano_plot <- renderPlotly({
-      ggplotly(make_volcano_plot(display_table(), rbp_current()), tooltip="text", source="volcano") %>%
-        event_register("plotly_click")
+    # Choose datasets and plotting functions
+    if (mode == "expr") {
+      datasets <- list(
+        "Both Cells" = similar_expression_all,
+        "K562"       = similar_expression_K562,
+        "HEPG2"      = similar_expression_HEPG2
+      )
+      selected_rbps <- input$similar_rbps_select_expr
+      scatter_fun <- correl_exp_rbp_plotly
+      heatmap_fun <- exp_correl
+    } else {  # mode == "gsea"
+      datasets <- list(
+        "Both Cells" = similar_gsea_all,
+        "K562"       = similar_gsea_K562,
+        "HEPG2"      = similar_gsea_HEPG2
+      )
+      selected_rbps <- input$similar_rbps_select_gsea
+      scatter_fun <- correl_scatter_gsea_plotly
+      heatmap_fun <- gsea_correl
+    }
+
+    if (length(selected_rbps) == 0) selected_rbps <- NULL
+
+    output$similar_expr_plots <- renderUI({
+      tagList(
+        tags$div("Generating plots, please wait...",
+                 style = "font-weight:bold;color:#A10702;margin-bottom:15px;"),
+
+        lapply(names(datasets), function(ds_name) {
+          plotname <- paste0("similar_plot_", ds_name)
+
+          # Render scatter if 1 RBP, otherwise heatmap
+          output[[plotname]] <- if (!is.null(selected_rbps) && length(selected_rbps) == 1) {
+            renderPlotly({
+              scatter_fun(datasets[[ds_name]], rbp1, selected_rbps, plot_title = ds_name)
+            })
+          } else {
+            renderPlot({
+              heat_res <- heatmap_fun(
+                datasets[[ds_name]], rbp1,
+                correl_num = if (mode == "expr") input$correl_num_expr else input$correl_num_gsea,
+                n_pos      = if (mode == "expr") input$n_pos_expr      else input$n_pos_gsea,
+                n_neg      = if (mode == "expr") input$n_neg_expr      else input$n_neg_gsea,
+                other_rbps = if (!is.null(selected_rbps) && length(selected_rbps) > 1) selected_rbps else NULL
+              )
+              heat_res$heatmap
+            })
+          }
+
+          column(
+            width = 12,   # full-width vertical layout
+            tags$h4(ds_name, style="text-align:center;"),
+            if (!is.null(selected_rbps) && length(selected_rbps) == 1) {
+              shinycssloaders::withSpinner(plotlyOutput(plotname, height="500px"))
+            } else {
+              shinycssloaders::withSpinner(plotOutput(plotname, height="500px"))
+            }
+          )
+        })
+      )
     })
   })
+  # ---- Reset buttons ----
+  observeEvent(input$similar_reset_btn, {
+    output$similar_expr_plots <- renderUI(NULL)
+    updateSelectizeInput(session, "similar_rbps_select_expr", selected = "")
+    updateSelectizeInput(session, "similar_rbps_select_gsea", selected = "")
+  })
 
-  # ---- Reset button ----
   observeEvent(input$reset_btn, {
     output$expr_violin    <- renderPlot(NULL)
     output$expr_note      <- renderUI(NULL)
