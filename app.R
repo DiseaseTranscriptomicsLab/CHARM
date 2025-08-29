@@ -153,20 +153,23 @@ ui <- fluidPage(
                     width = "400px"
                   ),
 
-                  # Show Search/Reset buttons only if NOT Similar RBPs
+                  # Wrap the two buttons in a div for horizontal layout
                   conditionalPanel(
                     condition = "input.expr_dataset != 'Similar RBPs'",
-                    actionButton(
-                      "search_btn",
-                      tagList(fa("search"), " Search"),
-                      class = "btn btn-primary",
-                      style = "margin-left: 10px; border-radius: 20px;"
-                    ),
-                    actionButton(
-                      "reset_btn",
-                      tagList(fa("redo"), " Reset"),
-                      class = "btn btn-secondary",
-                      style = "margin-left: 10px; border-radius: 20px;"
+                    div(
+                      style = "display: flex; align-items: center; margin-left: 10px;",
+                      actionButton(
+                        "search_btn",
+                        tagList(fa("search"), " Search"),
+                        class = "btn btn-primary",
+                        style = "margin-right: 10px; border-radius: 20px;"
+                      ),
+                      actionButton(
+                        "reset_btn",
+                        tagList(fa("redo"), " Reset"),
+                        class = "btn btn-secondary",
+                        style = "border-radius: 20px;"
+                      )
                     )
                   )
                 ),
@@ -189,14 +192,35 @@ ui <- fluidPage(
                     condition = "input.similar_mode == 'expr'",
                     selectizeInput(
                       inputId = "similar_rbps_select_expr",
-                      label = "Compare with specific RBPs (optional). If only one is selected, a scatter plot will be shown:",
+                      label = "Compare with specific RBPs (optional)",
                       choices = NULL,
                       multiple = TRUE,
-                      options = list(placeholder = "Select RBPs")
+                      options = list(placeholder = "Select one or more RBPs")
                     ),
-                    numericInput("correl_num_expr", "Top correlated RBPs (optional):", value = NA, min = 1),
-                    numericInput("n_pos_expr", "Top positive correlations (optional):", value = NA, min = 1),
-                    numericInput("n_neg_expr", "Top negative correlations (optional):", value = NA, min = 1)
+                    helpText("• If you select one RBP, a scatter plot will be shown.
+            • If you select multiple RBPs, correlation values will be summarised."),
+                    numericInput(
+                      "correl_num_expr",
+                      "Show top N correlated RBPs (optional):",
+                      value = NA,
+                      min = 1
+                    ),
+                    helpText("Tip: By selecting a number here, this will take precedence
+            over the two inputs below."),
+                    numericInput(
+                      "n_pos_expr",
+                      "Show top N positive correlations (optional):",
+                      value = NA,
+                      min = 1
+                    ),
+                    numericInput(
+                      "n_neg_expr",
+                      "Show top N negative correlations (optional):",
+                      value = NA,
+                      min = 1
+                    ),
+                    helpText("Tip: You may use
+            one or both of the numeric inputs above.")
                   ),
 
                   # Nested UI for GSEA
@@ -204,15 +228,36 @@ ui <- fluidPage(
                     condition = "input.similar_mode == 'gsea'",
                     selectizeInput(
                       inputId = "similar_rbps_select_gsea",
-                      label = "Compare with specific RBPs (optional). If only one is selected, a scatter plot will be shown:",
+                      label = "Compare with specific RBPs (optional)",
                       choices = NULL,
                       multiple = TRUE,
-                      options = list(placeholder = "Select RBPs")
+                      options = list(placeholder = "Select one or more RBPs")
                     ),
-                    numericInput("correl_num_gsea", "Top correlated RBPs (optional):", value = NA, min = 1),
-                    numericInput("n_pos_gsea", "Top positive correlations (optional):", value = NA, min = 1),
-                    numericInput("n_neg_gsea", "Top negative correlations (optional):", value = NA, min = 1)
-                  ),
+                    helpText("• If you select one RBP, a scatter plot will be shown.
+            • If you select multiple RBPs, correlation values will be summarised."),
+                    numericInput(
+                      "correl_num_gsea",
+                      "Show top N correlated RBPs (optional):",
+                      value = NA,
+                      min = 1
+                    ),
+                    helpText("Tip: By selecting a number here, this will take precedence
+            over the two inputs below."),
+                    numericInput(
+                      "n_pos_gsea",
+                      "Show top N positive correlations (optional):",
+                      value = NA,
+                      min = 1
+                    ),
+                    numericInput(
+                      "n_neg_gsea",
+                      "Show top N negative correlations (optional):",
+                      value = NA,
+                      min = 1
+                    ),
+                    helpText("Tip: You may use one or both of the numeric inputs above")
+                  )
+                  ,
 
                   # Plot / Reset buttons for Similar RBPs
                   div(
@@ -256,7 +301,17 @@ ui <- fluidPage(
           # Right content area
           column(
             width = 9,
-            tags$h3("Expression Data Results (Please press reset after every plot!)"),
+            tags$h3("Expression Data Results"),
+            div(
+              "⚠ Please press reset after every plot!",
+              style = "border: 2px solid #f0ad4e;
+             background-color: #fff3cd;
+             padding: 8px;
+             border-radius: 6px;
+             font-weight: bold;
+             color: #856404;"
+            )
+          ,
 
             # Similar RBPs plots (appear at the top if in that mode)
             conditionalPanel(
@@ -595,6 +650,7 @@ ui <- fluidPage(
     )
   )
 )
+
 server <- function(input, output, session) {
 
   # ---- Helper functions to pick correct dataset ----
@@ -686,6 +742,49 @@ server <- function(input, output, session) {
         theme(legend.position="none", plot.title=element_text(hjust=0.5))
     }
   }
+
+  # ---- React to clicking a point in the volcano ----
+  observeEvent(event_data("plotly_click", source = "volcano"), {
+    ed <- event_data("plotly_click", source = "volcano")
+    tbl <- display_table()
+    if (!is.null(ed) && nrow(tbl) > 0) {
+      # Find closest point
+      clicked_gene <- tbl$gene[which.min(abs(tbl$logFC - ed$x) + abs(tbl$B - ed$y))]
+
+      # Update highlights
+      tbl$highlight <- ifelse(tbl$gene == clicked_gene, "Selected",
+                              ifelse(tbl$gene == rbp_current(), "RBP", "None"))
+
+      # Reorder table to bring selected gene on top
+      tbl <- rbind(tbl[tbl$gene == clicked_gene, ], tbl[tbl$gene != clicked_gene, ])
+      display_table(tbl)
+
+      # Re-render volcano plot
+      output$volcano_plot <- renderPlotly({
+        ggplotly(make_volcano_plot(display_table(), rbp_current()), tooltip = "text", source = "volcano") %>%
+          event_register("plotly_click")
+      })
+    }
+  })
+
+  # ---- React to selecting a row in the table ----
+  observeEvent(input$volcano_table_rows_selected, {
+    sel_row <- input$volcano_table_rows_selected
+    if (is.null(sel_row)) return()
+    tbl <- display_table()
+    sel_gene <- tbl$gene[sel_row]
+
+    # Update highlights
+    tbl$highlight <- ifelse(tbl$gene == sel_gene, "Selected",
+                            ifelse(tbl$gene == rbp_current(), "RBP", "None"))
+    display_table(tbl)
+
+    # Re-render volcano plot
+    output$volcano_plot <- renderPlotly({
+      ggplotly(make_volcano_plot(display_table(), rbp_current()), tooltip = "text", source = "volcano") %>%
+        event_register("plotly_click")
+    })
+  })
 
   # ---- Main: search button triggers all plots ----
   observeEvent(input$search_btn, {

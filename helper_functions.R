@@ -195,6 +195,7 @@ plot_gsea <- function(Charmobj, rbp, varoi = "SampleType", thresh = 0.05,
 
   return(list(geneset_table = hallmarks.res.tidy, gsea_plot = gsea_plot_hall))
 }
+
 correl_exp_rbp_plotly <- function(rbp_results, rbp, other_rbp, plot_title = NULL) {
   ref_df <- rbp_results[[rbp]]
   other_df <- rbp_results[[other_rbp]]
@@ -239,6 +240,7 @@ correl_exp_rbp_plotly <- function(rbp_results, rbp, other_rbp, plot_title = NULL
       showlegend = FALSE
     )
 }
+
 correl_scatter_gsea_plotly <- function(gsea_results, rbp, other_rbp, plot_title = NULL) {
   ref_df <- gsea_results[[rbp]]
   other_df <- gsea_results[[other_rbp]]
@@ -284,38 +286,116 @@ correl_scatter_gsea_plotly <- function(gsea_results, rbp, other_rbp, plot_title 
     )
 }
 
-plot_similar_expr <- function(selected_rbp, selected_others, datasets,
-                              correl_num = 10, n_pos = NULL, n_neg = NULL) {
+gsea_correl <- function(gsea_results, rbp, correl_num = NULL,
+                        n_pos = NULL, n_neg = NULL, other_rbps = NULL) {
+  if (!(rbp %in% names(gsea_results))) stop("RBP not found in gsea_results")
+  ref_df <- gsea_results[[rbp]]
+  stopifnot(all(c("pathway","NES") %in% colnames(ref_df)))
+  ref_vec <- ref_df$NES
+  names(ref_vec) <- ref_df$pathway
 
-  # datasets: a named list with 3 rbp_results objects
-  # e.g., list(All = similar_expression_all,
-  #            K562 = similar_expression_K562,
-  #            HEPG2 = similar_expression_HEPG2)
+  cor_results <- data.frame(RBP=character(), Correlation=numeric(), Pvalue=numeric())
 
-  plots <- list()
-
-  for (ds_name in names(datasets)) {
-    rbp_results <- datasets[[ds_name]]
-
-    # Only one RBP selected → scatter plot
-    if (length(selected_others) == 1) {
-      p <- correl_exp_rbp(rbp_results, rbp = selected_rbp, other_rbp = selected_others)
-
-    } else {
-      # Multiple or no RBP selected → correlation heatmap
-      p <- exp_correl(rbp_results,
-                      rbp = selected_rbp,
-                      correl_num = correl_num,
-                      n_pos = n_pos,
-                      n_neg = n_neg,
-                      other_rbps = if (length(selected_others) > 0) selected_others else NULL)$heatmap
+  for (other_rbp in setdiff(names(gsea_results), rbp)) {
+    other_df <- gsea_results[[other_rbp]]
+    merged <- merge(ref_df, other_df, by="pathway", suffixes=c("_ref","_other"))
+    if (nrow(merged) > 2) {
+      test <- suppressWarnings(cor.test(merged$NES_ref, merged$NES_other, method="spearman"))
+      cor_results <- rbind(cor_results,
+                           data.frame(RBP=other_rbp,
+                                      Correlation=unname(test$estimate),
+                                      Pvalue=test$p.value))
     }
-
-    plots[[ds_name]] <- p
   }
 
-  return(plots)
+  # Select top RBPs
+  if (!is.null(other_rbps)) {
+    valid_rbps <- intersect(other_rbps, cor_results$RBP)
+    top_cor <- cor_results[cor_results$RBP %in% valid_rbps, ]
+  } else if (!is.null(correl_num)) {
+    cor_results <- cor_results[order(-abs(cor_results$Correlation)), ]
+    top_cor <- head(cor_results, correl_num)
+  } else if (!is.null(n_pos) | !is.null(n_neg)) {
+    pos <- cor_results[order(-cor_results$Correlation), ]
+    neg <- cor_results[order(cor_results$Correlation), ]
+    top_cor <- rbind(head(pos, n_pos), head(neg, n_neg))
+  } else stop("Please provide either other_rbps, correl_num, or (n_pos/n_neg)")
+
+  top_cor <- top_cor[order(top_cor$Correlation, decreasing=TRUE), ]
+  top_cor$RBP <- factor(top_cor$RBP, levels=top_cor$RBP)
+
+  # Heatmap with automatic text contrast
+  heatmap_plot <- ggplot(top_cor, aes(x=rbp, y=RBP, fill=Correlation)) +
+    geom_tile(color="white") +
+    geom_text(aes(label=sprintf("%.2f", Correlation),
+                  color=ifelse(abs(Correlation)<0.3, "black", "white")), size=5) +
+    scale_color_identity() +
+    scale_fill_gradient2(low="black", mid="grey50", high="#601700", midpoint=0, limits=c(-1,1)) +
+    labs(title=paste("Spearman correlations with", rbp, "- GSEA"),
+         x="Reference RBP", y="Other RBPs") +
+    theme_minimal(base_size=14) +
+    theme(axis.text.x=element_text(angle=45, hjust=1))
+
+  return(list(correlation_table=cor_results,
+              top_table=top_cor,
+              heatmap=heatmap_plot))
 }
+exp_correl <- function(rbp_results, rbp, correl_num=NULL,
+                       n_pos=NULL, n_neg=NULL, other_rbps=NULL) {
+  if (!(rbp %in% names(rbp_results))) stop("RBP not found in rbp_results")
 
+  ref_df <- rbp_results[[rbp]]
+  stopifnot(all(c("Gene", "t") %in% colnames(ref_df)))
+  ref_vec <- ref_df$t
+  names(ref_vec) <- ref_df$Gene
 
+  cor_results <- data.frame(RBP=character(), Correlation=numeric(), Pvalue=numeric())
+
+  for (other_rbp in setdiff(names(rbp_results), rbp)) {
+    other_df <- rbp_results[[other_rbp]]
+    merged <- merge(ref_df, other_df, by="Gene", suffixes=c("_ref","_other"))
+    if (nrow(merged) > 2) {
+      test <- suppressWarnings(cor.test(
+        merged$t_ref,
+        merged$t_other,
+        method="spearman"))
+      cor_results <- rbind(cor_results,
+                           data.frame(RBP=other_rbp,
+                                      Correlation=unname(test$estimate),
+                                      Pvalue=test$p.value))
+    }
+  }
+
+  # Select top RBPs
+  if (!is.null(other_rbps)) {
+    valid_rbps <- intersect(other_rbps, cor_results$RBP)
+    top_cor <- cor_results[cor_results$RBP %in% valid_rbps, ]
+  } else if (!is.null(correl_num)) {
+    cor_results <- cor_results[order(-abs(cor_results$Correlation)), ]
+    top_cor <- head(cor_results, correl_num)
+  } else if (!is.null(n_pos) | !is.null(n_neg)) {
+    pos <- cor_results[order(-cor_results$Correlation), ]
+    neg <- cor_results[order(cor_results$Correlation), ]
+    top_cor <- rbind(head(pos, n_pos), head(neg, n_neg))
+  } else stop("Please provide either other_rbps, correl_num, or (n_pos/n_neg)")
+
+  top_cor <- top_cor[order(top_cor$Correlation, decreasing=TRUE), ]
+  top_cor$RBP <- factor(top_cor$RBP, levels=top_cor$RBP)
+
+  # Heatmap with automatic text contrast
+  heatmap_plot <- ggplot(top_cor, aes(x=rbp, y=RBP, fill=Correlation)) +
+    geom_tile(color="white") +
+    geom_text(aes(label=sprintf("%.2f", Correlation),
+                  color=ifelse(abs(Correlation)<0.3, "black", "white")), size=5) +
+    scale_color_identity() +
+    scale_fill_gradient2(low="black", mid="grey50", high="#601700", midpoint=0, limits=c(-1,1)) +
+    labs(title=paste("Spearman correlations with", rbp, "- Expression"),
+         x="Reference RBP", y="Other RBPs") +
+    theme_minimal(base_size=14) +
+    theme(axis.text.x=element_text(angle=45, hjust=1))
+
+  return(list(correlation_table=cor_results,
+              top_table=top_cor,
+              heatmap=heatmap_plot))
+}
 
