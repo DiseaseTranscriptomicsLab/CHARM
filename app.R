@@ -294,7 +294,7 @@ ui <- fluidPage(
                   accept = c(".txt")
                 ),
                 uiOutput("file_warning_expr"),
-                uiOutput("user_file_options_expr")
+                uiOutput("user_file_options")
               )
             )
           ),
@@ -705,7 +705,7 @@ server <- function(input, output, session) {
     })
 
     # Only show extra options if upload is successful
-    output$user_file_options_expr <- renderUI({
+    output$user_file_options<- renderUI({
       if (!upload_ok) return(NULL)
 
       tagList(
@@ -724,7 +724,7 @@ server <- function(input, output, session) {
           selectizeInput(
             inputId = "user_file_compare_expr",
             label = "Compare with specific RBPs (optional)",
-            choices = NULL,  # dynamically filled later
+            choices = unique(Charm.object$Experiment),  # dynamically filled later
             multiple = TRUE,
             options = list(placeholder = "Select one or more RBPs")
           ),
@@ -744,7 +744,22 @@ server <- function(input, output, session) {
             "Show top N negative correlations (optional):",
             value = NA, min = 1
           ),
-          helpText("Tip: You may use one or both of the numeric inputs above.")
+          helpText("Tip: You may use one or both of the numeric inputs above."),        # Plot / Reset buttons
+        div(
+          style = "display: flex; align-items: center; margin-top: 15px;",
+          actionButton(
+            "user_file_plot_btn",
+            tagList(fa("chart-line"), " Plot"),
+            class = "btn btn-primary",
+            style = "margin-right: 10px; border-radius: 20px;"
+          ),
+          actionButton(
+            "user_file_reset_btn",
+            tagList(fa("redo"), " Reset"),
+            class = "btn btn-secondary",
+            style = "border-radius: 20px;"
+          )
+        )
         ),
 
         # GSEA options
@@ -753,7 +768,7 @@ server <- function(input, output, session) {
           selectizeInput(
             inputId = "user_file_compare_gsea",
             label = "Compare with specific RBPs (optional)",
-            choices = NULL,
+            choices = unique(Charm.object$Experiment),
             multiple = TRUE,
             options = list(placeholder = "Select one or more RBPs")
           ),
@@ -773,25 +788,26 @@ server <- function(input, output, session) {
             "Show top N negative correlations (optional):",
             value = NA, min = 1
           ),
-          helpText("Tip: You may use one or both of the numeric inputs above.")
+          helpText("Tip: You may use one or both of the numeric inputs above."),
+          # Plot / Reset buttons
+          div(
+            style = "display: flex; align-items: center; margin-top: 15px;",
+            actionButton(
+              "user_file_plot_btn",
+              tagList(fa("chart-line"), " Plot"),
+              class = "btn btn-primary",
+              style = "margin-right: 10px; border-radius: 20px;"
+            ),
+            actionButton(
+              "user_file_reset_btn",
+              tagList(fa("redo"), " Reset"),
+              class = "btn btn-secondary",
+              style = "border-radius: 20px;"
+            )
+          )
         ),
 
-        # Plot / Reset buttons
-        div(
-          style = "display: flex; align-items: center; margin-top: 15px;",
-          actionButton(
-            "user_file_plot_btn",
-            tagList(fa("chart-line"), " Plot"),
-            class = "btn btn-primary",
-            style = "margin-right: 10px; border-radius: 20px;"
-          ),
-          actionButton(
-            "user_file_reset_btn",
-            tagList(fa("redo"), " Reset"),
-            class = "btn btn-secondary",
-            style = "border-radius: 20px;"
-          )
-        )
+
       )
     })
   })
