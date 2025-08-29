@@ -289,11 +289,12 @@ ui <- fluidPage(
                   "This table must be in .txt format and must not contain a header."
                 ),
                 fileInput(
-                  inputId = "user_file",
+                  inputId = "user_file_expr",
                   label = "Upload your file:",
                   accept = c(".txt")
                 ),
-                uiOutput("file_warning")
+                uiOutput("file_warning_expr"),
+                uiOutput("user_file_options_expr")
               )
             )
           ),
@@ -372,7 +373,7 @@ ui <- fluidPage(
             wellPanel(
               # Choose mode: Explore or Discovery
               radioButtons(
-                inputId = "expr_mode",
+                inputId = "splicing_mode",
                 label = "Select mode:",
                 choices = c("Explore Mode", "Discovery Mode"),
                 selected = "Explore Mode"
@@ -380,9 +381,9 @@ ui <- fluidPage(
 
               # Conditional: show dropdown only in Explore Mode
               conditionalPanel(
-                condition = "input.expr_mode == 'Explore Mode'",
+                condition = "input.splicing_mode == 'Explore Mode'",
                 selectInput(
-                  inputId = "expr_dataset",
+                  inputId = "splicing_dataset",
                   label = "Select option:",
                   choices = c("Both Cells", "K562", "HEPG2", "Similar RBPs")
                 ),
@@ -392,7 +393,7 @@ ui <- fluidPage(
                   style = "display: flex; align-items: center; margin-top: 15px;",
 
                   selectizeInput(
-                    inputId = "expr_search",
+                    inputId = "splicing_search",
                     label = NULL,
                     choices = NULL,
                     multiple = FALSE,
@@ -418,7 +419,7 @@ ui <- fluidPage(
 
               # Conditional: show file upload only in Discovery Mode
               conditionalPanel(
-                condition = "input.expr_mode == 'Discovery Mode'",
+                condition = "input.splicing_mode == 'Discovery Mode'",
                 hr(),
                 tags$p("Alternatively, upload your own table with differential splicing values:"),
                 tags$p(
@@ -428,13 +429,13 @@ ui <- fluidPage(
                 ),
 
                 fileInput(
-                  inputId = "user_file",
+                  inputId = "user_file_splicing",
                   label = "Upload your file:",
                   accept = c(".txt")
                 ),
 
                 # Placeholder for inline warning
-                uiOutput("file_warning")
+                uiOutput("file_warning_splicing")
               )
             )
           ),
@@ -461,7 +462,7 @@ ui <- fluidPage(
             wellPanel(
               # Choose mode: Explore or Discovery
               radioButtons(
-                inputId = "expr_mode",
+                inputId = "binding_mode",
                 label = "Select mode:",
                 choices = c("Explore Mode", "Discovery Mode"),
                 selected = "Explore Mode"
@@ -469,9 +470,9 @@ ui <- fluidPage(
 
               # Conditional: show dropdown only in Explore Mode
               conditionalPanel(
-                condition = "input.expr_mode == 'Explore Mode'",
+                condition = "input.binding_mode == 'Explore Mode'",
                 selectInput(
-                  inputId = "expr_dataset",
+                  inputId = "binding_dataset",
                   label = "Select option:",
                   choices = c("Both Cells", "K562", "HEPG2", "Similar RBPs")
                 ),
@@ -481,7 +482,7 @@ ui <- fluidPage(
                   style = "display: flex; align-items: center; margin-top: 15px;",
 
                   selectizeInput(
-                    inputId = "expr_search",
+                    inputId = "binding_search",
                     label = NULL,
                     choices = NULL,
                     multiple = FALSE,
@@ -507,7 +508,7 @@ ui <- fluidPage(
 
               # Conditional: show file upload only in Discovery Mode
               conditionalPanel(
-                condition = "input.expr_mode == 'Discovery Mode'",
+                condition = "input.binding_mode == 'Discovery Mode'",
                 hr(),
                 tags$p("Alternatively, upload your own table with differential splicing values. Charm's integrated tool, eCLIPSE, will process the data:"),
                 tags$p(
@@ -517,13 +518,13 @@ ui <- fluidPage(
                 ),
 
                 fileInput(
-                  inputId = "user_file",
+                  inputId = "user_file_binding",
                   label = "Upload your file:",
                   accept = c(".txt")
                 ),
 
                 # Placeholder for inline warning
-                uiOutput("file_warning")
+                uiOutput("file_warning_binding")
               )
             )
           ),
@@ -551,7 +552,7 @@ ui <- fluidPage(
             wellPanel(
               # Choose mode: Explore or Discovery
               radioButtons(
-                inputId = "expr_mode",
+                inputId = "network_mode",
                 label = "Select mode:",
                 choices = c("Explore Mode", "Discovery Mode"),
                 selected = "Explore Mode"
@@ -559,9 +560,9 @@ ui <- fluidPage(
 
               # Conditional: show dropdown only in Explore Mode
               conditionalPanel(
-                condition = "input.expr_mode == 'Explore Mode'",
+                condition = "input.network_mode == 'Explore Mode'",
                 selectInput(
-                  inputId = "expr_dataset",
+                  inputId = "network_dataset",
                   label = "Select option:",
                   choices = c("Both Cells", "K562", "HEPG2", "Similar RBPs")
                 ),
@@ -571,7 +572,7 @@ ui <- fluidPage(
                   style = "display: flex; align-items: center; margin-top: 15px;",
 
                   selectizeInput(
-                    inputId = "expr_search",
+                    inputId = "network_search",
                     label = NULL,
                     choices = NULL,
                     multiple = FALSE,
@@ -595,26 +596,6 @@ ui <- fluidPage(
                 )
               ),
 
-              # Conditional: show file upload only in Discovery Mode
-              conditionalPanel(
-                condition = "input.expr_mode == 'Discovery Mode'",
-                hr(),
-                tags$p("Alternatively, upload your own table with expression values:"),
-                tags$p(
-                  "CHARM currently accepts tables where the first column are gene names, ",
-                  "and the second column are differential expression values (t-statistics). ",
-                  "This table must be in .txt format and must not contain a header."
-                ),
-
-                fileInput(
-                  inputId = "user_file",
-                  label = "Upload your file:",
-                  accept = c(".txt")
-                ),
-
-                # Placeholder for inline warning
-                uiOutput("file_warning")
-              )
             )
           ),
 
@@ -689,32 +670,194 @@ server <- function(input, output, session) {
     updateSelectizeInput(session, "similar_rbps_select_gsea", choices = rbp_choices)
   })
 
-  # ---- File upload validation ----
-  observeEvent(input$user_file, {
-    req(input$user_file)
-    file_path <- input$user_file$datapath
+  ###EXPRESSION
+  observeEvent(input$user_file_expr, {
+    req(input$user_file_expr)
+    file_path <- input$user_file_expr$datapath
+
     df <- tryCatch(
       read.table(file_path, header = FALSE, sep = "\t", stringsAsFactors = FALSE),
       error = function(e) NULL
     )
 
-    upload_ok <- TRUE
+    upload_ok <- FALSE
     error_msg <- NULL
+
     if (is.null(df)) {
-      upload_ok <- FALSE
       error_msg <- "Could not read the file. Make sure it is tab-delimited."
     } else if (ncol(df) != 2) {
-      upload_ok <- FALSE
       error_msg <- "File must have exactly 2 columns."
     } else if (!is.character(df[[1]])) {
-      upload_ok <- FALSE
-      error_msg <- "First column must be character."
+      error_msg <- "First column must be character (gene names)."
     } else if (!is.numeric(df[[2]])) {
-      upload_ok <- FALSE
-      error_msg <- "Second column must be numeric."
+      error_msg <- "Second column must be numeric (t-statistics)."
+    } else {
+      upload_ok <- TRUE
     }
 
-    output$file_warning <- renderUI({
+    # Show upload warning
+    output$file_warning_expr <- renderUI({
+      if (upload_ok) {
+        div(style="color:green;font-weight:bold;margin-top:10px;", "Upload complete!")
+      } else {
+        div(style="color:red;font-weight:bold;margin-top:10px;", paste("Upload failed:", error_msg))
+      }
+    })
+
+    # Only show extra options if upload is successful
+    output$user_file_options_expr <- renderUI({
+      if (!upload_ok) return(NULL)
+
+      tagList(
+        radioButtons(
+          inputId = "user_file_mode_expr",
+          label = "Select correlation type:",
+          choices = c("By Gene Expression" = "expr",
+                      "By Gene Set Enrichment" = "gsea"),
+          selected = "expr",
+          inline = TRUE
+        ),
+
+        # Gene Expression options
+        conditionalPanel(
+          condition = "input.user_file_mode_expr == 'expr'",
+          selectizeInput(
+            inputId = "user_file_compare_expr",
+            label = "Compare with specific RBPs (optional)",
+            choices = NULL,  # dynamically filled later
+            multiple = TRUE,
+            options = list(placeholder = "Select one or more RBPs")
+          ),
+          numericInput(
+            "user_file_topN_expr",
+            "Show top N correlated RBPs (optional):",
+            value = NA, min = 1
+          ),
+          helpText("Tip: By selecting a number here, this will take precedence over the two inputs below."),
+          numericInput(
+            "user_file_n_pos_expr",
+            "Show top N positive correlations (optional):",
+            value = NA, min = 1
+          ),
+          numericInput(
+            "user_file_n_neg_expr",
+            "Show top N negative correlations (optional):",
+            value = NA, min = 1
+          ),
+          helpText("Tip: You may use one or both of the numeric inputs above.")
+        ),
+
+        # GSEA options
+        conditionalPanel(
+          condition = "input.user_file_mode_expr == 'gsea'",
+          selectizeInput(
+            inputId = "user_file_compare_gsea",
+            label = "Compare with specific RBPs (optional)",
+            choices = NULL,
+            multiple = TRUE,
+            options = list(placeholder = "Select one or more RBPs")
+          ),
+          numericInput(
+            "user_file_topN_gsea",
+            "Show top N correlated RBPs (optional):",
+            value = NA, min = 1
+          ),
+          helpText("Tip: By selecting a number here, this will take precedence over the two inputs below."),
+          numericInput(
+            "user_file_n_pos_gsea",
+            "Show top N positive correlations (optional):",
+            value = NA, min = 1
+          ),
+          numericInput(
+            "user_file_n_neg_gsea",
+            "Show top N negative correlations (optional):",
+            value = NA, min = 1
+          ),
+          helpText("Tip: You may use one or both of the numeric inputs above.")
+        ),
+
+        # Plot / Reset buttons
+        div(
+          style = "display: flex; align-items: center; margin-top: 15px;",
+          actionButton(
+            "user_file_plot_btn",
+            tagList(fa("chart-line"), " Plot"),
+            class = "btn btn-primary",
+            style = "margin-right: 10px; border-radius: 20px;"
+          ),
+          actionButton(
+            "user_file_reset_btn",
+            tagList(fa("redo"), " Reset"),
+            class = "btn btn-secondary",
+            style = "border-radius: 20px;"
+          )
+        )
+      )
+    })
+  })
+
+  #SPLICING
+  observe({
+    if (is.null(input$user_file_splicing)) return(NULL)
+    file_path <- input$user_file_splicing$datapath
+    if (!file.exists(file_path)) return(NULL)
+
+    df <- tryCatch(
+      read.table(file_path, header = FALSE, sep = "\t", stringsAsFactors = FALSE),
+      error = function(e) NULL
+    )
+
+    upload_ok <- FALSE
+    error_msg <- NULL
+
+    if (is.null(df)) {
+      error_msg <- "Could not read the file. Make sure it is tab-delimited."
+    } else if (ncol(df) != 2) {
+      error_msg <- "File must have exactly 2 columns."
+    } else if (!is.character(df[[1]])) {
+      error_msg <- "First column must be character (gene names)."
+    } else if (!is.numeric(df[[2]])) {
+      error_msg <- "Second column must be numeric (t-statistics)."
+    } else {
+      upload_ok <- TRUE
+    }
+
+    output$file_warning_splicing <- renderUI({
+      if (upload_ok) {
+        div(style="color:green;font-weight:bold;margin-top:10px;", "Upload complete!")
+      } else {
+        div(style="color:red;font-weight:bold;margin-top:10px;", paste("Upload failed:", error_msg))
+      }
+    })
+  })
+
+  #BINDING
+  observe({
+    if (is.null(input$user_file_binding)) return(NULL)
+    file_path <- input$user_file_binding$datapath
+    if (!file.exists(file_path)) return(NULL)
+
+    df <- tryCatch(
+      read.table(file_path, header = FALSE, sep = "\t", stringsAsFactors = FALSE),
+      error = function(e) NULL
+    )
+
+    upload_ok <- FALSE
+    error_msg <- NULL
+
+    if (is.null(df)) {
+      error_msg <- "Could not read the file. Make sure it is tab-delimited."
+    } else if (ncol(df) != 2) {
+      error_msg <- "File must have exactly 2 columns."
+    } else if (!is.character(df[[1]])) {
+      error_msg <- "First column must be character (gene names)."
+    } else if (!is.numeric(df[[2]])) {
+      error_msg <- "Second column must be numeric (t-statistics)."
+    } else {
+      upload_ok <- TRUE
+    }
+
+    output$file_warning_binding <- renderUI({
       if (upload_ok) {
         div(style="color:green;font-weight:bold;margin-top:10px;", "Upload complete!")
       } else {

@@ -340,6 +340,7 @@ gsea_correl <- function(gsea_results, rbp, correl_num = NULL,
               top_table=top_cor,
               heatmap=heatmap_plot))
 }
+
 exp_correl <- function(rbp_results, rbp, correl_num=NULL,
                        n_pos=NULL, n_neg=NULL, other_rbps=NULL) {
   if (!(rbp %in% names(rbp_results))) stop("RBP not found in rbp_results")
