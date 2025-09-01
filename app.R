@@ -7,6 +7,8 @@ library(ggplot2)
 library(limma)
 library(ggrepel)
 library(shinycssloaders)
+library(fgsea)
+library(msigdbr)
 
 source("helper_functions.R")
 
@@ -313,6 +315,18 @@ ui <- fluidPage(
              color: #856404;"
             )
           ,
+
+          # User PRovided Expression (appear at the top if in that mode)
+          conditionalPanel(
+            condition = "input.user_file_mode_expr == 'expr'",
+            uiOutput("userfilesimilar_expr")
+          ),
+
+          #
+          conditionalPanel(
+            condition = "input.user_file_mode_expr == 'gsea'",
+            uiOutput("userfilesimilar_gsea")
+          ),
 
             # Similar RBPs plots (appear at the top if in that mode)
             conditionalPanel(
@@ -671,6 +685,9 @@ server <- function(input, output, session) {
   })
 
   ###EXPRESSION
+  upload_ok <- reactiveVal(FALSE)
+  user_expr_df <- reactiveVal(NULL)
+
   observeEvent(input$user_file_expr, {
     req(input$user_file_expr)
     file_path <- input$user_file_expr$datapath
@@ -680,71 +697,80 @@ server <- function(input, output, session) {
       error = function(e) NULL
     )
 
-    upload_ok <- FALSE
-    error_msg <- NULL
-
     if (is.null(df)) {
+      upload_ok(FALSE)
+      user_expr_df(NULL)
       error_msg <- "Could not read the file. Make sure it is tab-delimited."
     } else if (ncol(df) != 2) {
+      upload_ok(FALSE)
+      user_expr_df(NULL)
       error_msg <- "File must have exactly 2 columns."
     } else if (!is.character(df[[1]])) {
+      upload_ok(FALSE)
+      user_expr_df(NULL)
       error_msg <- "First column must be character (gene names)."
     } else if (!is.numeric(df[[2]])) {
+      upload_ok(FALSE)
+      user_expr_df(NULL)
       error_msg <- "Second column must be numeric (t-statistics)."
     } else {
-      upload_ok <- TRUE
+      colnames(df) <- c("Gene", "t")
+      upload_ok(TRUE)
+      user_expr_df(df)   # save dataframe globally
+      error_msg <- NULL
     }
 
-    # Show upload warning
     output$file_warning_expr <- renderUI({
-      if (upload_ok) {
+      if (upload_ok()) {
         div(style="color:green;font-weight:bold;margin-top:10px;", "Upload complete!")
       } else {
         div(style="color:red;font-weight:bold;margin-top:10px;", paste("Upload failed:", error_msg))
       }
     })
+  })
 
-    # Only show extra options if upload is successful
-    output$user_file_options<- renderUI({
-      if (!upload_ok) return(NULL)
+  # Only show extra options if upload is successful
+  output$user_file_options <- renderUI({
+    if (!upload_ok()) return(NULL)
 
-      tagList(
-        radioButtons(
-          inputId = "user_file_mode_expr",
-          label = "Select correlation type:",
-          choices = c("By Gene Expression" = "expr",
-                      "By Gene Set Enrichment" = "gsea"),
-          selected = "expr",
-          inline = TRUE
+    tagList(
+      radioButtons(
+        inputId = "user_file_mode_expr",
+        label = "Select correlation type:",
+        choices = c("By Gene Expression" = "expr",
+                    "By Gene Set Enrichment" = "gsea"),
+        selected = "expr",
+        inline = TRUE
+      ),
+
+      # Gene Expression options
+      conditionalPanel(
+        condition = "input.user_file_mode_expr == 'expr'",
+        selectizeInput(
+          inputId = "user_file_compare_expr",
+          label = "Compare with specific RBPs (optional)",
+          choices = unique(Charm.object$Experiment),
+          multiple = TRUE,
+          options = list(placeholder = "Select one or more RBPs")
         ),
-
-        # Gene Expression options
-        conditionalPanel(
-          condition = "input.user_file_mode_expr == 'expr'",
-          selectizeInput(
-            inputId = "user_file_compare_expr",
-            label = "Compare with specific RBPs (optional)",
-            choices = unique(Charm.object$Experiment),  # dynamically filled later
-            multiple = TRUE,
-            options = list(placeholder = "Select one or more RBPs")
-          ),
-          numericInput(
-            "user_file_topN_expr",
-            "Show top N correlated RBPs (optional):",
-            value = NA, min = 1
-          ),
-          helpText("Tip: By selecting a number here, this will take precedence over the two inputs below."),
-          numericInput(
-            "user_file_n_pos_expr",
-            "Show top N positive correlations (optional):",
-            value = NA, min = 1
-          ),
-          numericInput(
-            "user_file_n_neg_expr",
-            "Show top N negative correlations (optional):",
-            value = NA, min = 1
-          ),
-          helpText("Tip: You may use one or both of the numeric inputs above."),        # Plot / Reset buttons
+        numericInput(
+          "user_file_topN_expr",
+          "Show top N correlated RBPs (optional):",
+          value = NA, min = 1
+        ),
+        helpText("Tip: By selecting a number here, this will take precedence over the two inputs below."),
+        numericInput(
+          "user_file_n_pos_expr",
+          "Show top N positive correlations (optional):",
+          value = NA, min = 1
+        ),
+        numericInput(
+          "user_file_n_neg_expr",
+          "Show top N negative correlations (optional):",
+          value = NA, min = 1
+        ),
+        helpText("Tip: You may use one or both of the numeric inputs above."),
+        # Plot / Reset buttons
         div(
           style = "display: flex; align-items: center; margin-top: 15px;",
           actionButton(
@@ -760,56 +786,130 @@ server <- function(input, output, session) {
             style = "border-radius: 20px;"
           )
         )
-        ),
+      ),
 
-        # GSEA options
-        conditionalPanel(
-          condition = "input.user_file_mode_expr == 'gsea'",
-          selectizeInput(
-            inputId = "user_file_compare_gsea",
-            label = "Compare with specific RBPs (optional)",
-            choices = unique(Charm.object$Experiment),
-            multiple = TRUE,
-            options = list(placeholder = "Select one or more RBPs")
+      # GSEA options
+      conditionalPanel(
+        condition = "input.user_file_mode_expr == 'gsea'",
+        selectizeInput(
+          inputId = "user_file_compare_gsea",
+          label = "Compare with specific RBPs (optional)",
+          choices = unique(Charm.object$Experiment),
+          multiple = TRUE,
+          options = list(placeholder = "Select one or more RBPs")
+        ),
+        numericInput(
+          "user_file_topN_gsea",
+          "Show top N correlated RBPs (optional):",
+          value = NA, min = 1
+        ),
+        helpText("Tip: By selecting a number here, this will take precedence over the two inputs below."),
+        numericInput(
+          "user_file_n_pos_gsea",
+          "Show top N positive correlations (optional):",
+          value = NA, min = 1
+        ),
+        numericInput(
+          "user_file_n_neg_gsea",
+          "Show top N negative correlations (optional):",
+          value = NA, min = 1
+        ),
+        helpText("Tip: You may use one or both of the numeric inputs above."),
+        # Plot / Reset buttons
+        div(
+          style = "display: flex; align-items: center; margin-top: 15px;",
+          actionButton(
+            "user_file_plot_btn",
+            tagList(fa("chart-line"), " Plot"),
+            class = "btn btn-primary",
+            style = "margin-right: 10px; border-radius: 20px;"
           ),
-          numericInput(
-            "user_file_topN_gsea",
-            "Show top N correlated RBPs (optional):",
-            value = NA, min = 1
-          ),
-          helpText("Tip: By selecting a number here, this will take precedence over the two inputs below."),
-          numericInput(
-            "user_file_n_pos_gsea",
-            "Show top N positive correlations (optional):",
-            value = NA, min = 1
-          ),
-          numericInput(
-            "user_file_n_neg_gsea",
-            "Show top N negative correlations (optional):",
-            value = NA, min = 1
-          ),
-          helpText("Tip: You may use one or both of the numeric inputs above."),
-          # Plot / Reset buttons
-          div(
-            style = "display: flex; align-items: center; margin-top: 15px;",
-            actionButton(
-              "user_file_plot_btn",
-              tagList(fa("chart-line"), " Plot"),
-              class = "btn btn-primary",
-              style = "margin-right: 10px; border-radius: 20px;"
-            ),
-            actionButton(
-              "user_file_reset_btn",
-              tagList(fa("redo"), " Reset"),
-              class = "btn btn-secondary",
-              style = "border-radius: 20px;"
-            )
+          actionButton(
+            "user_file_reset_btn",
+            tagList(fa("redo"), " Reset"),
+            class = "btn btn-secondary",
+            style = "border-radius: 20px;"
           )
-        ),
+        )
+      )
+    )
+  })
 
+  # ---- User File Similarity Plots ----
+  observeEvent(input$user_file_plot_btn, {
+    req(user_expr_df())
+    mode <- input$user_file_mode_expr
 
+    # Choose datasets and plotting functions
+    if (mode == "expr") {
+      datasets <- list(
+        "Both Cells" = similar_expression_all,
+        "K562"       = similar_expression_K562,
+        "HEPG2"      = similar_expression_HEPG2
+      )
+      selected_rbps <- input$user_file_compare_expr
+      scatter_fun <- correl_exp_rbp_plotly
+      heatmap_fun <- exp_correl
+      target_ui <- "userfilesimilar_expr"
+    } else {  # mode == "gsea"
+      datasets <- list(
+        "Both Cells" = similar_gsea_all,
+        "K562"       = similar_gsea_K562,
+        "HEPG2"      = similar_gsea_HEPG2
+      )
+      selected_rbps <- input$user_file_compare_gsea
+      scatter_fun <- correl_scatter_gsea_plotly
+      heatmap_fun <- gsea_correl
+      target_ui <- "userfilesimilar_gsea"
+    }
+
+    if (length(selected_rbps) == 0) selected_rbps <- NULL
+
+    output[[target_ui]] <- renderUI({
+      tagList(
+        tags$div("Generating plots, please wait...",
+                 style = "font-weight:bold;color:#A10702;margin-bottom:15px;"),
+
+        lapply(names(datasets), function(ds_name) {
+          plotname <- paste0("userfile_plot_", ds_name)
+
+          output[[plotname]] <- if (!is.null(selected_rbps) && length(selected_rbps) == 1) {
+            renderPlotly({
+              scatter_fun(datasets[[ds_name]], user_expr_df(), selected_rbps, plot_title = ds_name)
+            })
+          } else {
+            renderPlot({
+              heat_res <- heatmap_fun(
+                datasets[[ds_name]], user_expr_df(),
+                correl_num = if (mode == "expr") input$user_file_topN_expr else input$user_file_topN_gsea,
+                n_pos      = if (mode == "expr") input$user_file_n_pos_expr else input$user_file_n_pos_gsea,
+                n_neg      = if (mode == "expr") input$user_file_n_neg_expr else input$user_file_n_neg_gsea,
+                other_rbps = if (!is.null(selected_rbps) && length(selected_rbps) > 1) selected_rbps else NULL
+              )
+              heat_res$heatmap
+            })
+          }
+
+          column(
+            width = 12,
+            tags$h4(ds_name, style="text-align:center;"),
+            if (!is.null(selected_rbps) && length(selected_rbps) == 1) {
+              shinycssloaders::withSpinner(plotlyOutput(plotname, height="500px"))
+            } else {
+              shinycssloaders::withSpinner(plotOutput(plotname, height="500px"))
+            }
+          )
+        })
       )
     })
+  })
+
+  # ---- Reset button ----
+  observeEvent(input$user_file_reset_btn, {
+    output$userfilesimilar_expr <- renderUI(NULL)
+    output$userfilesimilar_gsea <- renderUI(NULL)
+    updateSelectizeInput(session, "user_file_compare_expr", selected = "")
+    updateSelectizeInput(session, "user_file_compare_gsea", selected = "")
   })
 
   #SPLICING
