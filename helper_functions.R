@@ -1,54 +1,44 @@
-violinplotter <- function(charmobj, rbp, control_color = "#7272AB", other_color = "#283D3B", highlight_color = "red") {
-  # Get expression matrix
-  expr <- charmobj$corcounts
+violinplotter <- function(charmobj, rbp,
+                          control_color = "#7272AB",
+                          other_color = "#283D3B") {
 
-  # Keep only Control and requested RBP samples
-  keep_samples <- charmobj$SampleType %in% c("Control", rbp)
-  expr <- expr[rbp, keep_samples]
+  # Normalize RBP name
+  rbp <- trimws(as.character(rbp))
 
-  # Build dataframe for ggplot
+  # --- Get expression matrix ---
+  expr <- charmobj[[rbp]]$corcounts
+  expr <- expr[rbp, ]
+
+  # --- Build dataframe for ggplot ---
   df <- data.frame(
-    Expression = as.numeric(expr),
-    Group = charmobj$SampleType[keep_samples],
-    Sample = names(expr)  # keep sample names for matching
+    Expression = as.numeric(t(expr)),
+    Group = charmobj[[rbp]]$SampleType
   )
 
-  # Force Control to appear first
+  # Force Control first in the x-axis
   df$Group <- factor(df$Group, levels = c("Control", rbp))
 
-
-  # Highlight control points that are also in Experiment for this RBP
-  control_samples <- charmobj$SampleType == "Control"
-  df$Highlight <- FALSE
-  df$Highlight[df$Group == "Control" & charmobj$Experiment[keep_samples] == rbp] <- TRUE
-  # Compute mean expression per group
+  # --- Compute log2 fold change ---
   mean_expr <- df %>%
     group_by(Group) %>%
-    summarise(mean_exp = mean(Expression, na.rm = TRUE))
+    summarise(mean_exp = mean(Expression, na.rm = TRUE), .groups = "drop")
 
-  # Log2 fold-change = difference of means (rbp - Control)
   logFC <- mean_expr$mean_exp[mean_expr$Group == rbp] -
     mean_expr$mean_exp[mean_expr$Group == "Control"]
 
-  # Create plot
+  # --- Build violin plot ---
   p <- ggplot(df, aes(x = Group, y = Expression, fill = Group)) +
 
-    # All points (low alpha)
-    geom_jitter(data = df, aes(x = Group, y = Expression),
-                width = 0.15, alpha = 0.3, color = "#7272AB") +
+    # Points
+    geom_jitter(width = 0.15, alpha = 0.3, color = control_color) +
 
-    # Violin plot
+    # Violin
     geom_violin(trim = FALSE, alpha = 0.6) +
 
-    # Highlighted points on top
-    geom_jitter(data = df[df$Highlight, ],
-                aes(x = Group, y = Expression),
-                width = 0.15, color = "#E54B4B", size = 3, alpha = 0.8) +
+    # Fill colors
+    scale_fill_manual(values = c("Control" = control_color, rbp = other_color)) +
 
-    # Fill colors for violins
-    scale_fill_manual(values = c("Control" = "#7272AB", rbp = "#283D3B")) +
-
-    # Labels and theme
+    # Titles and theme
     labs(
       title = paste("Expression of", rbp, "KD vs Control"),
       subtitle = paste0("Log2 Fold-Change: ", round(logFC, 2))
@@ -61,14 +51,14 @@ violinplotter <- function(charmobj, rbp, control_color = "#7272AB", other_color 
       panel.background = element_blank(),
       plot.title = element_text(hjust = 0.5),
       plot.subtitle = element_text(hjust = 0.5),
-      text = element_text(size = 15, family = "Arial MS"),
+      text = element_text(size = 15, family = "Arial MS", face = "bold"),
       legend.position = "none"
     ) +
-    xlab("") + ylab("Expression") +
-    ylim(0, max(df$Expression) * 1.05)
+    xlab("") +
+    ylab("Expression") +
+    ylim(0, max(df$Expression, na.rm = TRUE) * 1.05)
 
   return(p)
-
 }
 
 plot_shRNA_effect <- function(sh_effect_vector, rbp) {
@@ -95,7 +85,7 @@ plot_shRNA_effect <- function(sh_effect_vector, rbp) {
       fontface = "italic"
     ) +
     theme_bw() +
-    xlab("Log Fold-Change") +
+    xlab("Log2 Fold-Change") +
     ylab("B-Statistic") +
     ggtitle("Knockdown Efficiency",
             subtitle = paste0("t = ", t_val,
@@ -107,83 +97,193 @@ plot_shRNA_effect <- function(sh_effect_vector, rbp) {
       panel.background = element_blank(),
       plot.title = element_text(hjust = 0.5),
       plot.subtitle = element_text(hjust = 0.5),
-      text = element_text(size = 15, family = "Arial MS")
+      text = element_text(size = 15, family = "Arial MS", face="bold")
     )
 }
 
+plot_rbp_volcano <- function(charmobj, rbp, other_genes = NULL) {
+  # Basic sanity checks
+  if (is.null(charmobj) || is.null(rbp)) {
+    return(list(top_table = data.frame(), volcano_plot = ggplot() + theme_void()))
+  }
 
-plot_rbp_volcano <- function(Charmobj, rbp) {
+  if (is.null(charmobj[[rbp]])) {
+    message(sprintf("No entry for %s in charm object", rbp))
+    return(list(top_table = data.frame(), volcano_plot = ggplot() + annotate("text", x=0,y=0,label=paste("No data for", rbp)) + theme_void()))
+  }
 
-  top.table <- as.data.frame(Charmobj$DEGenes[rbp])
-  colnames(top.table) <- c("logFC", "AveExpr", "t", "P.Value", "adj.P.Val", "B", "highlight")
-  top.table$gene <- row.names(top.table)
-  # Move gene column to first position
-  top.table <- top.table[, c("gene", setdiff(colnames(top.table), "gene"))]
+  expr <- charmobj[[rbp]]$corcounts
+  group <- charmobj[[rbp]]$SampleType
 
-  # Order by absolute t-statistic
-  top.table <- top.table[order(-abs(top.table$t)), ]
+  # Ensure expr and group are present and compatible
+  if (is.null(expr) || is.null(group) || length(group) == 0) {
+    message("Expression or group information missing/empty.")
+    return(list(top_table = data.frame(), volcano_plot = ggplot() + annotate("text", x=0,y=0,label=paste("No data for", rbp)) + theme_void()))
+  }
 
+  # Build design matrix; guard for degenerate cases
+  mm <- tryCatch(model.matrix(~0 + group), error = function(e) NULL)
+  if (is.null(mm) || ncol(mm) == 0) {
+    message("Design matrix has zero columns.")
+    return(list(top_table = data.frame(), volcano_plot = ggplot() + annotate("text", x=0,y=0,label=paste("Insufficient group levels for", rbp)) + theme_void()))
+  }
 
+  colnames(mm) <- gsub("group", "", colnames(mm))
+
+  # Fit linear model (still guard with tryCatch)
+  fitted <- tryCatch(lmFit(expr, mm), error = function(e) NULL)
+  if (is.null(fitted)) {
+    message("lmFit failed.")
+    return(list(top_table = data.frame(), volcano_plot = ggplot() + annotate("text", x=0,y=0,label=paste("DE analysis failed for", rbp)) + theme_void()))
+  }
+
+  # Create contrast; guard if 'Control' not present
+  if (!("Control" %in% colnames(coef(fitted)))) {
+    message("Control column not found in fitted coefficients.")
+    return(list(top_table = data.frame(), volcano_plot = ggplot() + annotate("text", x=0,y=0,label="No Control level found") + theme_void()))
+  }
+
+  contrast_formula <- paste0(rbp, " - Control")
+  contr <- tryCatch(makeContrasts(contrasts = contrast_formula, levels = colnames(coef(fitted))), error = function(e) NULL)
+  if (is.null(contr)) {
+    message("Could not create contrasts (check that RBP and Control are valid levels).")
+    return(list(top_table = data.frame(), volcano_plot = ggplot() + annotate("text", x=0,y=0,label=paste("Contrast creation failed for", rbp)) + theme_void()))
+  }
+
+  tmp_contr <- contrasts.fit(fitted, contr)
+  tmp <- eBayes(tmp_contr)
+
+  # Get results for all genes (safe)
+  top.table <- tryCatch(topTable(tmp, sort.by = "none", n = Inf), error = function(e) data.frame())
+  if (nrow(top.table) == 0) {
+    return(list(top_table = data.frame(), volcano_plot = ggplot() + annotate("text", x=0,y=0,label=paste("No differential expression results for", rbp)) + theme_void()))
+  }
+
+  # Check provided genes
+  if (!is.null(other_genes)) {
+    not_found <- setdiff(other_genes, rownames(top.table))
+    if (length(not_found) > 0) {
+      for (gene in not_found) {
+        message(paste0("The gene '", gene, "' was not found. This may be because of prior filtration."))
+      }
+    }
+    other_genes <- intersect(other_genes, rownames(top.table))
+  }
+
+  # Add highlight categories (safe assignment)
+  top.table$highlight <- "None"
+  top.table$highlight[rownames(top.table) == rbp] <- "RBP"
+  if (!is.null(other_genes) && length(other_genes) > 0) {
+    top.table$highlight[rownames(top.table) %in% other_genes] <- "Other"
+  }
+
+  # Order by absolute t-statistic if t column exists
+  if ("t" %in% colnames(top.table)) {
+    top.table <- top.table[order(-abs(top.table$t)), , drop = FALSE]
+  }
+
+  # Volcano Plot (same aesthetics)
   volcano_plot <- ggplot() +
-    # Base layer: all genes grey
-    geom_point(data = subset(top.table, highlight == "None"),
-               aes(x = logFC, y = B), color = "#CCCCCC", alpha = 0.6) +
-    # Red layer: rbp gene
-    geom_point(data = subset(top.table, highlight == "RBP"),
-               aes(x = logFC, y = B), color = "#A10702", alpha = 0.9, size = 2.5) +
-    # Labels for RBP
-    geom_text_repel(
-      data = subset(top.table, highlight == "RBP"),
-      aes(x = logFC, y = B, label = rownames(subset(top.table, highlight == "RBP"))),
-      size = 5, fontface = "italic", color = "#A10702", nudge_y = 1
-    ) +
+    geom_point(data = subset(top.table, highlight == "None"), aes(x = logFC, y = B), color = "#CCCCCC", alpha = 0.6) +
+    geom_point(data = subset(top.table, highlight == "Other"), aes(x = logFC, y = B), color = "#23586C", alpha = 0.8, size = 2) +
+    geom_point(data = subset(top.table, highlight == "RBP"), aes(x = logFC, y = B), color = "#A10702", alpha = 0.9, size = 2.5) +
+    geom_text_repel(data = subset(top.table, highlight == "RBP"), aes(x = logFC, y = B, label = rownames(subset(top.table, highlight == "RBP"))), size = 5, fontface = "italic", color = "#A10702", nudge_y = 1) +
+    geom_text_repel(data = subset(top.table, highlight == "Other"), aes(x = logFC, y = B, label = rownames(subset(top.table, highlight == "Other"))), size = 4, fontface = "italic", color = "#23586C", nudge_y = 1) +
     theme_bw() +
-    theme(
-      plot.title = element_text(hjust = 0.5),
-      axis.line = element_line(colour = "black"),
-      panel.grid.minor = element_blank(),
-      panel.border = element_blank(),
-      panel.background = element_blank(),
-      legend.position = "none"
-    ) +
-    labs(title = paste(rbp," KD"),
-         x = "Log Fold-Change", y = "B-statistic")
+    theme(plot.title = element_text(hjust = 0.5),
+          axis.line = element_line(colour = "black"),
+          panel.grid.minor = element_blank(),
+          panel.border = element_blank(),
+          panel.background = element_blank(),
+          legend.position = "none",
+          text = element_text(size = 15, family = "Arial MS", face="bold")) +
+    labs(title = paste("Volcano plot:", rbp), x = "Log2 Fold-Change", y = "B-statistic")
 
   return(list(top_table = top.table, volcano_plot = volcano_plot))
 }
 
-plot_gsea <- function(Charmobj, rbp, varoi = "SampleType", thresh = 0.05,
+plot_gsea <- function(charmobj, rbp, thresh = 0.05,
                       species = "Homo sapiens",
                       collection = "H", subcollection = NULL,
                       up_color = "#BA3B46", down_color = "#53A2BE",
                       show_legend = FALSE) {
 
-  # Use the Charmobj argument and the rbp string properly
-  hallmarks.res.tidy <- as.data.frame(Charmobj$GSEA[[rbp]])
-  colnames(hallmarks.res.tidy) <- c("pathway","pval","padj","log2err","ES","NES","size","leadingEdge","Status")
+  # Ensure RBP is character
+  rbp <- trimws(as.character(rbp))
+  message(paste0("Calculating GSEA for ", rbp))
+
+  expr <- charmobj[[rbp]]$corcounts
+  group <- charmobj[[rbp]]$SampleType
+
+  # Design matrix
+  mm <- model.matrix(~0 + group)
+  colnames(mm) <- gsub("group", "", colnames(mm))
+
+  # Fit linear model
+  fitted <- limma::lmFit(expr, mm)
+  contrast_formula <- paste0(rbp, " - Control")
+  contr <- limma::makeContrasts(contrasts = contrast_formula, levels = colnames(coef(fitted)))
+  tmp_contr <- limma::contrasts.fit(fitted, contr)
+  tmp <- limma::eBayes(tmp_contr)
+
+  # Get results for all genes
+  top.table <- limma::topTable(tmp, sort.by = "none", n = Inf)
+
+
+  DEGenes <- top.table[order(top.table$t, decreasing = TRUE), ]
+  vectorranks <- DEGenes$t
+  names(vectorranks) <- rownames(DEGenes)
+
+  hallmarks.gs <- msigdbr(species = species, collection = collection, subcollection = subcollection)
+  hallmarks.gsets <- split(hallmarks.gs$gene_symbol, hallmarks.gs$gs_name)
+  hallmarks.gsets <- lapply(hallmarks.gsets, toupper)
+
+
+  hallmarks.res <- fgsea::fgsea(pathways = hallmarks.gsets, stats = vectorranks)
+
+  hallmarks.res.tidy <- hallmarks.res %>%
+    as_tibble() %>%
+    mutate(Status = ifelse(NES > 0, "Upregulated", "Downregulated"),
+           pathway = gsub("^HALLMARK_", "", pathway)) %>%
+    arrange(padj)
 
 
   data_to_plot <- hallmarks.res.tidy %>%
     filter(padj < thresh) %>%
     arrange(-abs(NES))
 
+  # If no significant results, return empty plot
+  if (nrow(data_to_plot) == 0) {
+    gsea_plot_hall <- ggplot() +
+      annotate("text", x = 0, y = 0, label = paste("No significant GSEA results for", rbp)) +
+      theme_void()
+  } else {
 
-  gsea_plot_hall <- ggplot(data_to_plot, aes(x = reorder(pathway, NES), y = NES)) +
-    geom_col(aes(fill = Status), alpha = 0.8) +
-    scale_fill_manual(values = c("Upregulated" = up_color, "Downregulated" = down_color)) +
-    coord_flip() +
-    labs(x = "Gene Set",
-         y = "Normalised Enrichment Score (NES)",
-         title = "Enriched Gene Sets",
-         subtitle = paste0("Comparison: ", rbp, " KD vs Control"),
-         caption = paste0("padj < ", thresh)) +
-    theme_bw(base_family = "Arial MS") +
-    theme(
-      plot.title = element_text(hjust = 0.5, size = 18, face = "bold"),
-      plot.subtitle = element_text(hjust = 0.5, size = 14),
-      text = element_text(size = 14),
-      legend.position = if (show_legend) "right" else "none"
-    )
+    gsea_plot_hall <- ggplot(data_to_plot, aes(x = reorder(pathway, NES), y = NES)) +
+      geom_col(aes(fill = Status), alpha = 0.8) +
+      scale_fill_manual(values = c("Upregulated" = up_color, "Downregulated" = down_color)) +
+      coord_flip() +
+      labs(x = "Gene Set",
+           y = "Normalised Enrichment Score (NES)",
+           title = "Enriched Gene Sets",
+           subtitle = paste0("Comparison: ", rbp, " KD vs Control"),
+           caption = paste0("padj < ", thresh)) +
+      theme_bw(base_family = "Arial MS") +
+      theme(
+        plot.title = element_text(hjust = 0.5, size = 18, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 14),
+        text = element_text(size = 14),
+        legend.position = if (show_legend) "right" else "none"
+      )+
+      theme(legend.position = "none",
+            text = element_text(size = 14, family = "Arial MS", face = "bold"),
+            plot.title = element_text(hjust = 1, face = "bold"),
+            axis.title = element_text(face = "bold"),
+            axis.text = element_text(face = "bold"),
+            legend.title = element_text(face = "bold"),
+            legend.text = element_text(face = "bold"))
+  }
+
 
   return(list(geneset_table = hallmarks.res.tidy, gsea_plot = gsea_plot_hall))
 }
@@ -401,7 +501,7 @@ gsea_correl <- function(gsea_results, rbp, correl_num = NULL,
                         up_color = "#BA3B46", down_color = "#53A2BE",
                         show_legend = FALSE) {
 
-  # ----- Prepare reference dataframe -----
+
   if (is.data.frame(rbp)) {
     # User uploaded file
     top.table <- rbp
@@ -437,7 +537,7 @@ gsea_correl <- function(gsea_results, rbp, correl_num = NULL,
   ref_vec <- ref_df$NES
   names(ref_vec) <- ref_df$pathway
 
-  # ----- Compute correlations -----
+
   cor_results <- data.frame(RBP=character(), Correlation=numeric(), Pvalue=numeric())
 
   for (other_rbp in setdiff(names(gsea_results), rbp_label)) {
@@ -452,7 +552,7 @@ gsea_correl <- function(gsea_results, rbp, correl_num = NULL,
     }
   }
 
-  # ----- Select top RBPs -----
+
   top_pos <- top_neg <- NULL
 
   if (!is.null(other_rbps)) {
@@ -475,7 +575,7 @@ gsea_correl <- function(gsea_results, rbp, correl_num = NULL,
   top_cor <- top_cor[order(top_cor$Correlation, decreasing = TRUE), ]
   top_cor$RBP <- factor(top_cor$RBP, levels=top_cor$RBP)
 
-  # ----- Heatmap -----
+
   heatmap_plot <- ggplot(top_cor, aes(x=rbp_label, y=RBP, fill=Correlation)) +
     geom_tile(color="white") +
     geom_text(aes(label=sprintf("%.2f", Correlation),

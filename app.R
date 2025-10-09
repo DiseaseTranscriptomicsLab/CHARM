@@ -340,8 +340,7 @@ ui <- fluidPage(
               fluidRow(
                 column(
                   width = 6,
-                  plotOutput("expr_violin"),
-                  uiOutput("expr_note")
+                  plotOutput("expr_violin")
                 ),
                 column(
                   width = 6,
@@ -673,12 +672,12 @@ server <- function(input, output, session) {
   observe({
     req(Charm.object)
     updateSelectizeInput(session, "expr_search",
-                         choices = unique(Charm.object$Experiment),
+                         choices = names(Charm.object),
                          server = TRUE)
   })
 
   observe({
-    rbp_choices <- unique(current_charm()$Experiment)
+    rbp_choices <- names(current_charm())
 
     updateSelectizeInput(session, "similar_rbps_select_expr", choices = rbp_choices)
     updateSelectizeInput(session, "similar_rbps_select_gsea", choices = rbp_choices)
@@ -749,7 +748,7 @@ server <- function(input, output, session) {
         selectizeInput(
           inputId = "user_file_compare_expr",
           label = "Compare with specific RBPs (optional)",
-          choices = unique(Charm.object$Experiment),
+          choices = names(Charm.object),
           multiple = TRUE,
           options = list(placeholder = "Select one or more RBPs")
         ),
@@ -794,7 +793,7 @@ server <- function(input, output, session) {
         selectizeInput(
           inputId = "user_file_compare_gsea",
           label = "Compare with specific RBPs (optional)",
-          choices = unique(Charm.object$Experiment),
+          choices = names(Charm.object),
           multiple = TRUE,
           options = list(placeholder = "Select one or more RBPs")
         ),
@@ -997,8 +996,18 @@ server <- function(input, output, session) {
                                       "RBP"="#A10702",
                                       "Selected"="#008057")) +
         theme_bw() +
-        labs(title=paste(rbp,"KD"), x="Log Fold-Change", y="B-statistic") +
-        theme(legend.position="none", plot.title=element_text(hjust=0.5))
+        labs(title=paste(rbp,"KD"), x="Log2 Fold-Change", y="B-statistic") +
+        theme(legend.position="none", plot.title=element_text(hjust=0.5)) +
+        theme(
+          axis.line = element_line(colour = "black"),
+          panel.grid = element_blank(),
+          panel.border = element_blank(),
+          panel.background = element_blank(),
+          plot.title = element_text(hjust = 0.5),
+          plot.subtitle = element_text(hjust = 0.5),
+          text = element_text(size = 15, face = "bold"),
+          legend.position = "none"
+        )
     }
   }
 
@@ -1054,7 +1063,7 @@ server <- function(input, output, session) {
     charm_obj <- current_charm()
     shrna_obj <- current_shrna()
 
-    exp_list <- unique(charm_obj$Experiment)
+    exp_list <- names(charm_obj)
     if (is.null(exp_list) || !(rbp_sel %in% exp_list)) {
       showModal(modalDialog(
         title = "Warning",
@@ -1068,10 +1077,6 @@ server <- function(input, output, session) {
     session$sendCustomMessage("toggleCursor", TRUE)
 
     output$expr_violin <- renderPlot({ violinplotter(charm_obj, rbp_sel) })
-    output$expr_note <- renderUI({
-      div(style="margin-top:10px;font-size:16px;font-weight:bold;color:red;",
-          "Red dots correspond to the controls from paired gene silencing experiment.")
-    })
 
     output$shrna_plot <- renderPlot({ plot_shRNA_effect(shrna_obj, rbp_sel) })
     output$shrna_warning <- renderUI({
@@ -1194,7 +1199,6 @@ server <- function(input, output, session) {
 
   observeEvent(input$reset_btn, {
     output$expr_violin    <- renderPlot(NULL)
-    output$expr_note      <- renderUI(NULL)
     output$shrna_plot     <- renderPlot(NULL)
     output$shrna_warning  <- renderUI(NULL)
     output$volcano_plot   <- renderPlotly(NULL)

@@ -1,0 +1,317 @@
+---
+title: "CHARM: Data Processing"
+subtitle: "Comprehensive Hub for Alternative Regulatory Mapping"
+author: 
+  - name: "Alexandre Kaizeler^[Disease Transcriptomics Group, Gulbenkian Institute of Molecular Medicine]"
+    email: alexandreafonso@gimm.pt
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: 
+  rmdformats::downcute:
+    downcute_theme: "chaos"
+---
+
+# General
+
+## Import libraries
+
+```{r libraries, echo=FALSE}
+# These are all the libraries I used throughout the analysis. Not all of them will be required on this guidebook
+library(Rsubread)
+library(limma)
+library(edgeR)
+library(DESeq2)
+library(magrittr)
+library(ggrepel)
+library(tidyverse)
+library(vsn)
+library(ggplot2)
+library(NMF)
+library(biomaRt)
+library(ggpubr)
+library(factoextra)
+library(ggfortify)
+library(plotly)
+library(reshape2)
+library(fgsea)
+library(msigdbr)
+library(data.table)
+library(colorspace)
+library(readxl)
+library(fs)
+library(betAS)
+
+set.seed(1906)
+```
+
+# A. Data Processing 
+
+*Date: August 22th 2025*
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Setup
+
+### Import data
+
+To create the R object that we will use for CHARM, we need three data types:
+
+Expression: Differential expression upon RBP knockdown/knockout, with pathway-level insights from Gene Set Enrichment Analysis.
+
+Splicing: Alternative splicing changes quantified with betAS (Ferreira et al., 2024), using VastDB nomenclature (Tapial et al., 2017).
+
+Binding: Altered RNA binding patterns of the silenced RBP and other RBPs, characterized with the eCLIPSE tool.
+
+#### Splicing
+
+Preparation of the read count table, of K562 and HEPG2 cells exposed to knockdown/knockout of RBP and their respective control. All of these samples were obtained from the ENCODE project (Luo et al., 2020), and processed through the vast-tools pipeline (Tapial et al., 2017). The nomenculature of these splicing events is thus the one present on vastDB. 
+
+```{r}
+FullTrial <- fread( "~/Projects/StressGranules/AS.WC_Transcriptome/eCLIPSE/FullCassetteEvents.txt")
+
+NewFilterFunction <- function (filteredList, eventlist) 
+{
+  alternative <- list()
+  psiTable <- filteredList$PSI
+  qualTable <- filteredList$Qual
+  originalColN <- ncol(psiTable)
+  psi <- psiTable[, -c(1:6)]
+  psiTable <- psiTable[psiTable$EVENT %in% eventlist$EVENT, ]
+  qualTable <- qualTable[match(psiTable$EVENT, qualTable$EVENT), 
+    ]
+  psiTable <- psiTable[, c(1:originalColN)]
+  qualTable <- qualTable[, c(1:originalColN)]
+  alternative[[1]] <- psiTable
+  alternative[[2]] <- qualTable
+  alternative[[3]] <- table(psiTable$COMPLEX)
+  alternative[[4]] <- colnames(psiTable)[-c(1:6)]
+  names(alternative) <- c("PSI", "Qual", "EventsPerType", 
+    "Samples")
+  return(alternative)
+}
+
+process_shRNAExp <- function(base_path = "~/Projects/StressGranules/AS.WC_Transcriptome/shRNAExp") {
+  rbp_dirs <- list.dirs(base_path, recursive = FALSE, full.names = TRUE)
+  CharmObj_rbp <- list()
+  
+  for (rbp_dir in rbp_dirs) {
+    rbp_name <- basename(rbp_dir)
+    
+    vast_files <- list.files(file.path(rbp_dir, "TrimmedSamples/vast_out"),
+                             pattern = "^INCLUSION_LEVELS.*$",
+                             full.names = TRUE)
+    
+    if (length(vast_files) == 0) {
+      warning(paste("No INCLUSION_LEVELS file found for", rbp_name, "skipping..."))
+      next
+    }
+    
+    vast_file <- vast_files[1]
+    
+    dataset <- getDataset(pathTables = vast_file, tool = "vast-tools")
+    dataset <- getEvents(dataset, tool = "vast-tools")
+    dataset_filtered <- filterEvents(dataset, types = c("S", "IR"), N = 0)
+    dataset_filtered$PSI <- na.omit(dataset_filtered$PSI)
+    dataset_filtered$Qual <- dataset_filtered$Qual[
+      dataset_filtered$Qual$EVENT %in% dataset_filtered$PSI$EVENT, ]
+    
+    # --- Split into All / HEPG2 / K562 ---
+    make_subset <- function(dataset, keyword) {
+      out <- dataset
+      out[["Samples"]] <- grep(keyword, out[["Samples"]], value = TRUE)
+      
+      psi_cols <- c(1:6, grep(keyword, colnames(out$PSI)))
+      qual_cols <- c(1:6, grep(keyword, colnames(out$Qual)))
+      out$PSI <- out$PSI[, psi_cols, drop = FALSE]
+      out$Qual <- out$Qual[, qual_cols, drop = FALSE]
+      return(out)
+    }
+    
+    dataset_All   <- dataset_filtered
+    dataset_HEPG2 <- make_subset(dataset_filtered, "HEPG2")
+    dataset_K562  <- make_subset(dataset_filtered, "K562")
+    
+    # --- Helper to run volcano analysis ---
+    run_volcano <- function(psitable, qualtable) {
+      cols_CTRL  <- convertCols(psitable, grep("control", colnames(psitable), value = TRUE))
+      cols_shRNA <- convertCols(psitable, grep("shrna", colnames(psitable), value = TRUE))
+      
+      if (length(cols_CTRL) == 0 || length(cols_shRNA) == 0) {
+        return(NULL) # no data for this case
+      }
+      
+      vtable <- prepareTableVolcano(
+        psitable = psitable,
+        qualtable = qualtable,
+        npoints = 500,
+        colsA = cols_CTRL,
+        colsB = cols_shRNA,
+        labA = "CTRL",
+        labB = "shRNA",
+        basalColor = "#89C0AE",
+        interestColor = "#E69A9C",
+        maxDevTable = maxDevSimulationN100, 
+        seed = TRUE,
+        CoverageWeight = FALSE
+      )
+      
+      vtable <- vtable[, c("EVENT","GENE","deltapsi","Pdiff")]
+      colnames(vtable) <- c("Event.ID","Gene","dPSI","Pdiff")
+      return(vtable)
+    }
+    
+    # --- Attach processed results ---
+    volcano_All   <- run_volcano(dataset_All$PSI, dataset_All$Qual)
+    volcano_HEPG2 <- run_volcano(dataset_HEPG2$PSI, dataset_HEPG2$Qual)
+    volcano_K562  <- run_volcano(dataset_K562$PSI, dataset_K562$Qual)
+    
+    CharmObj_rbp[[rbp_name]] <- list(
+      All   = volcano_All,
+      HEPG2 = volcano_HEPG2,
+      K562  = volcano_K562
+    )
+  }
+  
+  return(CharmObj_rbp)
+}
+
+# Run it
+CharmObj_rbp <- process_shRNAExp()
+
+# Split into three objects
+CharmObj_rbp_All   <- lapply(CharmObj_rbp, function(x) x$All)
+CharmObj_rbp_HEPG2 <- lapply(CharmObj_rbp, function(x) x$HEPG2)
+CharmObj_rbp_K562  <- lapply(CharmObj_rbp, function(x) x$K562)
+
+# Save separately
+saveRDS(CharmObj_rbp_All,   file = "~/Projects/CHARM/data/CharmObj_rbp_All.rds")
+saveRDS(CharmObj_rbp_HEPG2, file = "~/Projects/CHARM/data/CharmObj_rbp_HEPG2.rds")
+saveRDS(CharmObj_rbp_K562,  file = "~/Projects/CHARM/data/CharmObj_rbp_K562.rds")
+
+
+
+CharmObj_rbp_All   <- readRDS("~/Projects/CHARM/data/CharmObj_rbp_All.rds")
+CharmObj_rbp_HEPG2 <- readRDS("~/Projects/CHARM/data/CharmObj_rbp_HEPG2.rds")
+CharmObj_rbp_K562  <- readRDS("~/Projects/CHARM/data/CharmObj_rbp_K562.rds")
+```
+
+# B. Oversimplification
+
+```{r}
+all_samples <- character()
+all_experiment <- character()
+all_PSI <- list()
+all_Qual <- list()
+
+for (rbp in names(CharmObj_rbp_HEPG2)) {
+  
+  obj <- CharmObj_rbp_HEPG2[[rbp]]
+  
+  ## --- Handle PSI and Qual ---
+  PSI <- obj$PSI[, -c(1, 3:6), drop = FALSE]
+  Qual <- obj$Qual[, -c(1, 3:6), drop = FALSE]
+  
+  colnames(PSI)[1] <- "EVENT"
+  colnames(Qual)[1] <- "EVENT"
+  
+  # rename sample columns to include RBP name as prefix
+  colnames(PSI)[-1] <- paste0(rbp, "_", colnames(PSI)[-1])
+  colnames(Qual)[-1] <- paste0(rbp, "_", colnames(Qual)[-1])
+  
+  all_PSI[[rbp]] <- PSI
+  all_Qual[[rbp]] <- Qual
+  
+  ## --- Handle Samples ---
+  s <- obj$Samples
+  
+  # clean control names
+  s[grepl("control", s, ignore.case = TRUE)] <- 
+    gsub("[0-9]+", "", s[grepl("control", s, ignore.case = TRUE)])
+  
+  # clean shRNA -> replace with RBP
+  s[grepl("shRNA", s, ignore.case = TRUE)] <- 
+    gsub("shRNA[0-9]*", rbp, s[grepl("shRNA", s, ignore.case = TRUE)], ignore.case = TRUE)
+  
+  # Append cleaned samples and experiments
+  all_samples <- c(all_samples, s)
+  all_experiment <- c(all_experiment, rep(rbp, length(s)))
+}
+
+## --- Merge PSI and Qual by EVENT across RBPs ---
+merge_all <- function(xlist) {
+  Reduce(function(x, y) merge(x, y, by = "EVENT", all = TRUE), xlist)
+}
+
+merged_PSI <- merge_all(all_PSI)
+merged_Qual <- merge_all(all_Qual)
+
+## --- Final collapsed list ---
+CharmObj_rbp_Collapsed_HEPG2 <- list(
+  Samples = all_samples,
+  Experiment = all_experiment,
+  PSI = merged_PSI,
+  Qual = merged_Qual
+)
+
+```
+
+
+###### PCA without Batch Correction, All Samples
+
+```{r}
+
+trial <- CharmObj_rbp_Collapsed_HEPG2$PSI
+trial <- as.data.frame(trial)
+
+# Set rownames and remove EVENT column
+rownames(trial) <- trial$EVENT
+trial$EVENT <- NULL
+
+# Replace NAs with column means (imputation)
+trial_imputed <- trial %>%
+  mutate(across(everything(), ~ ifelse(is.na(.), mean(., na.rm = TRUE), .)))
+
+# Transpose, convert to numeric safely
+dfforpca <- as.data.frame(t(trial_imputed))
+dfforpca[] <- lapply(dfforpca, function(x) as.numeric(as.character(x)))
+
+# Add metadata
+dfforpca$Sample <- CharmObj_rbp_Collapsed_HEPG2$Samples
+
+# Example binary grouping
+dfforpca$Sample <- ifelse(grepl("control", dfforpca$Sample, ignore.case = TRUE),
+                          "Control", "Other")
+
+# PCA (exclude the Sample column)
+pca_res <- prcomp(dfforpca[, !colnames(dfforpca) %in% "Sample"], scale. = FALSE)
+
+p_sample<- autoplot(pca_res, data = dfforpca, x = 1, y = 2, colour = "Sample",  size = 4, alpha=0.6) +
+  theme_bw() +
+  scale_colour_manual(name = "Sample", values = c("#7272AB", "#283D3B")) +
+  ggtitle("PCA - Coloured by Sample") +
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.line = element_line(colour = "black"),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank())
+
+
+
+p_sample
+
+#in case you want to see most important genes for PCA yourself
+contribs1 <- pca_res$rotation[,1]
+contribs2 <- pca_res$rotation[,2]
+
+#These are the biggest contributors to the PCA1 (right side)
+(pos1genes <- sort(contribs1, decreasing=T)[1:10])
+#These are the biggest contributors to the PCA1 (left side)
+(neg1genes <- sort(contribs1, decreasing=F)[1:10])
+
+#These are the biggest contributors to the PCA2 (up side)
+(pos2genes <- sort(contribs2, decreasing=T)[1:10])
+#These are the biggest contributors to the PCA2 (down side)
+(neg2genes <- sort(contribs2, decreasing=F)[1:10])
+
+```
