@@ -3,118 +3,172 @@ library(tidyverse)
 library(betAS)
 set.seed(1906)
 
-# --- Load main event list ---
-FullTrial <- fread("~/Projects/StressGranules/AS.WC_Transcriptome/eCLIPSE/FullCassetteEvents.txt")
+CharmObj_rbp_All <- readRDS("~/Projects/CHARM/data/CharmObj_rbp_All.rds")
+CharmObj_rbp_HEPG2 <- readRDS("~/Projects/CHARM/data/CharmObj_rbp_HEPG2.rds")
+CharmObj_rbp_K562 <- readRDS("~/Projects/CHARM/data/CharmObj_rbp_K562.rds")
+Charm.object <- readRDS("data/Charm.object.RDS")
+Charm.object_K562 <- readRDS("data/Charm.object_K562.RDS")
+Charm.object_HEPG2 <- readRDS("data/Charm.object_HEPG2.RDS")
 
-# --- Helper: filter dataset ---
-NewFilterFunction <- function(filteredList, eventlist) {
-  psiTable  <- filteredList$PSI %>% filter(EVENT %in% eventlist$EVENT)
-  qualTable <- filteredList$Qual %>% filter(EVENT %in% psiTable$EVENT)
-  list(
-    PSI           = psiTable,
-    Qual          = qualTable,
-    EventsPerType = table(psiTable$COMPLEX),
-    Samples       = colnames(psiTable)[-c(1:6)]
-  )
-}
+#Both Cells
+for (rbp in names(CharmObj_rbp_All)) {
+  dataset_All_filtered <- CharmObj_rbp_All[[rbp]]
+  psi <- dataset_All_filtered$PSI
+  qual <- dataset_All_filtered$Qual
 
-# --- Helper: subset dataset by keyword (HEPG2/K562) ---
-make_subset <- function(dataset, keyword) {
-  psi_cols  <- c(1:6, grep(keyword, colnames(dataset$PSI)))
-  qual_cols <- c(1:6, grep(keyword, colnames(dataset$Qual)))
-  list(
-    PSI     = dataset$PSI[, psi_cols, drop = FALSE],
-    Qual    = dataset$Qual[, qual_cols, drop = FALSE],
-    Samples = grep(keyword, dataset$Samples, value = TRUE)
-  )
-}
+  # --- Automatically detect control and shRNA columns ---
+  cols_CTRL_names <- grep("control", colnames(psi), value = TRUE, ignore.case = TRUE)
+  cols_shRNA_names <- grep("shrna", colnames(psi), value = TRUE, ignore.case = TRUE)
 
-# --- Process each RBP folder ---
-process_shRNAExp <- function(base_path = "~/Projects/StressGranules/AS.WC_Transcriptome/shRNAExp") {
-  rbp_dirs <- fs::dir_ls(base_path, type = "directory")
-
-  map(rbp_dirs, function(rbp_dir) {
-    rbp_name <- basename(rbp_dir)
-    vast_file <- list.files(file.path(rbp_dir, "TrimmedSamples/vast_out"),
-                            pattern = "^INCLUSION_LEVELS", full.names = TRUE)[1]
-    if (is.na(vast_file)) return(NULL)
-
-    message("Processing ", rbp_name)
-
-    dataset <- getDataset(pathTables = vast_file, tool = "vast-tools") %>%
-      getEvents(tool = "vast-tools") %>%
-      filterEvents(types = c("S", "IR"), N = 0)
-
-    dataset$PSI  <- na.omit(dataset$PSI)
-    dataset$Qual <- dataset$Qual[dataset$Qual$EVENT %in% dataset$PSI$EVENT, ]
-
-    dataset_All   <- dataset
-    dataset_HEPG2 <- make_subset(dataset, "HEPG2")
-    dataset_K562  <- make_subset(dataset, "K562")
-
-    list(All = dataset_All, HEPG2 = dataset_HEPG2, K562 = dataset_K562)
-  }) %>% set_names(basename(rbp_dirs))
-}
-
-CharmObj_rbp <- process_shRNAExp()
-
-# --- Apply event filter to all ---
-CharmObj_rbp <- map(CharmObj_rbp, ~ map(.x, NewFilterFunction, eventlist = FullTrial))
-
-# --- Safer Volcano builder ---
-make_volcano <- function(psitable, qualtable, ctrl, shrna) {
-  # --- Safety checks ---
-  if (length(ctrl) == 0 || length(shrna) == 0) {
-    message("⚠️  Skipping volcano: no control or shRNA columns found.")
-    return(NULL)
-  }
-  if (nrow(psitable) == 0 || nrow(qualtable) == 0) {
-    message("⚠️  Skipping volcano: empty PSI or Qual table.")
-    return(NULL)
+  # Skip safely if nothing is found
+  if (length(cols_CTRL_names) == 0 || length(cols_shRNA_names) == 0) {
+    message("⚠️  Skipping ", rbp, ": no control or shRNA columns found.")
+    next
   }
 
-  # Wrap the volcano creation in tryCatch for robustness
-  safe_tab <- tryCatch({
-    tab <- prepareTableVolcano(
-      psitable = psitable,
-      qualtable = qualtable,
+  # Convert to column indices for betAS
+  cols_CTRL <- convertCols(psi, cols_CTRL_names)
+  cols_shRNA <- convertCols(psi, cols_shRNA_names)
+
+  # --- Build volcano table ---
+  volcanoTable_Pdiff_All <- tryCatch({
+    prepareTableVolcano(
+      psitable = psi,
+      qualtable = qual,
       npoints = 500,
-      colsA = convertCols(psitable, ctrl),
-      colsB = convertCols(psitable, shrna),
-      labA = "CTRL", labB = "shRNA",
-      basalColor = "#89C0AE", interestColor = "#E69A9C",
+      colsA = cols_CTRL,
+      colsB = cols_shRNA,
+      labA = "CTRL",
+      labB = "shRNA",
+      basalColor = "#89C0AE",
+      interestColor = "#E69A9C",
       maxDevTable = maxDevSimulationN100,
-      seed = TRUE, CoverageWeight = FALSE
+      seed = TRUE,
+      CoverageWeight = FALSE
     )
-    tab <- tab[, c("EVENT", "GENE", "deltapsi", "Pdiff")]
-    colnames(tab) <- c("Event.ID", "Gene", "dPSI", "Pdiff")
-    tab
   }, error = function(e) {
-    message("⚠️  Skipping due to error in prepareTableVolcano: ", e$message)
+    message("⚠️  Skipping ", rbp, " due to error: ", e$message)
     return(NULL)
   })
 
-  return(safe_tab)
+  # Skip if failed
+  if (is.null(volcanoTable_Pdiff_All)) next
+
+  # --- Format output ---
+  volcanoTable_Pdiff_All <- volcanoTable_Pdiff_All[, c("EVENT", "GENE", "deltapsi", "Pdiff")]
+  colnames(volcanoTable_Pdiff_All) <- c("Event.ID", "Gene", "dPSI", "Pdiff")
+
+  # --- Store result ---
+  Charm.object[[rbp]]$VulcanTable <- volcanoTable_Pdiff_All
 }
 
-# --- Build volcano tables for each RBP/subset safely ---
-CharmObj_volcano <- map(CharmObj_rbp, function(rbp_data) {
-  psitable <- rbp_data$All$PSI
-  volcano_cfg <- make_volcano_cfg(psitable)
+# K562
+for (rbp in names(CharmObj_rbp_K562)) {
+  dataset_All_filtered <- CharmObj_rbp_K562[[rbp]]
+  psi <- dataset_All_filtered$PSI
+  qual <- dataset_All_filtered$Qual
 
-  imap(volcano_cfg, function(cfg, name) {
-    make_volcano(
-      psitable = rbp_data[[name]]$PSI,
-      qualtable = rbp_data[[name]]$Qual,
-      ctrl = cfg$ctrl,
-      shrna = cfg$shrna
+  # --- Automatically detect control and shRNA columns ---
+  cols_CTRL_names <- grep("control", colnames(psi), value = TRUE, ignore.case = TRUE)
+  cols_shRNA_names <- grep("shrna", colnames(psi), value = TRUE, ignore.case = TRUE)
+
+  # Skip safely if nothing is found
+  if (length(cols_CTRL_names) == 0 || length(cols_shRNA_names) == 0) {
+    message("⚠️  Skipping ", rbp, ": no control or shRNA columns found.")
+    next
+  }
+
+  # Convert to column indices for betAS
+  cols_CTRL <- convertCols(psi, cols_CTRL_names)
+  cols_shRNA <- convertCols(psi, cols_shRNA_names)
+
+  # --- Build volcano table ---
+  volcanoTable_Pdiff_All <- tryCatch({
+    prepareTableVolcano(
+      psitable = psi,
+      qualtable = qual,
+      npoints = 500,
+      colsA = cols_CTRL,
+      colsB = cols_shRNA,
+      labA = "CTRL",
+      labB = "shRNA",
+      basalColor = "#89C0AE",
+      interestColor = "#E69A9C",
+      maxDevTable = maxDevSimulationN100,
+      seed = TRUE,
+      CoverageWeight = FALSE
     )
+  }, error = function(e) {
+    message("⚠️  Skipping ", rbp, " due to error: ", e$message)
+    return(NULL)
   })
-})
 
-CharmObj_volcano <- map(CharmObj_volcano, purrr::compact)
+  # Skip if failed
+  if (is.null(volcanoTable_Pdiff_All)) next
 
-# --- Save results ---
-saveRDS(CharmObj_volcano %>% map("All"),   "~/Projects/CHARM/data/CharmObj_rbp_All.rds")
-saveRDS(CharmObj_volcano %>% map("HEPG2"), "~/Projects/CHARM/data/CharmObj_rbp_HEPG2.rds")
-saveRDS(CharmObj_volcano %>% map("K562"),  "~/Projects/CHARM/data/CharmObj_rbp_K562.rds")
+  # --- Format output ---
+  volcanoTable_Pdiff_All <- volcanoTable_Pdiff_All[, c("EVENT", "GENE", "deltapsi", "Pdiff")]
+  colnames(volcanoTable_Pdiff_All) <- c("Event.ID", "Gene", "dPSI", "Pdiff")
+
+  # --- Store result ---
+  Charm.object_K562[[rbp]]$VulcanTable <- volcanoTable_Pdiff_All
+}
+
+
+# HEPG2
+for (rbp in names(CharmObj_rbp_HEPG2)) {
+  dataset_All_filtered <- CharmObj_rbp_HEPG2[[rbp]]
+  psi <- dataset_All_filtered$PSI
+  qual <- dataset_All_filtered$Qual
+
+  # --- Automatically detect control and shRNA columns ---
+  cols_CTRL_names <- grep("control", colnames(psi), value = TRUE, ignore.case = TRUE)
+  cols_shRNA_names <- grep("shrna", colnames(psi), value = TRUE, ignore.case = TRUE)
+
+  # Skip safely if nothing is found
+  if (length(cols_CTRL_names) == 0 || length(cols_shRNA_names) == 0) {
+    message("⚠️  Skipping ", rbp, ": no control or shRNA columns found.")
+    next
+  }
+
+  # Convert to column indices for betAS
+  cols_CTRL <- convertCols(psi, cols_CTRL_names)
+  cols_shRNA <- convertCols(psi, cols_shRNA_names)
+
+  # --- Build volcano table ---
+  volcanoTable_Pdiff_All <- tryCatch({
+    prepareTableVolcano(
+      psitable = psi,
+      qualtable = qual,
+      npoints = 500,
+      colsA = cols_CTRL,
+      colsB = cols_shRNA,
+      labA = "CTRL",
+      labB = "shRNA",
+      basalColor = "#89C0AE",
+      interestColor = "#E69A9C",
+      maxDevTable = maxDevSimulationN100,
+      seed = TRUE,
+      CoverageWeight = FALSE
+    )
+  }, error = function(e) {
+    message("⚠️  Skipping ", rbp, " due to error: ", e$message)
+    return(NULL)
+  })
+
+  # Skip if failed
+  if (is.null(volcanoTable_Pdiff_All)) next
+
+  # --- Format output ---
+  volcanoTable_Pdiff_All <- volcanoTable_Pdiff_All[, c("EVENT", "GENE", "deltapsi", "Pdiff")]
+  colnames(volcanoTable_Pdiff_All) <- c("Event.ID", "Gene", "dPSI", "Pdiff")
+
+  # --- Store result ---
+  Charm.object_HEPG2[[rbp]]$VulcanTable <- volcanoTable_Pdiff_All
+}
+
+
+# Save separately
+saveRDS(Charm.object,   file = "~/Projects/CHARM/data/CharmObj_ALL_DEDS.rds")
+saveRDS(Charm.object_HEPG2, file = "~/Projects/CHARM/data/CharmObj_HEPG2_DEDS.rds")
+saveRDS(Charm.object_K562,  file = "~/Projects/CHARM/data/CharmObj_K562_DEDS.rds")

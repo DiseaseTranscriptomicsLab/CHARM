@@ -29,32 +29,32 @@ similar_gsea_K562 <- readRDS("data/RBPs.gsea_K562.RDS")
 similar_gsea_HEPG2 <- readRDS("data/RBPs.gsea_HEPG2.RDS")
 
 
-
 ###### UI
+
 ui <- fluidPage(
   theme = shinytheme("flatly"),
 
   # Custom CSS for bold tabs
   tags$head(
     tags$style(HTML("
-    .search-box {
-      border-radius: 20px;
-      padding: 6px 12px;
-      border: 1px solid #ccc;
-      box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
-      font-size: 14px;
-    }
-    .search-box:focus {
-      border-color: #2c3e50;
-      outline: none;
-      box-shadow: 0 0 5px rgba(44,62,80,0.4);
-    }
-  ")),
-  tags$script(HTML("
-  Shiny.addCustomMessageHandler('toggleCursor', function(state) {
-    document.body.style.cursor = state ? 'wait' : 'default';
-  });
-"))
+      .search-box {
+        border-radius: 20px;
+        padding: 6px 12px;
+        border: 1px solid #ccc;
+        box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
+        font-size: 14px;
+      }
+      .search-box:focus {
+        border-color: #2c3e50;
+        outline: none;
+        box-shadow: 0 0 5px rgba(44,62,80,0.4);
+      }
+    ")),
+    tags$script(HTML("
+      Shiny.addCustomMessageHandler('toggleCursor', function(state) {
+        document.body.style.cursor = state ? 'wait' : 'default';
+      });
+    "))
   ),
 
   # Tabset with 5 tabs
@@ -64,12 +64,8 @@ ui <- fluidPage(
 
     # Home tab
     tabPanel(
-      tagList(
-        fa("home", fill = "black", height = "1em"),
-        " Home"
-      ),
+      tagList(fa("home", fill = "black", height = "1em"), " Home"),
       fluidPage(
-        # Title / Logo row
         fluidRow(
           column(
             4,
@@ -79,21 +75,16 @@ ui <- fluidPage(
               div(
                 style = "text-align: left;",
                 tags$h2("CHARM", style = "margin: 0; font-weight: bold;"),
-                tags$h4("Comprehensive Hub of Alternative Regulatory Mapping",
-                        style = "margin: 0; font-weight: bold;")
+                tags$h4("Comprehensive Hub of Alternative Regulatory Mapping", style = "margin: 0; font-weight: bold;")
               )
             )
           )
         ),
-
-        # Explore & Discover boxes
         fluidRow(
           column(
             6,
             div(
-              style = "background-color: #EAEBEB; color: black;
-                       border: 2px solid #2c3e50; border-radius: 20px;
-                       padding: 40px; text-align: center; margin: 15px;",
+              style = "background-color: #EAEBEB; color: black; border: 2px solid #2c3e50; border-radius: 20px; padding: 40px; text-align: center; margin: 15px;",
               div(style = "margin-bottom: 10px;", fa("globe", fill = "black", height = "3em")),
               tags$h3("Explore", style = "font-weight: bold;"),
               tags$p("Investigate how a known RBP affects expression, splicing, and binding, based on ENCODE's gene silencing series and eCLIP data.")
@@ -102,9 +93,7 @@ ui <- fluidPage(
           column(
             6,
             div(
-              style = "background-color: #EAEBEB; color: black;
-                       border: 2px solid #2c3e50; border-radius: 20px;
-                       padding: 40px; text-align: center; margin: 15px;",
+              style = "background-color: #EAEBEB; color: black; border: 2px solid #2c3e50; border-radius: 20px; padding: 40px; text-align: center; margin: 15px;",
               div(style = "margin-bottom: 10px;", fa("map", fill = "black", height = "3em")),
               tags$h3("Discover", style = "font-weight: bold;"),
               tags$p("Users can input their own expression, splicing, or binding data to discover which RBPs are more likely to be altered on your biological system.")
@@ -119,31 +108,23 @@ ui <- fluidPage(
       tagList(fa("dna", fill = "black", height = "1em"), " Expression"),
       fluidPage(
         fluidRow(
-
           # Left sidebar
           column(
             width = 3,
             wellPanel(
-
-              # Choose mode
               radioButtons(
                 inputId = "expr_mode",
                 label = "Select mode:",
                 choices = c("Explore Mode", "Discovery Mode"),
                 selected = "Explore Mode"
               ),
-
-              # Conditional: Explore Mode
               conditionalPanel(
                 condition = "input.expr_mode == 'Explore Mode'",
-
                 selectInput(
                   inputId = "expr_dataset",
                   label = "Select option:",
                   choices = c("Both Cells", "K562", "HEPG2", "Similar RBPs")
                 ),
-
-                # Search bar (always visible)
                 div(
                   style = "display: flex; align-items: center; margin-top: 15px;",
                   selectizeInput(
@@ -154,400 +135,181 @@ ui <- fluidPage(
                     options = list(placeholder = "RBP"),
                     width = "400px"
                   ),
-
-                  # Wrap the two buttons in a div for horizontal layout
                   conditionalPanel(
                     condition = "input.expr_dataset != 'Similar RBPs'",
                     div(
                       style = "display: flex; align-items: center; margin-left: 10px;",
-                      actionButton(
-                        "search_btn",
-                        tagList(fa("search"), " Search"),
-                        class = "btn btn-primary",
-                        style = "margin-right: 10px; border-radius: 20px;"
-                      ),
-                      actionButton(
-                        "reset_btn",
-                        tagList(fa("redo"), " Reset"),
-                        class = "btn btn-secondary",
-                        style = "border-radius: 20px;"
-                      )
+                      actionButton("search_btn", tagList(fa("search"), " Search"), class = "btn btn-primary", style = "margin-right: 10px; border-radius: 20px;"),
+                      actionButton("reset_btn", tagList(fa("redo"), " Reset"), class = "btn btn-secondary", style = "border-radius: 20px;")
                     )
                   )
                 ),
-
-                # Similar RBPs options
                 conditionalPanel(
                   condition = "input.expr_dataset == 'Similar RBPs'",
-
                   radioButtons(
                     inputId = "similar_mode",
                     label = "Select correlation type:",
-                    choices = c("By Gene Expression" = "expr",
-                                "By Gene Set Enrichment" = "gsea"),
+                    choices = c("By Gene Expression" = "expr", "By Gene Set Enrichment" = "gsea"),
                     selected = "expr",
                     inline = TRUE
                   ),
-
-                  # Nested UI for Gene Expression
                   conditionalPanel(
                     condition = "input.similar_mode == 'expr'",
-                    selectizeInput(
-                      inputId = "similar_rbps_select_expr",
-                      label = "Compare with specific RBPs (optional)",
-                      choices = NULL,
-                      multiple = TRUE,
-                      options = list(placeholder = "Select one or more RBPs")
-                    ),
-                    helpText("• If you select one RBP, a scatter plot will be shown.
-            • If you select multiple RBPs, correlation values will be summarised."),
-                    numericInput(
-                      "correl_num_expr",
-                      "Show top N correlated RBPs (optional):",
-                      value = NA,
-                      min = 1
-                    ),
-                    helpText("Tip: By selecting a number here, this will take precedence
-            over the two inputs below."),
-                    numericInput(
-                      "n_pos_expr",
-                      "Show top N positive correlations (optional):",
-                      value = NA,
-                      min = 1
-                    ),
-                    numericInput(
-                      "n_neg_expr",
-                      "Show top N negative correlations (optional):",
-                      value = NA,
-                      min = 1
-                    ),
-                    helpText("Tip: You may use
-            one or both of the numeric inputs above.")
+                    selectizeInput("similar_rbps_select_expr", "Compare with specific RBPs (optional)", choices = NULL, multiple = TRUE, options = list(placeholder = "Select one or more RBPs")),
+                    helpText("• If you select one RBP, a scatter plot will be shown.\n• If you select multiple RBPs, correlation values will be summarised."),
+                    numericInput("correl_num_expr", "Show top N correlated RBPs (optional):", value = NA, min = 1),
+                    numericInput("n_pos_expr", "Show top N positive correlations (optional):", value = NA, min = 1),
+                    numericInput("n_neg_expr", "Show top N negative correlations (optional):", value = NA, min = 1)
                   ),
-
-                  # Nested UI for GSEA
                   conditionalPanel(
                     condition = "input.similar_mode == 'gsea'",
-                    selectizeInput(
-                      inputId = "similar_rbps_select_gsea",
-                      label = "Compare with specific RBPs (optional)",
-                      choices = NULL,
-                      multiple = TRUE,
-                      options = list(placeholder = "Select one or more RBPs")
-                    ),
-                    helpText("• If you select one RBP, a scatter plot will be shown.
-            • If you select multiple RBPs, correlation values will be summarised."),
-                    numericInput(
-                      "correl_num_gsea",
-                      "Show top N correlated RBPs (optional):",
-                      value = NA,
-                      min = 1
-                    ),
-                    helpText("Tip: By selecting a number here, this will take precedence
-            over the two inputs below."),
-                    numericInput(
-                      "n_pos_gsea",
-                      "Show top N positive correlations (optional):",
-                      value = NA,
-                      min = 1
-                    ),
-                    numericInput(
-                      "n_neg_gsea",
-                      "Show top N negative correlations (optional):",
-                      value = NA,
-                      min = 1
-                    ),
-                    helpText("Tip: You may use one or both of the numeric inputs above")
-                  )
-                  ,
-
-                  # Plot / Reset buttons for Similar RBPs
+                    selectizeInput("similar_rbps_select_gsea", "Compare with specific RBPs (optional)", choices = NULL, multiple = TRUE, options = list(placeholder = "Select one or more RBPs")),
+                    numericInput("correl_num_gsea", "Show top N correlated RBPs (optional):", value = NA, min = 1),
+                    numericInput("n_pos_gsea", "Show top N positive correlations (optional):", value = NA, min = 1),
+                    numericInput("n_neg_gsea", "Show top N negative correlations (optional):", value = NA, min = 1)
+                  ),
                   div(
                     style = "display: flex; align-items: center; margin-top: 15px;",
-                    actionButton(
-                      "similar_plot_btn",
-                      tagList(fa("chart-line"), " Plot"),
-                      class = "btn btn-primary",
-                      style = "margin-right: 10px; border-radius: 20px;"
-                    ),
-                    actionButton(
-                      "similar_reset_btn",
-                      tagList(fa("redo"), " Reset"),
-                      class = "btn btn-secondary",
-                      style = "border-radius: 20px;"
-                    )
+                    actionButton("similar_plot_btn", tagList(fa("chart-line"), " Plot"), class = "btn btn-primary", style = "margin-right: 10px; border-radius: 20px;"),
+                    actionButton("similar_reset_btn", tagList(fa("redo"), " Reset"), class = "btn btn-secondary", style = "border-radius: 20px;")
                   )
                 )
               ),
-
-              # Conditional: Discovery Mode
               conditionalPanel(
                 condition = "input.expr_mode == 'Discovery Mode'",
                 hr(),
                 tags$p("Alternatively, upload your own table with differential expression values:"),
-                tags$p(
-                  "CHARM currently accepts tables where the first column are gene names, ",
-                  "and the second column are differential expression values (t-statistics). ",
-                  "This table must be in .txt format and must not contain a header."
-                ),
-                fileInput(
-                  inputId = "user_file_expr",
-                  label = "Upload your file:",
-                  accept = c(".txt")
-                ),
+                fileInput("user_file_expr", "Upload your file:", accept = c(".txt")),
                 uiOutput("file_warning_expr"),
                 uiOutput("user_file_options")
               )
             )
           ),
-
           # Right content area
           column(
             width = 9,
             tags$h3("Expression Data Results"),
             div(
               "⚠ Please press reset after every plot!",
-              style = "border: 2px solid #f0ad4e;
-             background-color: #fff3cd;
-             padding: 8px;
-             border-radius: 6px;
-             font-weight: bold;
-             color: #856404;"
-            )
-          ,
-
-          # User PRovided Expression (appear at the top if in that mode)
-          conditionalPanel(
-            condition = "input.user_file_mode_expr == 'expr'",
-            uiOutput("userfilesimilar_expr")
-          ),
-
-          #
-          conditionalPanel(
-            condition = "input.user_file_mode_expr == 'gsea'",
-            uiOutput("userfilesimilar_gsea")
-          ),
-
-            # Similar RBPs plots (appear at the top if in that mode)
-            conditionalPanel(
-              condition = "input.expr_dataset == 'Similar RBPs'",
-              uiOutput("similar_expr_plots")
+              style = "border: 2px solid #f0ad4e; background-color: #fff3cd; padding: 8px; border-radius: 6px; font-weight: bold; color: #856404;"
             ),
-
-            # Top plots: Violin + shRNA (only show if NOT Similar RBPs)
+            conditionalPanel(condition = "input.expr_dataset == 'Similar RBPs'", uiOutput("similar_expr_plots")),
             conditionalPanel(
               condition = "input.expr_dataset != 'Similar RBPs'",
               fluidRow(
-                column(
-                  width = 6,
-                  plotOutput("expr_violin")
-                ),
-                column(
-                  width = 6,
-                  plotOutput("shrna_plot"),
-                  uiOutput("shrna_warning")
-                )
+                column(width = 6, plotOutput("violin_expr_plot", height = "400px")),
+                column(width = 6, plotOutput("plot_shrna_effect", height = "400px"))
               ),
-
-              # Volcano + table
-              div(style = "margin-top: 50px;",
-                  fluidRow(
-                    column(width = 6, plotlyOutput("volcano_plot", height = "600px")),
-                    column(width = 6, DTOutput("volcano_table"))
-                  )
-              ),
-
-              # GSEA + table
-              div(style = "margin-top: 50px;",
-                  fluidRow(
-                    column(width = 6, plotOutput("gsea_plot", height = "600px")),
-                    column(width = 6, DTOutput("geneset_table"))
-                  )
-              )
-            ),
-
-            uiOutput("expr_placeholder")
-          )
-        )
-      )
-    )
-
-    , # end tabPanel
-    # Splicing tab
-    tabPanel(
-      tagList(fa("scissors", fill = "black", height = "1em"), " Splicing"),
-      fluidPage(
-
-        # Main layout: sidebar (left) + results (right)
-        fluidRow(
-          # Left sidebar for mode selection + search
-          column(
-            width = 3,
-            wellPanel(
-              # Choose mode: Explore or Discovery
-              radioButtons(
-                inputId = "splicing_mode",
-                label = "Select mode:",
-                choices = c("Explore Mode", "Discovery Mode"),
-                selected = "Explore Mode"
-              ),
-
-              # Conditional: show dropdown only in Explore Mode
-              conditionalPanel(
-                condition = "input.splicing_mode == 'Explore Mode'",
-                selectInput(
-                  inputId = "splicing_dataset",
-                  label = "Select option:",
-                  choices = c("Both Cells", "K562", "HEPG2", "Similar RBPs")
-                ),
-
-                # Search bar + buttons below the dropdown
-                div(
-                  style = "display: flex; align-items: center; margin-top: 15px;",
-
-                  selectizeInput(
-                    inputId = "splicing_search",
-                    label = NULL,
-                    choices = NULL,
-                    multiple = FALSE,
-                    options = list(placeholder = "RBP"),
-                    width = "400px"   # ⬅️ try 400px or "100%" if you want full row
-                  ),
-
-                  actionButton(
-                    "search_btn",
-                    tagList(fa("search"), " Search"),
-                    class = "btn btn-primary",
-                    style = "margin-left: 10px; border-radius: 20px;"
-                  ),
-
-                  actionButton(
-                    "reset_btn",
-                    tagList(fa("redo"), " Reset"),
-                    class = "btn btn-secondary",
-                    style = "margin-left: 10px; border-radius: 20px;"
-                  )
-                )
-              ),
-
-              # Conditional: show file upload only in Discovery Mode
-              conditionalPanel(
-                condition = "input.splicing_mode == 'Discovery Mode'",
-                hr(),
-                tags$p("Alternatively, upload your own table with differential splicing values:"),
-                tags$p(
-                  "CHARM currently accepts tables where the first column are gene names, ",
-                  "and the second column are differential splicing values (dPSI), preferably obtained after processing with betAS.",
-                  "This table must be in .txt format and must not contain a header."
-                ),
-
-                fileInput(
-                  inputId = "user_file_splicing",
-                  label = "Upload your file:",
-                  accept = c(".txt")
-                ),
-
-                # Placeholder for inline warning
-                uiOutput("file_warning_splicing")
+              fluidRow(
+                column(width = 6, plotlyOutput("plot_expr_volcano", height = "450px")),
+                column(width = 6, DTOutput("expr_volcano_table"))
               )
             )
-          ),
-
-          # Right content area
-          column(
-            width = 9,
-            tags$h3("Splicing Data Results"),
-            tags$p("This is where filtered results will appear based on the selected option and search input or uploaded file.")
           )
         )
       )
     ),
+
+    # Splicing tab
+    tabPanel(
+      tagList(fa("scissors", fill = "black", height = "1em"), " Splicing"),
+      fluidPage(
+        fluidRow(
+          column(
+            width = 3,
+            wellPanel(
+              radioButtons("splice_mode", "Select mode:", choices = c("Explore Mode", "Discovery Mode"), selected = "Explore Mode"),
+              conditionalPanel(
+                condition = "input.splice_mode == 'Explore Mode'",
+                selectInput("splice_dataset", "Select option:", choices = c("Both Cells", "K562", "HEPG2", "Similar RBPs")),
+                div(
+                  style = "display: flex; align-items: center; margin-top: 15px;",
+                  selectizeInput("splice_search", NULL, choices = NULL, multiple = FALSE, options = list(placeholder = "RBP"), width = "400px"),
+                  conditionalPanel(
+                    condition = "input.splice_dataset != 'Similar RBPs'",
+                    div(
+                      style = "display: flex; align-items: center; margin-left: 10px;",
+                      actionButton("splice_search_btn", tagList(fa("search"), " Search"), class = "btn btn-primary", style = "margin-right: 10px; border-radius: 20px;"),
+                      actionButton("splice_reset_btn", tagList(fa("redo"), " Reset"), class = "btn btn-secondary", style = "border-radius: 20px;")
+                    )
+                  )
+                ),
+                conditionalPanel(
+                  condition = "input.splice_dataset == 'Similar RBPs'",
+                  selectizeInput("similar_rbps_select_splice", "Compare with specific RBPs (optional)", choices = NULL, multiple = TRUE, options = list(placeholder = "Select one or more RBPs")),
+                  numericInput("correl_num_splice", "Show top N correlated RBPs (optional):", value = NA, min = 1),
+                  numericInput("n_pos_splice", "Show top N positive correlations (optional):", value = NA, min = 1),
+                  numericInput("n_neg_splice", "Show top N negative correlations (optional):", value = NA, min = 1),
+                  div(
+                    style = "display: flex; align-items: center; margin-top: 15px;",
+                    actionButton("similar_plot_btn_splice", tagList(fa("chart-line"), " Plot"), class = "btn btn-primary", style = "margin-right: 10px; border-radius: 20px;"),
+                    actionButton("similar_reset_btn_splice", tagList(fa("redo"), " Reset"), class = "btn btn-secondary", style = "border-radius: 20px;")
+                  )
+                )
+              ),
+              conditionalPanel(
+                condition = "input.splice_mode == 'Discovery Mode'",
+                hr(),
+                tags$p("Alternatively, upload your own table with differential splicing values:"),
+                fileInput("user_file_splice", "Upload your file:", accept = c(".txt")),
+                uiOutput("file_warning_splice"),
+                uiOutput("user_file_options_splice")
+              )
+            )
+          ),
+          column(
+            width = 9,
+            tags$h3("Splicing Data Results"),
+            div(
+              "⚠ Please press reset after every plot!",
+              style = "border: 2px solid #f0ad4e; background-color: #fff3cd; padding: 8px; border-radius: 6px; font-weight: bold; color: #856404;"
+            ),
+            conditionalPanel(condition = "input.splice_dataset == 'Similar RBPs'", uiOutput("similar_splice_plots")),
+            conditionalPanel(
+              condition = "input.splice_dataset != 'Similar RBPs'",
+              fluidRow(
+                column(width = 6, plotOutput("violin_splice_plot", height = "400px")),
+                column(width = 6, plotOutput("plot_shrna_effect", height = "400px"))
+              ),
+              fluidRow(
+                column(width = 6, plotlyOutput("plot_splice_volcano", height = "450px")),
+                column(width = 6, DTOutput("splice_volcano_table"))
+              )
+            )
+          )
+        )
+      )
+    ),
+
     # Binding tab
     tabPanel(
       tagList(fa("link", fill = "black", height = "1em"), " Binding"),
       fluidPage(
-
-        # Main layout: sidebar (left) + results (right)
         fluidRow(
-          # Left sidebar for mode selection + search
           column(
             width = 3,
             wellPanel(
-              # Choose mode: Explore or Discovery
-              radioButtons(
-                inputId = "binding_mode",
-                label = "Select mode:",
-                choices = c("Explore Mode", "Discovery Mode"),
-                selected = "Explore Mode"
-              ),
-
-              # Conditional: show dropdown only in Explore Mode
+              radioButtons("binding_mode", "Select mode:", choices = c("Explore Mode", "Discovery Mode"), selected = "Explore Mode"),
               conditionalPanel(
                 condition = "input.binding_mode == 'Explore Mode'",
-                selectInput(
-                  inputId = "binding_dataset",
-                  label = "Select option:",
-                  choices = c("Both Cells", "K562", "HEPG2", "Similar RBPs")
-                ),
-
-                # Search bar + buttons below the dropdown
+                selectInput("binding_dataset", "Select option:", choices = c("Both Cells", "K562", "HEPG2", "Similar RBPs")),
                 div(
                   style = "display: flex; align-items: center; margin-top: 15px;",
-
-                  selectizeInput(
-                    inputId = "binding_search",
-                    label = NULL,
-                    choices = NULL,
-                    multiple = FALSE,
-                    options = list(placeholder = "RBP"),
-                    width = "400px"   # ⬅️ try 400px or "100%" if you want full row
-                  ),
-
-                  actionButton(
-                    "search_btn",
-                    tagList(fa("search"), " Search"),
-                    class = "btn btn-primary",
-                    style = "margin-left: 10px; border-radius: 20px;"
-                  ),
-
-                  actionButton(
-                    "reset_btn",
-                    tagList(fa("redo"), " Reset"),
-                    class = "btn btn-secondary",
-                    style = "margin-left: 10px; border-radius: 20px;"
-                  )
+                  selectizeInput("binding_search", NULL, choices = NULL, multiple = FALSE, options = list(placeholder = "RBP"), width = "400px"),
+                  actionButton("search_btn", tagList(fa("search"), " Search"), class = "btn btn-primary", style = "margin-left: 10px; border-radius: 20px;"),
+                  actionButton("reset_btn", tagList(fa("redo"), " Reset"), class = "btn btn-secondary", style = "margin-left: 10px; border-radius: 20px;")
                 )
               ),
-
-              # Conditional: show file upload only in Discovery Mode
               conditionalPanel(
                 condition = "input.binding_mode == 'Discovery Mode'",
                 hr(),
-                tags$p("Alternatively, upload your own table with differential splicing values. Charm's integrated tool, eCLIPSE, will process the data:"),
-                tags$p(
-                  "CHARM currently accepts tables where the first column are gene names, ",
-                  "and the second column are differential splicing values (dPSI), preferably obtained after processing with betAS.",
-                  "This table must be in .txt format and must not contain a header. WARNING: THIS TAKES A LONG TIME. Go have yourself a coffee."
-                ),
-
-                fileInput(
-                  inputId = "user_file_binding",
-                  label = "Upload your file:",
-                  accept = c(".txt")
-                ),
-
-                # Placeholder for inline warning
+                tags$p("Alternatively, upload your own table with differential splicing values."),
+                fileInput("user_file_binding", "Upload your file:", accept = c(".txt")),
                 uiOutput("file_warning_binding")
               )
             )
           ),
-
-          # Right content area
-          column(
-            width = 9,
-            tags$h3("Binding Data Results"),
-            tags$p("This is where filtered results will appear based on the selected option and search input or uploaded file.")
-          )
+          column(width = 9, tags$h3("Binding Data Results"), tags$p("Filtered results will appear here."))
         )
       )
     ),
@@ -556,71 +318,28 @@ ui <- fluidPage(
     tabPanel(
       tagList(fa("project-diagram", fill = "black", height = "1em"), " Network"),
       fluidPage(
-
-        # Main layout: sidebar (left) + results (right)
         fluidRow(
-          # Left sidebar for mode selection + search
           column(
             width = 3,
             wellPanel(
-              # Choose mode: Explore or Discovery
-              radioButtons(
-                inputId = "network_mode",
-                label = "Select mode:",
-                choices = c("Explore Mode", "Discovery Mode"),
-                selected = "Explore Mode"
-              ),
-
-              # Conditional: show dropdown only in Explore Mode
+              radioButtons("network_mode", "Select mode:", choices = c("Explore Mode", "Discovery Mode"), selected = "Explore Mode"),
               conditionalPanel(
                 condition = "input.network_mode == 'Explore Mode'",
-                selectInput(
-                  inputId = "network_dataset",
-                  label = "Select option:",
-                  choices = c("Both Cells", "K562", "HEPG2", "Similar RBPs")
-                ),
-
-                # Search bar + buttons below the dropdown
+                selectInput("network_dataset", "Select option:", choices = c("Both Cells", "K562", "HEPG2", "Similar RBPs")),
                 div(
                   style = "display: flex; align-items: center; margin-top: 15px;",
-
-                  selectizeInput(
-                    inputId = "network_search",
-                    label = NULL,
-                    choices = NULL,
-                    multiple = FALSE,
-                    options = list(placeholder = "RBP"),
-                    width = "400px"   # ⬅️ try 400px or "100%" if you want full row
-                  ),
-
-                  actionButton(
-                    "search_btn",
-                    tagList(fa("search"), " Search"),
-                    class = "btn btn-primary",
-                    style = "margin-left: 10px; border-radius: 20px;"
-                  ),
-
-                  actionButton(
-                    "reset_btn",
-                    tagList(fa("redo"), " Reset"),
-                    class = "btn btn-secondary",
-                    style = "margin-left: 10px; border-radius: 20px;"
-                  )
+                  selectizeInput("network_search", NULL, choices = NULL, multiple = FALSE, options = list(placeholder = "RBP"), width = "400px"),
+                  actionButton("search_btn", tagList(fa("search"), " Search"), class = "btn btn-primary", style = "margin-left: 10px; border-radius: 20px;"),
+                  actionButton("reset_btn", tagList(fa("redo"), " Reset"), class = "btn btn-secondary", style = "margin-left: 10px; border-radius: 20px;")
                 )
-              ),
-
+              )
             )
           ),
-
-          # Right content area
-          column(
-            width = 9,
-            tags$h3("Network Results"),
-            tags$p("This is where network related results will appear based on the selected option and search input.")
-          )
+          column(width = 9, tags$h3("Network Results"), tags$p("Network-related results will appear here."))
         )
       )
-    )),
+    )
+  ),
 
   # GitHub link floating across ALL tabs
   tags$div(
@@ -646,23 +365,43 @@ ui <- fluidPage(
 )
 
 server <- function(input, output, session) {
+  result_splice <- reactiveVal(NULL)
 
   # ---- Helper functions to pick correct dataset ----
-  current_charm <- reactive({
-    req(input$expr_dataset)   # wait until a selection exists
+  # Expression tab
+  current_charm_expr <- reactive({
+    req(input$expr_dataset)
     switch(input$expr_dataset,
            "K562"  = Charm.object_K562,
            "HEPG2" = Charm.object_HEPG2,
-           Charm.object)   # default: Both Cells
+           Charm.object)
   })
 
-  current_shrna <- reactive({
-    req(input$expr_dataset)
-    switch(input$expr_dataset,
+  # Splicing tab
+  current_charm_splice <- reactive({
+    req(input$splice_dataset)
+    switch(input$splice_dataset,
+           "K562"  = Charm.object_K562,
+           "HEPG2" = Charm.object_HEPG2,
+           Charm.object)
+  })
+
+  current_shrna_expr <- reactive({
+    req(input$splice_dataset)
+    switch(input$splice_dataset,
            "K562"  = sh_effect_vector_K562,
            "HEPG2" = sh_effect_vector_HEPG2,
            sh_effect_vector)
   })
+
+  current_shrna_splice <- reactive({
+    req(input$splice_dataset)
+    switch(input$splice_dataset,
+           "K562"  = sh_effect_vector_K562,
+           "HEPG2" = sh_effect_vector_HEPG2,
+           sh_effect_vector)
+  })
+
 
   # Reactive storage
   display_table <- reactiveVal(NULL)
@@ -677,10 +416,23 @@ server <- function(input, output, session) {
   })
 
   observe({
-    rbp_choices <- names(current_charm())
+    req(Charm.object)
+    updateSelectizeInput(session, "splice_search",
+                         choices = names(Charm.object),
+                         server = TRUE)
+  })
 
-    updateSelectizeInput(session, "similar_rbps_select_expr", choices = rbp_choices)
-    updateSelectizeInput(session, "similar_rbps_select_gsea", choices = rbp_choices)
+  observe({
+    rbp_choices_expr <- names(current_charm_expr())
+
+    updateSelectizeInput(session, "similar_rbps_select_expr", choices = rbp_choices_expr)
+    updateSelectizeInput(session, "similar_rbps_select_gsea", choices = rbp_choices_expr)
+  })
+
+  observe({
+    rbp_choices_splice <- names(current_charm_splice())
+
+    updateSelectizeInput(session, "similar_rbps_select_splice", choices = rbp_choices_splice)
   })
 
   ###EXPRESSION
@@ -1060,8 +812,8 @@ server <- function(input, output, session) {
     rbp_sel <- input$expr_search
     rbp_current(rbp_sel)
 
-    charm_obj <- current_charm()
-    shrna_obj <- current_shrna()
+    charm_obj <- current_charm_expr()
+    shrna_obj <- current_shrna_expr()
 
     exp_list <- names(charm_obj)
     if (is.null(exp_list) || !(rbp_sel %in% exp_list)) {
@@ -1190,6 +942,124 @@ server <- function(input, output, session) {
       )
     })
   })
+  # ---- Main: Splicing Explore ----
+  observeEvent(input$splice_search_btn, {
+    req(input$splice_search)
+    rbp_sel <- input$splice_search
+    rbp_current(rbp_sel)
+
+    charm_obj <- current_charm_splice()
+    shrna_obj <- current_shrna_splice()
+
+    splice_list <- names(charm_obj)
+    if (is.null(splice_list) || !(rbp_sel %in% splice_list)) {
+      showModal(modalDialog(
+        title = "Warning",
+        paste("This RBP has no splicing information available."),
+        easyClose = TRUE,
+        footer = NULL
+      ))
+      return(NULL)
+    }
+
+    session$sendCustomMessage("toggleCursor", TRUE)
+
+    # ---- Top row: Violin + shRNA knockdown plots ----
+    output$violin_splice_plot <- renderPlot({
+      violin_splice_plot(charm_obj, rbp_sel)
+    })
+
+    output$plot_shrna_effect <- renderPlot({
+      plot_shRNA_effect(shrna_obj, rbp_sel)
+    })
+
+    output$shrna_warning_splice <- renderUI({
+      stats <- shrna_obj[rbp_sel,,drop=FALSE]
+      if (is.null(stats) || nrow(stats) == 0) return(NULL)
+      logFC <- stats$logFC
+      pval <- stats$P.Value
+      if (pval > 0.05 || logFC > -0.5) {
+        div(style="margin-top:10px;font-size:16px;font-weight:bold;color:red;",
+            "WARNING: The efficiency of this knockdown is uncertain. Proceed with caution.")
+      } else NULL
+    })
+
+    # ---- Second row: Volcano plot ----
+    splice_res <- plot_splice_volcano(charm_obj, rbp_sel)
+    if (is.null(splice_res)) {
+      output$plot_splice_volcano <- renderPlot({
+        ggplot() + annotate("text", x = 0, y = 0, label = paste("No results for", rbp_sel)) + theme_void()
+      })
+      output$splice_volcano_table <- DT::renderDataTable(NULL)
+      return()
+    }
+
+    # Store results in reactiveVal
+    result_splice(splice_res)
+
+    # ---- Helper to render volcano ----
+    render_volcano <- function(tbl) {
+      p <- ggplot(tbl, aes(x = dPSI, y = Pdiff, key = Event.ID, color = highlight)) +
+        geom_point(alpha = 0.7) +
+        scale_color_manual(values = c("None"="#CCCCCC","RBP"="#A10702","Selected"="#008057")) +
+        theme_bw() +
+        theme(legend.position = "none") +
+        labs(title = paste("Volcano Plot:", rbp_sel), x = "ΔPSI (shRNA - CTRL)", y = "PDiff")
+      ggplotly(p, tooltip = "key", source = "splice_volcano") %>%
+        event_register("plotly_click")
+    }
+
+    # ---- Render volcano plot ----
+    output$plot_splice_volcano <- renderPlotly({
+      req(result_splice())
+      render_volcano(result_splice()$top_table)
+    })
+
+    # ---- Render table ----
+    output$splice_volcano_table <- DT::renderDataTable({
+      req(result_splice())
+      result_splice()$top_table %>% select(-text)
+    }, rownames = FALSE, selection = "single", options = list(pageLength = 10))
+
+    # ---- Shared function to update highlights ----
+    update_highlight <- function(selected_event) {
+      if (is.null(selected_event) || length(selected_event) == 0) return(NULL)
+      tbl <- result_splice()$top_table
+      if (!selected_event %in% tbl$Event.ID) return(NULL)
+
+      tbl$highlight <- ifelse(tbl$Event.ID == selected_event, "Selected",
+                              ifelse(tbl$Event.ID %in% input$splice_search, "RBP", "None"))
+
+      result_splice(list(
+        top_table = tbl,
+        volcano_plot = result_splice()$volcano_plot
+      ))
+
+      # Sync table selection
+      proxy <- DT::dataTableProxy("splice_volcano_table")
+      sel_idx <- which(tbl$highlight == "Selected")
+      DT::selectRows(proxy, sel_idx)
+    }
+
+    # ---- React to selecting a row in the table ----
+    observeEvent(input$splice_volcano_table_rows_selected, {
+      sel_row <- input$splice_volcano_table_rows_selected
+      if (is.null(sel_row)) return()
+      selected_event <- result_splice()$top_table$Event.ID[sel_row]
+      update_highlight(selected_event)
+    })
+
+    # ---- React to clicking a point in the volcano plot ----
+    observeEvent(event_data("plotly_click", source = "splice_volcano"), {
+      click <- event_data("plotly_click", source = "splice_volcano")
+      if (is.null(click) || is.null(click$key)) return()
+      clicked_event <- click$key
+      update_highlight(clicked_event)
+    })
+
+    session$sendCustomMessage("toggleCursor", FALSE)
+  })
+
   # ---- Reset buttons ----
   observeEvent(input$similar_reset_btn, {
     output$similar_expr_plots <- renderUI(NULL)
