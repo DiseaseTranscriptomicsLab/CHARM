@@ -87,7 +87,7 @@ ui <- fluidPage(
               style = "background-color: #EAEBEB; color: black; border: 2px solid #2c3e50; border-radius: 20px; padding: 40px; text-align: center; margin: 15px;",
               div(style = "margin-bottom: 10px;", fa("globe", fill = "black", height = "3em")),
               tags$h3("Explore", style = "font-weight: bold;"),
-              tags$p("Investigate how a known RBP affects expression, splicing, and binding, based on ENCODE's gene silencing series and eCLIP data.")
+              tags$p("Investigate how a known RBP affects expression, splicing, and binding, based on ENCODE's gene silencing series and eCLIP data. Find out which genes/gene sets are more influenced by RBPs")
             )
           ),
           column(
@@ -197,12 +197,20 @@ ui <- fluidPage(
             conditionalPanel(
               condition = "input.expr_dataset != 'Similar RBPs'",
               fluidRow(
-                column(width = 6, plotOutput("violin_expr_plot", height = "400px")),
-                column(width = 6, plotOutput("plot_shrna_effect", height = "400px"))
+                column(width = 6, plotOutput("expr_violin", height = "400px")),
+                column(
+                  width = 6,
+                  plotOutput("shrna_plot"),
+                  uiOutput("shrna_warning")
+                )
               ),
               fluidRow(
-                column(width = 6, plotlyOutput("plot_expr_volcano", height = "450px")),
-                column(width = 6, DTOutput("expr_volcano_table"))
+                column(width = 6, plotlyOutput("volcano_plot", height = "450px")),
+                column(width = 6, DTOutput("volcano_table"))
+              ),
+              fluidRow(
+                column(width = 6, plotOutput("gsea_plot", height = "600px")),
+                column(width = 6, DTOutput("geneset_table"))
               )
             )
           )
