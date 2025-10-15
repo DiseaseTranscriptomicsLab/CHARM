@@ -191,9 +191,33 @@ ui <- fluidPage(
             tags$h3("Expression Data Results"),
             div(
               "⚠ Please press reset after every plot!",
+              style = "border: 2px solid #f0ad4e;
+             background-color: #fff3cd;
+             padding: 8px;
+             border-radius: 6px;
+             font-weight: bold;
+             color: #856404;"
+            )
+            ,
+
+            # User PRovided Expression (appear at the top if in that mode)
+            conditionalPanel(
+              condition = "input.user_file_mode_expr == 'expr'",
+              uiOutput("userfilesimilar_expr")
+            ),
+
+            #
+            conditionalPanel(
+              condition = "input.user_file_mode_expr == 'gsea'",
+              uiOutput("userfilesimilar_gsea")
+            ),
+
+            # Similar RBPs plots (appear at the top if in that mode)
+            conditionalPanel(
+              condition = "input.expr_dataset == 'Similar RBPs'",
+              uiOutput("similar_expr_plots"),
               style = "border: 2px solid #f0ad4e; background-color: #fff3cd; padding: 8px; border-radius: 6px; font-weight: bold; color: #856404;"
             ),
-            conditionalPanel(condition = "input.expr_dataset == 'Similar RBPs'", uiOutput("similar_expr_plots")),
             conditionalPanel(
               condition = "input.expr_dataset != 'Similar RBPs'",
               fluidRow(
