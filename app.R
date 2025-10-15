@@ -28,8 +28,12 @@ similar_gsea_all <- readRDS("data/RBPs.gsea_All.RDS")
 similar_gsea_K562 <- readRDS("data/RBPs.gsea_K562.RDS")
 similar_gsea_HEPG2 <- readRDS("data/RBPs.gsea_HEPG2.RDS")
 
+#SearchBarPopulation
+GenesBoth <- readRDS("data/AvailableGenes_both.RDS")
+GenesK562 <- readRDS("data/AvailableGenes_K562.RDS")
+GenesHEPG2 <- readRDS("data/AvailableGenes_HEPG2.RDS")
 
-###### UI
+# ---- UI ----
 
 ui <- fluidPage(
   theme = shinytheme("flatly"),
@@ -125,25 +129,95 @@ ui <- fluidPage(
                   label = "Select option:",
                   choices = c("Both Cells", "K562", "HEPG2", "Similar RBPs")
                 ),
+
+                # ---- Search by RBP (always visible) ----
                 div(
-                  style = "display: flex; align-items: center; margin-top: 15px;",
-                  selectizeInput(
-                    inputId = "expr_search",
-                    label = NULL,
-                    choices = NULL,
-                    multiple = FALSE,
-                    options = list(placeholder = "RBP"),
-                    width = "400px"
-                  ),
-                  conditionalPanel(
-                    condition = "input.expr_dataset != 'Similar RBPs'",
-                    div(
-                      style = "display: flex; align-items: center; margin-left: 10px;",
-                      actionButton("search_btn", tagList(fa("search"), " Search"), class = "btn btn-primary", style = "margin-right: 10px; border-radius: 20px;"),
-                      actionButton("reset_btn", tagList(fa("redo"), " Reset"), class = "btn btn-secondary", style = "border-radius: 20px;")
+                  style = "margin-top: 15px;",
+                  tags$h5("Search by RBP"),
+                  tags$p("Find out how RBPs influence expression and gene set enrichment",
+                         style = "font-size: 12px; color: #666; margin-top: -5px;"),
+                  div(
+                    style = "display: flex; align-items: center;",
+                    selectizeInput(
+                      inputId = "expr_search_rbp",
+                      label = NULL,
+                      choices = NULL,
+                      multiple = FALSE,
+                      options = list(placeholder = "RBP"),
+                      width = "400px"
+                    ),
+                    conditionalPanel(
+                      condition = "input.expr_dataset != 'Similar RBPs'",
+                      div(
+                        style = "display: flex; align-items: center; margin-left: 10px;",
+                        actionButton("search_btn_rbp", tagList(fa("search"), " Search"),
+                                     class = "btn btn-primary", style = "margin-right: 10px; border-radius: 20px;"),
+                        actionButton("reset_btn_rbp", tagList(fa("redo"), " Reset"),
+                                     class = "btn btn-secondary", style = "border-radius: 20px;")
+                      )
                     )
                   )
                 ),
+
+                # ---- Search by Gene (hidden when Similar RBPs is selected) ----
+                conditionalPanel(
+                  condition = "input.expr_dataset != 'Similar RBPs'",
+                  div(
+                    style = "margin-top: 25px;",
+                    tags$h5("Search by Gene"),
+                    tags$p("Find out which RBPs most influence a specific gene's expression",
+                           style = "font-size: 12px; color: #666; margin-top: -5px;"),
+                    div(
+                      style = "display: flex; align-items: center;",
+                      selectizeInput(
+                        inputId = "expr_search_gene",
+                        label = NULL,
+                        choices = NULL,
+                        multiple = FALSE,
+                        options = list(placeholder = "Gene"),
+                        width = "400px"
+                      ),
+                      div(
+                        style = "display: flex; align-items: center; margin-left: 10px;",
+                        actionButton("search_btn_gene", tagList(fa("search"), " Search"),
+                                     class = "btn btn-primary", style = "margin-right: 10px; border-radius: 20px;"),
+                        actionButton("reset_btn_gene", tagList(fa("redo"), " Reset"),
+                                     class = "btn btn-secondary", style = "border-radius: 20px;")
+                      )
+                    )
+                  )
+                ),
+
+                # ---- Search by Hallmark Gene Set (hidden when Similar RBPs is selected) ----
+                conditionalPanel(
+                  condition = "input.expr_dataset != 'Similar RBPs'",
+                  div(
+                    style = "margin-top: 25px;",
+                    tags$h5("Search by Hallmark Gene Set"),
+                    tags$p("Find out which RBPs most influence a specific Hallmark Gene Set enrichment",
+                           style = "font-size: 12px; color: #666; margin-top: -5px;"),
+                    div(
+                      style = "display: flex; align-items: center;",
+                      selectizeInput(
+                        inputId = "expr_search_hallmark",
+                        label = NULL,
+                        choices = NULL,
+                        multiple = FALSE,
+                        options = list(placeholder = "Hallmark Gene Set"),
+                        width = "400px"
+                      ),
+                      div(
+                        style = "display: flex; align-items: center; margin-left: 10px;",
+                        actionButton("search_btn_hallmark", tagList(fa("search"), " Search"),
+                                     class = "btn btn-primary", style = "margin-right: 10px; border-radius: 20px;"),
+                        actionButton("reset_btn_hallmark", tagList(fa("redo"), " Reset"),
+                                     class = "btn btn-secondary", style = "border-radius: 20px;")
+                      )
+                    )
+                  )
+                ),
+
+                # ---- Similar RBPs section (only when that option is selected) ----
                 conditionalPanel(
                   condition = "input.expr_dataset == 'Similar RBPs'",
                   radioButtons(
@@ -155,7 +229,9 @@ ui <- fluidPage(
                   ),
                   conditionalPanel(
                     condition = "input.similar_mode == 'expr'",
-                    selectizeInput("similar_rbps_select_expr", "Compare with specific RBPs (optional)", choices = NULL, multiple = TRUE, options = list(placeholder = "Select one or more RBPs")),
+                    selectizeInput("similar_rbps_select_expr", "Compare with specific RBPs (optional)",
+                                   choices = NULL, multiple = TRUE,
+                                   options = list(placeholder = "Select one or more RBPs")),
                     helpText("• If you select one RBP, a scatter plot will be shown.\n• If you select multiple RBPs, correlation values will be summarised."),
                     numericInput("correl_num_expr", "Show top N correlated RBPs (optional):", value = NA, min = 1),
                     numericInput("n_pos_expr", "Show top N positive correlations (optional):", value = NA, min = 1),
@@ -163,15 +239,19 @@ ui <- fluidPage(
                   ),
                   conditionalPanel(
                     condition = "input.similar_mode == 'gsea'",
-                    selectizeInput("similar_rbps_select_gsea", "Compare with specific RBPs (optional)", choices = NULL, multiple = TRUE, options = list(placeholder = "Select one or more RBPs")),
+                    selectizeInput("similar_rbps_select_gsea", "Compare with specific RBPs (optional)",
+                                   choices = NULL, multiple = TRUE,
+                                   options = list(placeholder = "Select one or more RBPs")),
                     numericInput("correl_num_gsea", "Show top N correlated RBPs (optional):", value = NA, min = 1),
                     numericInput("n_pos_gsea", "Show top N positive correlations (optional):", value = NA, min = 1),
                     numericInput("n_neg_gsea", "Show top N negative correlations (optional):", value = NA, min = 1)
                   ),
                   div(
                     style = "display: flex; align-items: center; margin-top: 15px;",
-                    actionButton("similar_plot_btn", tagList(fa("chart-line"), " Plot"), class = "btn btn-primary", style = "margin-right: 10px; border-radius: 20px;"),
-                    actionButton("similar_reset_btn", tagList(fa("redo"), " Reset"), class = "btn btn-secondary", style = "border-radius: 20px;")
+                    actionButton("similar_plot_btn", tagList(fa("chart-line"), " Plot"),
+                                 class = "btn btn-primary", style = "margin-right: 10px; border-radius: 20px;"),
+                    actionButton("similar_reset_btn", tagList(fa("redo"), " Reset"),
+                                 class = "btn btn-secondary", style = "border-radius: 20px;")
                   )
                 )
               ),
@@ -189,35 +269,72 @@ ui <- fluidPage(
           column(
             width = 9,
             tags$h3("Expression Data Results"),
+
+            # --- Warning message ---
             div(
               "⚠ Please press reset after every plot!",
               style = "border: 2px solid #f0ad4e;
-             background-color: #fff3cd;
-             padding: 8px;
-             border-radius: 6px;
-             font-weight: bold;
-             color: #856404;"
-            )
-            ,
+           background-color: #fff3cd;
+           padding: 8px;
+           border-radius: 6px;
+           font-weight: bold;
+           color: #856404;"
+            ),
+            div(
+              "⚠ If in discovery mode please scroll down!",
+              style = "border: 2px solid #8F283A;
+           background-color: #DB7F8E;
+           padding: 8px;
+           border-radius: 6px;
+           font-weight: bold;
+           color: #8F283A;"
+            ),
 
-            # User PRovided Expression (appear at the top if in that mode)
+            # --- Gene search plot (appear at top when searched) ---
+            conditionalPanel(
+              condition = "input.search_btn_gene > 0",
+              fluidRow(
+                column(
+                  width = 12,
+                  plotOutput("expr_gene_plot", height = "600px")
+                )
+              )
+            ),
+
+            # --- Hallmark gene set search plot (appear at top when searched) ---
+            conditionalPanel(
+              condition = "input.search_btn_hallmark > 0",
+              fluidRow(
+                column(
+                  width = 12,
+                  plotOutput("expr_hallmark_plot", height = "600px")
+                )
+              )
+            ),
+
+            # --- User-provided expression plots ---
             conditionalPanel(
               condition = "input.user_file_mode_expr == 'expr'",
               uiOutput("userfilesimilar_expr")
             ),
-
-            #
             conditionalPanel(
               condition = "input.user_file_mode_expr == 'gsea'",
               uiOutput("userfilesimilar_gsea")
             ),
 
-            # Similar RBPs plots (appear at the top if in that mode)
+            # --- Similar RBPs plots (appear only when 'Similar RBPs' selected) ---
             conditionalPanel(
               condition = "input.expr_dataset == 'Similar RBPs'",
               uiOutput("similar_expr_plots"),
-              style = "border: 2px solid #f0ad4e; background-color: #fff3cd; padding: 8px; border-radius: 6px; font-weight: bold; color: #856404;"
+              style = "border: 2px solid #f0ad4e;
+           background-color: #fff3cd;
+           padding: 8px;
+           border-radius: 6px;
+           font-weight: bold;
+           color: #856404;"
             ),
+
+            # --- Default RBP plots (appear when dataset != 'Similar RBPs') ---
             conditionalPanel(
               condition = "input.expr_dataset != 'Similar RBPs'",
               fluidRow(
@@ -396,6 +513,8 @@ ui <- fluidPage(
   )
 )
 
+# ---- Server ----
+
 server <- function(input, output, session) {
   result_splice <- reactiveVal(NULL)
 
@@ -439,35 +558,61 @@ server <- function(input, output, session) {
   display_table <- reactiveVal(NULL)
   rbp_current   <- reactiveVal(NULL)
 
-  # ---- Search bar population ----
+  # ---- Search bar population (Expression tab) ----
   observe({
-    req(Charm.object)
-    updateSelectizeInput(session, "expr_search",
-                         choices = names(Charm.object),
-                         server = TRUE)
+    req(current_charm_expr(), input$expr_dataset)
+
+    # 1️⃣ RBP search bar (depends on selected dataset)
+    rbp_choices <- names(current_charm_expr())
+    updateSelectizeInput(
+      session,
+      "expr_search_rbp",
+      choices = rbp_choices,
+      server = TRUE
+    )
+
+    # 2️⃣ Gene search bar (depends on selected dataset)
+    gene_choices <- switch(
+      input$expr_dataset,
+      "K562"  = GenesK562,
+      "HEPG2" = GenesHEPG2,
+      GenesBoth # default for "Both Cells" or anything else
+    )
+    updateSelectizeInput(
+      session,
+      "expr_search_gene",
+      choices = sort(unique(gene_choices)),
+      server = TRUE
+    )
+
+    # 3️⃣ Hallmark Gene Set search bar (always from RBFOX2)
+    hallmark_choices <- Charm.object[["RBFOX2"]]$GSEA$pathway
+    updateSelectizeInput(
+      session,
+      "expr_search_hallmark",
+      choices = sort(unique(hallmark_choices)),
+      server = TRUE
+    )
   })
 
-  observe({
-    req(Charm.object)
-    updateSelectizeInput(session, "splice_search",
-                         choices = names(Charm.object),
-                         server = TRUE)
-  })
 
+  # ---- Search bar population (Splicing tab) ----
   observe({
-    rbp_choices_expr <- names(current_charm_expr())
+    req(current_charm_splice())
 
-    updateSelectizeInput(session, "similar_rbps_select_expr", choices = rbp_choices_expr)
-    updateSelectizeInput(session, "similar_rbps_select_gsea", choices = rbp_choices_expr)
-  })
-
-  observe({
     rbp_choices_splice <- names(current_charm_splice())
+    updateSelectizeInput(
+      session,
+      "splice_search",
+      choices = rbp_choices_splice,
+      server = TRUE
+    )
 
-    updateSelectizeInput(session, "similar_rbps_select_splice", choices = rbp_choices_splice)
+    rbp_choices_similar <- names(current_charm_splice())
+    updateSelectizeInput(session, "similar_rbps_select_splice", choices = rbp_choices_similar)
   })
 
-  ###EXPRESSION
+  ###EXPRESSION (user File)
   upload_ok <- reactiveVal(FALSE)
   user_expr_df <- reactiveVal(NULL)
 
@@ -839,9 +984,9 @@ server <- function(input, output, session) {
   })
 
   # ---- Main: search button triggers all plots ----
-  observeEvent(input$search_btn, {
-    req(input$expr_search)
-    rbp_sel <- input$expr_search
+  observeEvent(input$search_btn_rbp, {
+    req(input$expr_search_rbp)
+    rbp_sel <- input$expr_search_rbp
     rbp_current(rbp_sel)
 
     charm_obj <- current_charm_expr()
@@ -901,6 +1046,39 @@ server <- function(input, output, session) {
                 filter = "none",
                 rownames = FALSE,
                 options = list(pageLength = 10, scrollX = TRUE))
+    })
+
+    session$sendCustomMessage("toggleCursor", FALSE)
+  })
+  # ---- Gene Search ----
+  observeEvent(input$search_btn_gene, {
+    req(input$expr_search_gene)
+    gene <- input$expr_search_gene
+    charm_obj <- current_charm_expr()
+
+    output$expr_gene_plot <- renderPlot({
+      validate(
+        need(gene %in% unlist(lapply(charm_obj, function(x) rownames(x$DEGenes))),
+             paste("Gene", gene, "not found in any RBP DEGenes tables."))
+      )
+      plot_gene_logFC_heatmap(charm_obj, gene)
+    })
+
+    session$sendCustomMessage("toggleCursor", FALSE) # turn cursor back
+  })
+
+  # ---- Hallmark Gene Set Search ----
+  observeEvent(input$search_btn_hallmark, {
+    req(input$expr_search_hallmark)
+    geneset <- input$expr_search_hallmark
+    charm_obj <- current_charm_expr()
+
+    output$expr_hallmark_plot <- renderPlot({
+      validate(
+        need(geneset %in% unlist(lapply(charm_obj, function(x) x$GSEA$pathway)),
+             paste0("Geneset '", geneset, "' not found in any RBP GSEA tables."))
+      )
+      plot_hallmark_nes_heatmap(charm_obj, geneset)
     })
 
     session$sendCustomMessage("toggleCursor", FALSE)
@@ -974,6 +1152,7 @@ server <- function(input, output, session) {
       )
     })
   })
+
   # ---- Main: Splicing Explore ----
   observeEvent(input$splice_search_btn, {
     req(input$splice_search)
@@ -1099,7 +1278,7 @@ server <- function(input, output, session) {
     updateSelectizeInput(session, "similar_rbps_select_gsea", selected = "")
   })
 
-  observeEvent(input$reset_btn, {
+  observeEvent(input$reset_btn_rbp, {
     output$expr_violin    <- renderPlot(NULL)
     output$shrna_plot     <- renderPlot(NULL)
     output$shrna_warning  <- renderUI(NULL)
@@ -1110,6 +1289,13 @@ server <- function(input, output, session) {
     display_table(NULL)
     rbp_current(NULL)
     updateSelectizeInput(session, "expr_search", selected = "")
+  })
+  observeEvent(input$reset_btn_gene, {
+    output$expr_gene_plot <- renderPlot(NULL)
+  })
+
+  observeEvent(input$reset_btn_hallmark, {
+    output$expr_hallmark_plot <- renderPlot(NULL)
   })
 
 }

@@ -1844,3 +1844,140 @@ result$heatmap              # ggplot heatmap
 
 ```
 
+## C. Gene Centered Expression
+
+```{r}
+available.genes <- unique(unlist(lapply(as.character(names(Charm.object_HEPG2)), function(rbp) {
+  obj <- Charm.object_HEPG2[[rbp]]
+  
+  if (is.null(obj)) {
+    warning(paste("No entry for", rbp))
+    return(NULL)
+  }
+  
+  df <- obj[["DEGenes"]]
+  
+  if (is.null(df)) {
+    warning(paste("No DEGenes for", rbp))
+    return(NULL)
+  }
+  
+  rownames(df)
+})))
+
+saveRDS(available.genes, "~/Projects/CHARM/data/AvailableGenes_HEPG2.RDS")
+
+plot_gene_logFC_heatmap <- function(CharmObj, gene) {
+  
+  # Extract LogFC for the gene across all RBPs safely
+  logfc_data <- lapply(names(CharmObj), function(rbp) {
+    df <- CharmObj[[rbp]]$DEGenes
+    
+    # Check that DEGenes exists, has "LogFC", and contains the gene
+    if (!is.null(df) && "logFC" %in% colnames(df) && gene %in% rownames(df)) {
+      data.frame(RBP = rbp, logFC = df[gene, "logFC"])
+    } else {
+      # Return NA if not found
+      data.frame(RBP = rbp, logFC = NA_real_)
+    }
+  }) %>%
+    bind_rows() %>%
+    drop_na(logFC)
+  
+  # Check that we found the gene somewhere
+  if (nrow(logfc_data) == 0) {
+    stop(paste("Gene", gene, "not found in any RBP DEGenes tables."))
+  }
+  
+  # Select top 10 and bottom 10
+  top10 <- logfc_data %>% arrange(desc(logFC)) %>% slice_head(n = 10)
+  bottom10 <- logfc_data %>% arrange(logFC) %>% slice_head(n = 10)
+  selected <- bind_rows(top10, bottom10)
+  
+  # Order RBPs by LogFC for visualization
+  selected$RBP <- factor(selected$RBP, levels = selected$RBP[order(selected$logFC)])
+  
+  # Create the heatmap
+ggplot(selected, aes(x = gene, y = RBP, fill = logFC)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = sprintf("%.2f", logFC)), color = "white", size = 5) +
+  scale_fill_gradient2(low = "black", mid = "white", high = "#601700", midpoint = 0) +
+  labs(
+    title = bquote("Top/bottom RBPs by LogFC for " * italic(.(gene))),
+    x = "", y = "RBP"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(face = "italic"),
+    axis.ticks.x = element_blank()
+  )
+}
+
+plot_gene_logFC_heatmap(Charm.object, "TP53")
+```
+
+## D. Gene Set Centered Expression
+
+```{r}
+
+plot_hallmark_nes_heatmap <- function(CharmObj, geneset) {
+
+  # Extract NES for the geneset across all RBPs safely
+  NES_data <- lapply(names(CharmObj), function(rbp) {
+    df <- CharmObj[[rbp]]$GSEA
+
+    # Validate structure
+    if (!is.null(df) && "NES" %in% colnames(df) && "pathway" %in% colnames(df)) {
+      # find rows matching the geneset
+      hits <- which(df$pathway == geneset)
+
+      if (length(hits) == 1) {
+        data.frame(RBP = rbp, NES = as.numeric(df$NES[hits]), stringsAsFactors = FALSE)
+      } else if (length(hits) > 1) {
+        # If multiple entries for the same pathway, take the first (or change strategy)
+        data.frame(RBP = rbp, NES = as.numeric(df$NES[hits[1]]), stringsAsFactors = FALSE)
+      } else {
+        data.frame(RBP = rbp, NES = NA_real_, stringsAsFactors = FALSE)
+      }
+    } else {
+      data.frame(RBP = rbp, NES = NA_real_, stringsAsFactors = FALSE)
+    }
+  }) %>%
+    bind_rows() %>%
+    drop_na(NES)
+
+  # Check that we found the geneset somewhere
+  if (nrow(NES_data) == 0) {
+    stop(paste0("Geneset '", geneset, "' not found in any RBP GSEA tables."))
+  }
+
+  # Select top 10 and bottom 10
+  top10 <- NES_data %>% arrange(desc(NES)) %>% slice_head(n = 10)
+  bottom10 <- NES_data %>% arrange(NES) %>% slice_head(n = 10)
+  selected <- bind_rows(top10, bottom10)
+
+  # Create a column to use as x-axis (single column heatmap)
+  selected$Geneset <- geneset
+
+  # Order RBPs by NES for visualization (from low -> high)
+  selected$RBP <- factor(selected$RBP, levels = selected$RBP[order(selected$NES)])
+
+  # Build and return the plot
+  p <- ggplot(selected, aes(x = Geneset, y = RBP, fill = NES)) +
+    geom_tile(color = "white") +
+    geom_text(aes(label = sprintf("%.2f", NES)), color = "white", size = 5) +
+    scale_fill_gradient2(low = "black", mid = "white", high = "#601700", midpoint = 0) +
+    labs(
+      title = paste0("Top/bottom RBPs by NES for ", geneset),
+      x = "", y = "RBP"
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(
+      axis.ticks.x = element_blank(),
+      axis.text.x = element_text(face = "italic")  # italic x-axis label (the geneset)
+    )
+
+  return(p)
+}
+plot_hallmark_nes_heatmap(Charm.object, "HYPOXIA")
+```
