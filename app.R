@@ -32,6 +32,11 @@ similar_gsea_HEPG2 <- readRDS("data/RBPs.gsea_HEPG2.RDS")
 GenesBoth <- readRDS("data/AvailableGenes_both.RDS")
 GenesK562 <- readRDS("data/AvailableGenes_K562.RDS")
 GenesHEPG2 <- readRDS("data/AvailableGenes_HEPG2.RDS")
+EventsBoth <- readRDS("data/AvailableEvents_Both.RDS")
+EventsK562 <- readRDS("data/AvailableEvents_K562.RDS")
+EventsHEPG2 <- readRDS("data/AvailableEvents_HEPG2.RDS")
+
+
 
 # ---- UI ----
 
@@ -368,21 +373,99 @@ ui <- fluidPage(
             width = 3,
             wellPanel(
               radioButtons("splice_mode", "Select mode:", choices = c("Explore Mode", "Discovery Mode"), selected = "Explore Mode"),
+
               conditionalPanel(
                 condition = "input.splice_mode == 'Explore Mode'",
-                selectInput("splice_dataset", "Select option:", choices = c("Both Cells", "K562", "HEPG2", "Similar RBPs")),
+                selectInput(
+                  "splice_dataset", "Select option:",
+                  choices = c("Both Cells", "K562", "HEPG2", "Similar RBPs")
+                ),
+
+                # ---- Search by RBP (always visible) ----
                 div(
-                  style = "display: flex; align-items: center; margin-top: 15px;",
-                  selectizeInput("splice_search", NULL, choices = NULL, multiple = FALSE, options = list(placeholder = "RBP"), width = "400px"),
-                  conditionalPanel(
-                    condition = "input.splice_dataset != 'Similar RBPs'",
-                    div(
-                      style = "display: flex; align-items: center; margin-left: 10px;",
-                      actionButton("splice_search_btn", tagList(fa("search"), " Search"), class = "btn btn-primary", style = "margin-right: 10px; border-radius: 20px;"),
-                      actionButton("splice_reset_btn", tagList(fa("redo"), " Reset"), class = "btn btn-secondary", style = "border-radius: 20px;")
+                  style = "margin-top: 15px;",
+                  tags$h5("Search by RBP"),
+                  tags$p(
+                    "Visualize how splicing of an RBP impacts alternative splicing across datasets.",
+                    style = "font-size: 12px; color: #666; margin-top: -5px;"
+                  ),
+                  div(
+                    style = "display: flex; align-items: center;",
+                    selectizeInput(
+                      inputId = "splice_search",
+                      label = NULL,
+                      choices = NULL,
+                      multiple = FALSE,
+                      options = list(placeholder = "RBP"),
+                      width = "400px"
+                    ),
+                    conditionalPanel(
+                      condition = "input.splice_dataset != 'Similar RBPs'",
+                      div(
+                        style = "display: flex; align-items: center; margin-left: 10px;",
+                        actionButton(
+                          "splice_search_btn",
+                          tagList(fa("search"), " Search"),
+                          class = "btn btn-primary",
+                          style = "margin-right: 10px; border-radius: 20px;"
+                        ),
+                        actionButton(
+                          "splice_reset_btn",
+                          tagList(fa("redo"), " Reset"),
+                          class = "btn btn-secondary",
+                          style = "border-radius: 20px;"
+                        )
+                      )
                     )
                   )
                 ),
+
+                # ---- Search by Event ID (hidden when Similar RBPs is selected) ----
+                conditionalPanel(
+                  condition = "input.splice_dataset != 'Similar RBPs'",
+                  div(
+                    style = "margin-top: 25px;",
+                    tags$h5("Search by Event ID"),
+                    tags$p(
+                      list(
+                        "Find out which RBPs most strongly regulate a specific splicing event. Event IDs are obtained from ",
+                        tags$a(
+                          href = "https://vastdb.crg.eu/",
+                          "VastDB",
+                          target = "_blank",
+                          style = "color: #007bff; text-decoration: none;"
+                        ),
+                        "."
+                      ),
+                      style = "font-size: 12px; color: #666; margin-top: -5px;"
+                    ),
+                    div(
+                      style = "display: flex; align-items: center;",
+                      selectizeInput(
+                        inputId = "splice_search_event",   # <-- consistent ID
+                        label = NULL,
+                        choices = NULL,
+                        multiple = FALSE,
+                        options = list(placeholder = "Event ID"),
+                        width = "400px"
+                      ),
+                      div(
+                        style = "display: flex; align-items: center; margin-left: 10px;",
+                        actionButton(
+                          "search_btn_event",
+                          tagList(fa("search"), " Search"),
+                          class = "btn btn-primary",
+                          style = "margin-right: 10px; border-radius: 20px;"
+                        )
+                      )
+                    )
+                  )
+                ),
+
+
+
+
+
                 conditionalPanel(
                   condition = "input.splice_dataset == 'Similar RBPs'",
                   selectizeInput("similar_rbps_select_splice", "Compare with specific RBPs (optional)", choices = NULL, multiple = TRUE, options = list(placeholder = "Select one or more RBPs")),
@@ -406,14 +489,38 @@ ui <- fluidPage(
               )
             )
           ),
+          #Right Side, where plots will appear
           column(
             width = 9,
             tags$h3("Splicing Data Results"),
+
+            # --- Warning message ---
             div(
               "⚠ Please press reset after every plot!",
-              style = "border: 2px solid #f0ad4e; background-color: #fff3cd; padding: 8px; border-radius: 6px; font-weight: bold; color: #856404;"
+              style = "border: 2px solid #f0ad4e;
+           background-color: #fff3cd;
+           padding: 8px;
+           border-radius: 6px;
+           font-weight: bold;
+           color: #856404;"
             ),
-            conditionalPanel(condition = "input.splice_dataset == 'Similar RBPs'", uiOutput("similar_splice_plots")),
+            div(
+              "⚠ If searching by event please scroll down!",
+              style = "border: 2px solid #8F283A;
+           background-color: #DB7F8E;
+           padding: 8px;
+           border-radius: 6px;
+           font-weight: bold;
+           color: #8F283A;"
+            ),
+
+            # ---- Similar RBPs Results ----
+            conditionalPanel(
+              condition = "input.splice_dataset == 'Similar RBPs'",
+              uiOutput("similar_splice_plots")
+            ),
+
+            # ---- Default view when not Similar RBPs ----
             conditionalPanel(
               condition = "input.splice_dataset != 'Similar RBPs'",
               fluidRow(
@@ -423,6 +530,15 @@ ui <- fluidPage(
               fluidRow(
                 column(width = 6, plotlyOutput("plot_splice_volcano", height = "450px")),
                 column(width = 6, DTOutput("splice_volcano_table"))
+              ),
+
+
+            ),
+            # Event ID heatmap placeholder
+            fluidRow(
+              column(
+                width = 12,
+                plotOutput("heatmap_splicing_dpsi", height = "600px")
               )
             )
           )
@@ -610,6 +726,39 @@ server <- function(input, output, session) {
 
     rbp_choices_similar <- names(current_charm_splice())
     updateSelectizeInput(session, "similar_rbps_select_splice", choices = rbp_choices_similar)
+  })
+
+  # ---- Populate Event ID choices based on dataset ----
+  observe({
+    req(current_charm_splice())
+    req(input$splice_dataset)
+
+    event_choices <- switch(
+      input$splice_dataset,
+      "Both Cells" = EventsBoth,
+      "K562"       = EventsK562,
+      "HEPG2"      = EventsHEPG2,
+      NULL
+    )
+
+    updateSelectizeInput(
+      session,
+      "splice_search_event",  # must match UI
+      choices = event_choices,
+      server = TRUE
+    )
+  })
+
+  # ---- Event ID Search button ----
+  observeEvent(input$search_btn_event, {
+    req(input$splice_search_event)
+    event_id <- input$splice_search_event
+
+    charm_obj <- current_charm_splice()
+
+    output$heatmap_splicing_dpsi <- renderPlot({
+      plot_event_dpsi_heatmap(charm_obj, event_id)
+    })
   })
 
   ###EXPRESSION (user File)
@@ -1175,6 +1324,8 @@ server <- function(input, output, session) {
 
     session$sendCustomMessage("toggleCursor", TRUE)
 
+
+
     # ---- Top row: Violin + shRNA knockdown plots ----
     output$violin_splice_plot <- renderPlot({
       violin_splice_plot(charm_obj, rbp_sel)
@@ -1271,7 +1422,18 @@ server <- function(input, output, session) {
     session$sendCustomMessage("toggleCursor", FALSE)
   })
 
-  # ---- Reset buttons ----
+  # ---- Event ID Search ----
+  observeEvent(input$splice_event_btn, {
+    req(input$splice_event_search)
+    event_id <- input$splice_event_search
+    charm_obj <- current_charm_splice()
+
+    output$heatmap_splicing_dpsi <- renderPlot({
+      plot_event_dpsi_heatmap(charm_obj, event_id)
+    })
+  })
+
+  # ---- Reset buttons Expression ----
   observeEvent(input$similar_reset_btn, {
     output$similar_expr_plots <- renderUI(NULL)
     updateSelectizeInput(session, "similar_rbps_select_expr", selected = "")
@@ -1297,7 +1459,32 @@ server <- function(input, output, session) {
   observeEvent(input$reset_btn_hallmark, {
     output$expr_hallmark_plot <- renderPlot(NULL)
   })
+  # ---- Reset buttons for Splicing tab ----
 
+  # 1️⃣ Similar RBPs reset
+  observeEvent(input$similar_reset_btn_splice, {
+    output$similar_splice_plots <- renderUI(NULL)
+    updateSelectizeInput(session, "similar_rbps_select_splice", selected = "")
+  })
+
+  # 2️⃣ RBP search reset
+  observeEvent(input$splice_reset_btn, {
+    output$violin_splice_plot    <- renderPlot(NULL)
+    output$plot_shrna_effect     <- renderPlot(NULL)
+    output$shrna_warning_splice  <- renderUI(NULL)
+    output$plot_splice_volcano   <- renderPlotly(NULL)
+    output$splice_volcano_table  <- renderDT(NULL)
+    result_splice(NULL)  # if using reactiveVal to store results
+    rbp_current(NULL)    # if using reactiveVal for selected RBP
+    updateSelectizeInput(session, "splice_search", selected = "")
+  })
+
+  # 3️⃣ Event ID search reset
+  # Reset Event heatmap
+  observeEvent(input$splice_event_reset_btn, {
+    output$heatmap_splicing_dpsi <- renderPlot(NULL)  # clear plot
+    updateSelectizeInput(session, "splice_event_search", selected = "")  # clear search
+  })
 }
 
 

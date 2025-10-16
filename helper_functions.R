@@ -967,3 +967,64 @@ plot_hallmark_nes_heatmap <- function(CharmObj, geneset) {
 
   return(p)
 }
+
+
+plot_event_dpsi_heatmap <- function(CharmObj, Event.ID) {
+
+  # Extract dPSI for the Event.ID across all RBPs safely
+  dPSI_data <- lapply(names(CharmObj), function(rbp) {
+    df <- CharmObj[[rbp]]$VulcanTable
+
+    # Validate structure
+    if (!is.null(df) && "dPSI" %in% colnames(df) && "Event.ID" %in% colnames(df)) {
+      # find rows matching the Event.ID
+      hits <- which(df$Event.ID == Event.ID)
+
+      if (length(hits) == 1) {
+        data.frame(RBP = rbp, dPSI = as.numeric(df$dPSI[hits]), stringsAsFactors = FALSE)
+      } else if (length(hits) > 1) {
+        # If multiple entries for the same Event.ID, take the first (or change strategy)
+        data.frame(RBP = rbp, dPSI = as.numeric(df$dPSI[hits[1]]), stringsAsFactors = FALSE)
+      } else {
+        data.frame(RBP = rbp, dPSI = NA_real_, stringsAsFactors = FALSE)
+      }
+    } else {
+      data.frame(RBP = rbp, dPSI = NA_real_, stringsAsFactors = FALSE)
+    }
+  }) %>%
+    bind_rows() %>%
+    drop_na(dPSI)
+
+  # Check that we found the Event.ID somewhere
+  if (nrow(dPSI_data) == 0) {
+    stop(paste0("Event '", Event.ID, "' not found in any RBP GSEA tables."))
+  }
+
+  # Select top 10 and bottom 10
+  top10 <- dPSI_data %>% arrange(desc(dPSI)) %>% slice_head(n = 10)
+  bottom10 <- dPSI_data %>% arrange(dPSI) %>% slice_head(n = 10)
+  selected <- bind_rows(top10, bottom10)
+
+  # Create a column to use as x-axis (single column heatmap)
+  selected$Event.ID <- Event.ID
+
+  # Order RBPs by NES for visualization (from low -> high)
+  selected$RBP <- factor(selected$RBP, levels = selected$RBP[order(selected$dPSI)])
+
+  # Build and return the plot
+  p <- ggplot(selected, aes(x = Event.ID, y = RBP, fill = dPSI)) +
+    geom_tile(color = "white") +
+    geom_text(aes(label = sprintf("%.2f", dPSI)), color = "white", size = 5) +
+    scale_fill_gradient2(low = "black", mid = "white", high = "#601700", midpoint = 0) +
+    labs(
+      title = paste0("Top/bottom RBPs by NES for ", Event.ID),
+      x = "", y = "RBP"
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(
+      axis.ticks.x = element_blank(),
+      axis.text.x = element_text(face = "italic")  # italic x-axis label (the geneset)
+    )
+
+  return(p)
+}
