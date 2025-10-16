@@ -9,6 +9,8 @@ library(ggrepel)
 library(shinycssloaders)
 library(fgsea)
 library(msigdbr)
+library(dplyr)
+library(tidyr)
 
 source("helper_functions.R")
 
@@ -216,6 +218,7 @@ ui <- fluidPage(
                 ),
 
                 # ---- Similar RBPs options (single, no duplication) ----
+
                 conditionalPanel(
                   condition = "input.expr_dataset == 'Similar RBPs'",
 
@@ -228,29 +231,35 @@ ui <- fluidPage(
                     inline = TRUE
                   ),
 
-                  # Expression correlation inputs
-                  selectizeInput(
-                    inputId = "similar_rbps_select_expr",
-                    label = "Compare with specific RBPs (optional)",
-                    choices = NULL,  # dynamically populated in server
-                    multiple = TRUE,
-                    options = list(placeholder = "Select one or more RBPs")
+                  # Expression correlation inputs - ONLY show when expr mode is selected
+                  conditionalPanel(
+                    condition = "input.similar_mode == 'expr'",
+                    selectizeInput(
+                      inputId = "similar_rbps_select_expr",
+                      label = "Compare with specific RBPs (optional)",
+                      choices = NULL,
+                      multiple = TRUE,
+                      options = list(placeholder = "Select one or more RBPs")
+                    ),
+                    numericInput("correl_num_expr", "Show top N correlated RBPs (optional):", value = NA, min = 1),
+                    numericInput("n_pos_expr", "Show top N positive correlations (optional):", value = NA, min = 1),
+                    numericInput("n_neg_expr", "Show top N negative correlations (optional):", value = NA, min = 1)
                   ),
-                  numericInput("correl_num_expr", "Show top N correlated RBPs (optional):", value = NA, min = 1),
-                  numericInput("n_pos_expr", "Show top N positive correlations (optional):", value = NA, min = 1),
-                  numericInput("n_neg_expr", "Show top N negative correlations (optional):", value = NA, min = 1),
 
-                  # GSEA correlation inputs
-                  selectizeInput(
-                    inputId = "similar_rbps_select_gsea",
-                    label = "Compare with specific RBPs (optional)",
-                    choices = NULL,  # dynamically populated in server
-                    multiple = TRUE,
-                    options = list(placeholder = "Select one or more RBPs")
+                  # GSEA correlation inputs - ONLY show when gsea mode is selected
+                  conditionalPanel(
+                    condition = "input.similar_mode == 'gsea'",
+                    selectizeInput(
+                      inputId = "similar_rbps_select_gsea",
+                      label = "Compare with specific RBPs (optional)",
+                      choices = NULL,
+                      multiple = TRUE,
+                      options = list(placeholder = "Select one or more RBPs")
+                    ),
+                    numericInput("correl_num_gsea", "Show top N correlated RBPs (optional):", value = NA, min = 1),
+                    numericInput("n_pos_gsea", "Show top N positive correlations (optional):", value = NA, min = 1),
+                    numericInput("n_neg_gsea", "Show top N negative correlations (optional):", value = NA, min = 1)
                   ),
-                  numericInput("correl_num_gsea", "Show top N correlated RBPs (optional):", value = NA, min = 1),
-                  numericInput("n_pos_gsea", "Show top N positive correlations (optional):", value = NA, min = 1),
-                  numericInput("n_neg_gsea", "Show top N negative correlations (optional):", value = NA, min = 1),
 
                   # Plot / Reset buttons
                   div(
@@ -1236,10 +1245,29 @@ server <- function(input, output, session) {
     mode = NULL
   ))
 
+  # ---- Populate Similar RBPs selectize inputs ----
+  observe({
+    req(Charm.object)  # make sure Charm.object exists
+    rbp_names <- names(Charm.object)
+
+    # Expression correlation selectize
+    updateSelectizeInput(
+      session,
+      "similar_rbps_select_expr",
+      choices = rbp_names,
+      server = TRUE
+    )
+
+    # GSEA correlation selectize
+    updateSelectizeInput(
+      session,
+      "similar_rbps_select_gsea",
+      choices = rbp_names,
+      server = TRUE
+    )
+  })
 
   # ---- Similar RBPs: Expression/GSEA correlation ----
-
-
   observeEvent(input$similar_plot_btn, {
     req(input$expr_dataset)
     if(input$expr_dataset != "Similar RBPs") return(NULL)
