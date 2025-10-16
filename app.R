@@ -276,7 +276,7 @@ ui <- fluidPage(
               conditionalPanel(
                 condition = "input.expr_mode == 'Discovery Mode'",
                 hr(),
-                tags$p("Alternatively, upload your own table with differential expression values:"),
+                tags$p("Alternatively, upload your own table with differential expression values. Data must have no header, and the first column must be the HGNC gene symbol, and the second column the t-stats."),
                 fileInput("user_file_expr", "Upload your file:", accept = c(".txt")),
                 uiOutput("file_warning_expr"),
                 uiOutput("user_file_options")
@@ -466,11 +466,6 @@ ui <- fluidPage(
                     )
                   )
                 ),
-
-
-
-
-
                 conditionalPanel(
                   condition = "input.splice_dataset == 'Similar RBPs'",
                   selectizeInput("similar_rbps_select_splice", "Compare with specific RBPs (optional)", choices = NULL, multiple = TRUE, options = list(placeholder = "Select one or more RBPs")),
@@ -487,7 +482,18 @@ ui <- fluidPage(
               conditionalPanel(
                 condition = "input.splice_mode == 'Discovery Mode'",
                 hr(),
-                tags$p("Alternatively, upload your own table with differential splicing values:"),
+                tags$p(
+                  list(
+                    "Alternatively, upload your own table with differential splicing values. Table must be directly obtained from ",
+                    tags$a(
+                      href = "https://compbio.imm.medicina.ulisboa.pt/app/betAS",
+                      "betAS",
+                      target = "_blank",                # opens in a new tab
+                      style = "color: #007bff; text-decoration: none;" # optional styling
+                    ),
+                    "."
+                  )
+                ),
                 fileInput("user_file_splice", "Upload your file:", accept = c(".txt")),
                 uiOutput("file_warning_splice"),
                 uiOutput("user_file_options_splice")
@@ -510,7 +516,7 @@ ui <- fluidPage(
            color: #856404;"
             ),
             div(
-              "⚠ If searching by event please scroll down!",
+              "⚠ If searching by event  or in discovery mode, please scroll down!",
               style = "border: 2px solid #8F283A;
            background-color: #DB7F8E;
            padding: 8px;
@@ -545,6 +551,11 @@ ui <- fluidPage(
                 width = 12,
                 plotOutput("heatmap_splicing_dpsi", height = "600px")
               )
+            ),
+            # --- User-provided splicing plots (Discovery Mode) ---
+            conditionalPanel(
+              condition = "input.splice_mode == 'Discovery Mode'",
+              uiOutput("similar_splice_plots")
             )
           )
         )
@@ -994,6 +1005,157 @@ server <- function(input, output, session) {
     updateSelectizeInput(session, "user_file_compare_gsea", selected = "")
   })
 
+  ### SPICING (user File)
+  upload_ok_splice <- reactiveVal(FALSE)
+  user_splice_df <- reactiveVal(NULL)
+
+  # ---- File upload ----
+  observeEvent(input$user_file_splice, {
+    req(input$user_file_splice)
+    file_path <- input$user_file_splice$datapath
+
+    df <- tryCatch(
+      read.table(file_path, header = T, sep = " ", stringsAsFactors = FALSE),
+      error = function(e) NULL
+    )
+
+    if (is.null(df)) {
+      upload_ok_splice(FALSE)
+      user_splice_df(NULL)
+      error_msg <- "Could not read the file. Make sure it is tab-delimited."
+    } else if (ncol(df) != 4) {
+      upload_ok_splice(FALSE)
+      user_splice_df(NULL)
+      error_msg <- "File must have exactly 4 columns."
+    } else if (!is.character(df[[1]])) {
+      upload_ok_splice(FALSE)
+      user_splice_df(NULL)
+      error_msg <- "First column must be character (Event IDs)."
+    } else if (!is.numeric(df[[3]])) {
+      upload_ok_splice(FALSE)
+      user_splice_df(NULL)
+      error_msg <- "Third column must be numeric (dPSI values)."
+    } else {
+      colnames(df) <- c("Event.ID", "Gene", "dPSI", "PDiff")
+      upload_ok_splice(TRUE)
+      user_splice_df(df)   # save dataframe globally
+      error_msg <- NULL
+    }
+
+    output$file_warning_splice <- renderUI({
+      if (upload_ok_splice()) {
+        div(style="color:green;font-weight:bold;margin-top:10px;", "Upload complete!")
+      } else {
+        div(style="color:red;font-weight:bold;margin-top:10px;", paste("Upload failed:", error_msg))
+      }
+    })
+  })
+
+  # ---- Only show extra options if upload is successful ----
+  output$user_file_options_splice <- renderUI({
+    if (!upload_ok_splice()) return(NULL)
+
+    tagList(
+      selectizeInput(
+        inputId = "user_file_compare_splice",
+        label = "Compare with specific RBPs (optional)",
+        choices = names(Charm.object),
+        multiple = TRUE,
+        options = list(placeholder = "Select one or more RBPs")
+      ),
+      numericInput(
+        "user_file_topN_splice",
+        "Show top N correlated RBPs (optional):",
+        value = NA, min = 1
+      ),
+      helpText("Tip: You may use one or both of the numeric inputs below."),
+      numericInput(
+        "user_file_n_pos_splice",
+        "Show top N positive correlations (optional):",
+        value = NA, min = 1
+      ),
+      numericInput(
+        "user_file_n_neg_splice",
+        "Show top N negative correlations (optional):",
+        value = NA, min = 1
+      ),
+      div(
+        style = "display: flex; align-items: center; margin-top: 15px;",
+        actionButton(
+          "user_file_plot_btn_splice",
+          tagList(fa("chart-line"), " Plot"),
+          class = "btn btn-primary",
+          style = "margin-right: 10px; border-radius: 20px;"
+        ),
+        actionButton(
+          "user_file_reset_btn_splice",
+          tagList(fa("redo"), " Reset"),
+          class = "btn btn-secondary",
+          style = "border-radius: 20px;"
+        )
+      )
+    )
+  })
+
+  # ---- Render similarity plots ----
+  observeEvent(input$user_file_plot_btn_splice, {
+    req(user_splice_df())
+    selected_rbps <- input$user_file_compare_splice
+    datasets <- list(
+      "Both Cells" = Charm.object,
+      "K562"       = Charm.object_K562,
+      "HEPG2"      = Charm.object_HEPG2
+    )
+
+    if (length(selected_rbps) == 0) selected_rbps <- NULL
+
+    output$similar_splice_plots <- renderUI({
+      tagList(
+        tags$div("Generating plots, please wait...",
+                 style = "font-weight:bold;color:#A10702;margin-bottom:15px;"),
+
+        lapply(names(datasets), function(ds_name) {
+          plotname <- paste0("userfile_plot_splice_", ds_name)
+
+          output[[plotname]] <- if (!is.null(selected_rbps) && length(selected_rbps) == 1) {
+            renderPlotly({
+              res <- correl_scatter_splicing(datasets[[ds_name]], user_splice_df(), selected_rbps)
+              ggplotly(res$plot)
+            })
+          } else {
+            renderPlot({
+              heat_res <- splicing_correl(
+                datasets[[ds_name]], user_splice_df(),
+                correl_num = input$user_file_topN_splice,
+                n_pos = input$user_file_n_pos_splice,
+                n_neg = input$user_file_n_neg_splice,
+                other_rbps = selected_rbps
+              )
+              heat_res$heatmap
+            })
+          }
+
+          column(
+            width = 12,
+            tags$h4(ds_name, style="text-align:center;"),
+            if (!is.null(selected_rbps) && length(selected_rbps) == 1) {
+              shinycssloaders::withSpinner(plotlyOutput(plotname, height="500px"))
+            } else {
+              shinycssloaders::withSpinner(plotOutput(plotname, height="500px"))
+            }
+          )
+        })
+      )
+    })
+  })
+
+  # ---- Reset button ----
+  observeEvent(input$user_file_reset_btn_splice, {
+    output$similar_splice_plots <- renderUI(NULL)
+    updateSelectizeInput(session, "user_file_compare_splice", selected = "")
+  })
+
+
   #SPLICING
   observe({
     if (is.null(input$user_file_splicing)) return(NULL)
@@ -1266,7 +1428,6 @@ server <- function(input, output, session) {
       server = TRUE
     )
   })
-
   # ---- Similar RBPs: Expression/GSEA correlation ----
   observeEvent(input$similar_plot_btn, {
     req(input$expr_dataset)
@@ -1457,6 +1618,79 @@ server <- function(input, output, session) {
     output$heatmap_splicing_dpsi <- renderPlot({
       plot_event_dpsi_heatmap(charm_obj, event_id)
     })
+  })
+
+  # ---- Similar RBPs: Splicing correlation ----
+  observeEvent(input$similar_plot_btn_splice, {
+    req(input$splice_dataset)
+    if(input$splice_dataset != "Similar RBPs") return(NULL)
+    req(input$splice_search)
+    rbp1 <- input$splice_search
+
+    mode <- "splice"  # Only one mode here, or could extend if needed
+
+    # Choose datasets
+    datasets <- list(
+      "Both Cells" = Charm.object,
+      "K562"       = Charm.object_K562,
+      "HEPG2"      = Charm.object_HEPG2
+    )
+
+    scatter_fun <- correl_scatter_splicing
+    heatmap_fun <- splicing_correl
+
+    selected_rbps <- input$similar_rbps_select_splice
+    correl_num <- input$correl_num_splice
+    n_pos      <- input$n_pos_splice
+    n_neg      <- input$n_neg_splice
+
+    if(length(selected_rbps) == 0) selected_rbps <- NULL
+
+    # Render UI
+    output$similar_splice_plots <- renderUI({
+      tagList(
+        lapply(names(datasets), function(ds_name) {
+          plotname <- paste0("similar_splice_plot_", ds_name)
+
+          output[[plotname]] <- if(!is.null(selected_rbps) && length(selected_rbps) == 1){
+            renderPlotly({
+              res <- correl_scatter_splicing(datasets[[ds_name]], rbp1, selected_rbps)
+              ggplotly(res$plot)
+            })
+          } else {
+            renderPlot({
+              heat_res <- heatmap_fun(
+                datasets[[ds_name]], rbp1,
+                correl_num = correl_num,
+                n_pos = n_pos,
+                n_neg = n_neg,
+                other_rbps = if(!is.null(selected_rbps) && length(selected_rbps) > 1) selected_rbps else NULL
+              )
+              heat_res$heatmap
+            })
+          }
+
+          column(
+            width = 12,
+            tags$h4(ds_name, style = "text-align:center;"),
+            if(!is.null(selected_rbps) && length(selected_rbps) == 1){
+              shinycssloaders::withSpinner(plotlyOutput(plotname, height = "500px"))
+            } else {
+              shinycssloaders::withSpinner(plotOutput(plotname, height = "500px"))
+            }
+          )
+        })
+      )
+    })
+  })
+
+  # ---- Reset Similar RBPs Splicing plots ----
+  observeEvent(input$similar_reset_btn_splice, {
+    output$similar_splice_plots <- renderUI(NULL)
+    updateSelectizeInput(session, "similar_rbps_select_splice", selected = "")
+    updateNumericInput(session, "correl_num_splice", value = NA)
+    updateNumericInput(session, "n_pos_splice", value = NA)
+    updateNumericInput(session, "n_neg_splice", value = NA)
   })
 
   # ---- Reset buttons Expression ----

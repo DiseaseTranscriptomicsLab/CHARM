@@ -595,95 +595,65 @@ gsea_correl <- function(gsea_results, rbp, correl_num = NULL,
 
 splicing_correl <- function(charmobj, rbp, correl_num = NULL,
                             n_pos = NULL, n_neg = NULL, other_rbps = NULL) {
-  # --- Input check ---
-  if (!(rbp %in% names(charmobj))) {
-    stop("RBP not found in provided object")
+
+  # --- Determine if input is user file or Charm object ---
+  if (is.data.frame(rbp)) {
+    ref_df <- rbp[, c("Event.ID", "dPSI")]
+    rbp_label <- "UserFile"
+  } else if (rbp %in% names(charmobj)) {
+    ref_df <- charmobj[[rbp]]$VulcanTable[, c("Event.ID", "dPSI")]
+    rbp_label <- rbp
+  } else {
+    stop("rbp is neither a data.frame nor a known name in charmobj")
   }
 
-  rbp_label <- rbp
-
-  # Reference table: Event.ID and dPSI
-  ref_df <- charmobj[[rbp_label]]$VulcanTable[, c("Event.ID", "dPSI")]
-  colnames(ref_df) <- c("Event.ID", "dPSI") # ensure names
-  if (is.null(ref_df) || nrow(ref_df) == 0) {
-    stop("No VulcanTable found or empty for RBP: ", rbp_label)
-  }
+  # --- Basic checks ---
+  stopifnot(all(c("Event.ID", "dPSI") %in% colnames(ref_df)))
 
   # Prepare cor_results
   cor_results <- data.frame(RBP = character(), Correlation = numeric(), Pvalue = numeric(), stringsAsFactors = FALSE)
 
-  # correlate with every other RBP in charmobj
-  for (other_rbp in setdiff(names(charmobj), rbp_label)) {
+  # Loop over other RBPs
+  for (other_rbp in names(charmobj)) {
+    if (!is.null(other_rbps) && !(other_rbp %in% other_rbps)) next
     other_df <- charmobj[[other_rbp]]$VulcanTable[, c("Event.ID", "dPSI")]
-    if (is.null(other_df) || nrow(other_df) == 0) next
-
     merged <- merge(ref_df, other_df, by = "Event.ID", suffixes = c("_ref", "_other"))
-    if (nrow(merged) > 2) {
-      test <- suppressWarnings(cor.test(merged$dPSI_ref, merged$dPSI_other, method = "spearman"))
-      cor_results <- rbind(cor_results,
-                           data.frame(RBP = other_rbp,
-                                      Correlation = unname(test$estimate),
-                                      Pvalue = test$p.value,
-                                      stringsAsFactors = FALSE))
-    }
+    if (nrow(merged) < 3) next
+    test <- suppressWarnings(cor.test(merged$dPSI_ref, merged$dPSI_other, method = "spearman"))
+    cor_results <- rbind(cor_results, data.frame(RBP = other_rbp, Correlation = unname(test$estimate), Pvalue = test$p.value))
   }
 
-  # If no correlations computed, return empty result
-  if (nrow(cor_results) == 0) {
-    message("No valid correlations computed (not enough overlapping events).")
-    return(list(correlation_table = cor_results,
-                top_table = cor_results,
-                heatmap = NULL))
-  }
-
-  # Prepare sorted views
-  pos <- cor_results[order(-cor_results$Correlation), ]
-  neg <- cor_results[order(cor_results$Correlation), ]
-
-  # --- Select top RBPs (mirror original logic) ---
+  # --- Select top correlations ---
   if (!is.null(other_rbps)) {
-    # warn about invalid names
-    not_found <- setdiff(other_rbps, cor_results$RBP)
-    if (length(not_found) > 0) {
-      for (name in not_found) {
-        message("'", name, "' is not a valid RBP name (or had no overlap).")
-      }
-    }
-    valid_rbps <- intersect(other_rbps, cor_results$RBP)
-    top_cor <- cor_results[cor_results$RBP %in% valid_rbps, ]
-
+    top_cor <- cor_results[cor_results$RBP %in% other_rbps, ]
   } else if (!is.null(correl_num) && !is.na(correl_num) && correl_num > 0) {
-    # top by absolute correlation
     top_cor <- head(cor_results[order(-abs(cor_results$Correlation)), ], correl_num)
-
-  } else if ((!is.null(n_pos) && !is.na(n_pos) && n_pos > 0) ||
-             (!is.null(n_neg) && !is.na(n_neg) && n_neg > 0)) {
-
+  } else if ((!is.null(n_pos) && !is.na(n_pos) && n_pos > 0) || (!is.null(n_neg) && !is.na(n_neg) && n_neg > 0)) {
+    pos <- cor_results[order(-cor_results$Correlation), ]
+    neg <- cor_results[order(cor_results$Correlation), ]
     top_pos <- if (!is.null(n_pos) && !is.na(n_pos) && n_pos > 0) head(pos, n_pos) else NULL
     top_neg <- if (!is.null(n_neg) && !is.na(n_neg) && n_neg > 0) head(neg, n_neg) else NULL
     top_cor <- rbind(top_pos, top_neg)
-
   } else {
-    stop("Please provide either other_rbps, correl_num, or (n_pos and/or n_neg)")
+    stop("Provide either other_rbps, correl_num, or (n_pos and/or n_neg)")
   }
 
-  # Order and factorize for plotting
-  top_cor <- top_cor[order(top_cor$Correlation, decreasing = TRUE), ]
-  top_cor$RBP <- factor(top_cor$RBP, levels = top_cor$RBP)
-
-  # --- Heatmap plot ---
-  heatmap_plot <- ggplot(top_cor, aes(x = rbp_label, y = RBP, fill = Correlation)) +
-    geom_tile(color = "white") +
-    geom_text(aes(label = sprintf("%.2f", Correlation),
-                  color = ifelse(abs(Correlation) < 0.3, "black", "white")),
-              size = 5) +
-    scale_color_identity() +
-    scale_fill_gradient2(low = "black", mid = "grey50", high = "#601700",
-                         midpoint = 0, limits = c(-1, 1)) +
-    labs(title = paste("Spearman correlations with", rbp_label, "- ΔPSI"),
-         x = "Reference RBP", y = "Other RBPs") +
-    theme_minimal(base_size = 14) +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  # --- Heatmap ---
+  if (nrow(top_cor) == 0) {
+    heatmap_plot <- NULL
+  } else {
+    top_cor$RBP <- factor(top_cor$RBP, levels = top_cor$RBP)
+    heatmap_plot <- ggplot(top_cor, aes(x = rbp_label, y = RBP, fill = Correlation)) +
+      geom_tile(color = "white") +
+      geom_text(aes(label = sprintf("%.2f", Correlation),
+                    color = ifelse(abs(Correlation) < 0.3, "black", "white")), size = 5) +
+      scale_color_identity() +
+      scale_fill_gradient2(low = "black", mid = "grey50", high = "#601700", midpoint = 0, limits = c(-1,1)) +
+      labs(title = paste("Spearman correlations with", rbp_label, "- ΔPSI"),
+           x = "Reference RBP", y = "Other RBPs") +
+      theme_minimal(base_size = 14) +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  }
 
   return(list(correlation_table = cor_results,
               top_table = top_cor,
@@ -798,48 +768,58 @@ plot_splice_volcano <- function(charmobj, rbp, other_events = NULL) {
 }
 
 
-
 correl_scatter_splicing <- function(charmobj, rbp, other_rbp) {
 
-  if (!(rbp %in% names(charmobj))) {
-    stop(paste("'", rbp, "' not found in charmobj"))
+  # --- Determine if rbp is user file or Charm object ---
+  if (is.data.frame(rbp)) {
+    ref_df <- rbp[, c("Event.ID", "dPSI")]
+    rbp_label <- "UserFile"
+  } else if (rbp %in% names(charmobj)) {
+    ref_df <- charmobj[[rbp]]$VulcanTable[, c("Event.ID", "dPSI")]
+    rbp_label <- rbp
+  } else {
+    stop("'", rbp, "' is neither a data.frame nor a known RBP in charmobj")
   }
+
+  # --- Load other_rbp from Charm object ---
   if (!(other_rbp %in% names(charmobj))) {
-    stop(paste("'", other_rbp, "' not found in charmobj"))
+    stop("'", other_rbp, "' not found in charmobj")
   }
+  other_df <- charmobj[[other_rbp]]$VulcanTable[, c("Event.ID", "dPSI")]
+  other_label <- other_rbp
 
-  ref_df <- charmobj[[rbp]]$VulcanTable
-  other_df <- charmobj[[other_rbp]]$VulcanTable
-
-  # Ensure required columns
+  # --- Ensure required columns exist ---
   stopifnot(all(c("Event.ID", "dPSI") %in% colnames(ref_df)))
   stopifnot(all(c("Event.ID", "dPSI") %in% colnames(other_df)))
 
-
-  merged <- merge(ref_df[, c("Event.ID", "dPSI")],
-                  other_df[, c("Event.ID", "dPSI")],
-                  by = "Event.ID",
-                  suffixes = c(paste0("_", rbp), paste0("_", other_rbp)))
+  # --- Merge tables by Event.ID ---
+  merged <- merge(ref_df, other_df, by = "Event.ID",
+                  suffixes = c(paste0("_", rbp_label), paste0("_", other_label)))
 
   if (nrow(merged) < 3) {
-    stop("Not enough overlapping events between ", rbp, " and ", other_rbp)
+    stop("Not enough overlapping events between ", rbp_label, " and ", other_label)
   }
 
-
-  cor_test <- suppressWarnings(cor.test(merged[[paste0("dPSI_", rbp)]],
-                                        merged[[paste0("dPSI_", other_rbp)]],
-                                        method = "spearman"))
+  # --- Compute Spearman correlation ---
+  cor_test <- suppressWarnings(cor.test(
+    merged[[paste0("dPSI_", rbp_label)]],
+    merged[[paste0("dPSI_", other_label)]],
+    method = "spearman"
+  ))
   rho <- unname(cor_test$estimate)
   pval <- cor_test$p.value
 
-
-  p <- ggplot(merged, aes_string(x = paste0("dPSI_", rbp), y = paste0("dPSI_", other_rbp))) +
+  # --- Plot ---
+  p <- ggplot(merged, aes_string(
+    x = paste0("dPSI_", rbp_label),
+    y = paste0("dPSI_", other_label)
+  )) +
     geom_point(fill = "#DDDDDD", alpha = 0.4, size = 4, shape = 21, colour = "black") +
     geom_density2d(color = "#800020", size = 1.2) +
     theme_bw() +
-    xlab(paste(rbp, "ΔPSI")) +
-    ylab(paste(other_rbp, "ΔPSI")) +
-    ggtitle(paste("ΔPSI Correlation between", rbp, "and", other_rbp)) +
+    xlab(paste(rbp_label, "ΔPSI")) +
+    ylab(paste(other_label, "ΔPSI")) +
+    ggtitle(paste("ΔPSI Correlation between", rbp_label, "and", other_label)) +
     theme(
       axis.line = element_line(colour = "black"),
       panel.grid.minor = element_blank(),
@@ -854,12 +834,14 @@ correl_scatter_splicing <- function(charmobj, rbp, other_rbp) {
              label = sprintf("Spearman ρ = %.2f\np = %.2e", rho, pval),
              size = 5, fontface = "bold", color = "#800020")
 
-
-  return(list(plot = p,
-              correlation = rho,
-              pvalue = pval,
-              merged_data = merged))
+  return(list(
+    plot = p,
+    correlation = rho,
+    pvalue = pval,
+    merged_data = merged
+  ))
 }
+
 
 plot_gene_logFC_heatmap <- function(CharmObj, gene) {
 
