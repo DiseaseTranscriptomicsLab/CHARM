@@ -7,7 +7,7 @@ CHARM is an R Shiny web application for exploring the regulatory roles of RNA-bi
 The app integrates data from the **ENCODE project** (Luo et al., 2020), including eCLIP and RNA-seq datasets from RBP knockdown/knockout experiments in **HEPG2 (liver cancer)** and **K562 (leukemia)** cell lines.  
 
 CHARM serves as both a **repository** of this curated data and a **discovery tool**:  
-- Explore how 252 RBPs from ENCODE affect expression, splicing, and binding.  
+- Explore how 168 RBPs from ENCODE affect expression, splicing, and binding.  
 - Infer potential networks between these regulatory layers, revealing new pathways and mechanisms.  
 - Upload your own expression, splicing, or binding datasets to identify RBPs most likely altered in your system.  
 
