@@ -289,6 +289,7 @@ plot_gsea <- function(charmobj, rbp, thresh = 0.05,
 }
 
 correl_exp_rbp_plotly <- function(rbp_results, rbp, other_rbp, plot_title = NULL) {
+  # --- Handle user-uploaded reference or internal RBP ---
   if (is.data.frame(rbp)) {
     ref_df <- rbp
     colnames(ref_df) <- c("Gene", "t")
@@ -300,14 +301,27 @@ correl_exp_rbp_plotly <- function(rbp_results, rbp, other_rbp, plot_title = NULL
     stop("rbp is neither a dataframe nor a known name in rbp_results")
   }
 
+  # --- Skip invalid or self comparisons ---
+  if (!(other_rbp %in% names(rbp_results)) || other_rbp == rbp_label) {
+    return(plotly::plotly_empty(
+      type = "scatter", mode = "text",
+      text = paste("Invalid or self comparison for", other_rbp)
+    ))
+  }
+
+  # --- Merge by gene ---
   other_df <- rbp_results[[other_rbp]]
+  merged <- merge(ref_df, other_df, by = "Gene",
+                  suffixes = c(paste0("_", rbp_label), paste0("_", other_rbp)))
 
-  merged <- merge(
-    ref_df, other_df, by = "Gene",
-    suffixes = c(paste0("_", rbp_label), paste0("_", other_rbp))
-  )
+  if (nrow(merged) < 3) {
+    return(plotly::plotly_empty(
+      type = "scatter", mode = "text",
+      text = paste("Not enough overlapping genes between", rbp_label, "and", other_rbp)
+    ))
+  }
 
-  # Spearman correlation + p-value
+  # --- Spearman correlation ---
   test <- suppressWarnings(cor.test(
     merged[[paste0("t_", rbp_label)]],
     merged[[paste0("t_", other_rbp)]],
@@ -316,7 +330,7 @@ correl_exp_rbp_plotly <- function(rbp_results, rbp, other_rbp, plot_title = NULL
   rho <- unname(test$estimate)
   pval <- test$p.value
 
-  # Build title
+  # --- Title ---
   title_txt <- paste0(
     if (!is.null(plot_title)) paste0(plot_title, ": ") else "",
     "Correlation between ", rbp_label, " and ", other_rbp,
@@ -324,8 +338,8 @@ correl_exp_rbp_plotly <- function(rbp_results, rbp, other_rbp, plot_title = NULL
     ", p = ", signif(pval, 3), ")"
   )
 
-  # Create Plotly scatter
-  plot_ly(
+  # --- Scatter plotly ---
+  plotly::plot_ly(
     merged,
     x = ~get(paste0("t_", rbp_label)),
     y = ~get(paste0("t_", other_rbp)),
@@ -335,7 +349,7 @@ correl_exp_rbp_plotly <- function(rbp_results, rbp, other_rbp, plot_title = NULL
     hoverinfo = 'text',
     marker = list(size = 7, color = "#DDDDDD", line = list(width = 1, color = 'black'))
   ) %>%
-    layout(
+    plotly::layout(
       title = title_txt,
       xaxis = list(title = paste0(rbp_label, " t-statistics")),
       yaxis = list(title = paste0(other_rbp, " t-statistics")),
@@ -613,14 +627,26 @@ splicing_correl <- function(charmobj, rbp, correl_num = NULL,
   # Prepare cor_results
   cor_results <- data.frame(RBP = character(), Correlation = numeric(), Pvalue = numeric(), stringsAsFactors = FALSE)
 
-  # Loop over other RBPs
-  for (other_rbp in names(charmobj)) {
+  # Determine RBPs to test
+  rbp_list <- names(charmobj)
+
+  # 🧹 Exclude self (avoid ρ = 1)
+  rbp_list <- setdiff(rbp_list, rbp_label)
+
+  # --- Loop over other RBPs ---
+  for (other_rbp in rbp_list) {
     if (!is.null(other_rbps) && !(other_rbp %in% other_rbps)) next
     other_df <- charmobj[[other_rbp]]$VulcanTable[, c("Event.ID", "dPSI")]
+
     merged <- merge(ref_df, other_df, by = "Event.ID", suffixes = c("_ref", "_other"))
     if (nrow(merged) < 3) next
+
     test <- suppressWarnings(cor.test(merged$dPSI_ref, merged$dPSI_other, method = "spearman"))
-    cor_results <- rbind(cor_results, data.frame(RBP = other_rbp, Correlation = unname(test$estimate), Pvalue = test$p.value))
+
+    cor_results <- rbind(
+      cor_results,
+      data.frame(RBP = other_rbp, Correlation = unname(test$estimate), Pvalue = test$p.value)
+    )
   }
 
   # --- Select top correlations ---
@@ -628,9 +654,12 @@ splicing_correl <- function(charmobj, rbp, correl_num = NULL,
     top_cor <- cor_results[cor_results$RBP %in% other_rbps, ]
   } else if (!is.null(correl_num) && !is.na(correl_num) && correl_num > 0) {
     top_cor <- head(cor_results[order(-abs(cor_results$Correlation)), ], correl_num)
-  } else if ((!is.null(n_pos) && !is.na(n_pos) && n_pos > 0) || (!is.null(n_neg) && !is.na(n_neg) && n_neg > 0)) {
+  } else if ((!is.null(n_pos) && !is.na(n_pos) && n_pos > 0) ||
+             (!is.null(n_neg) && !is.na(n_neg) && n_neg > 0)) {
+
     pos <- cor_results[order(-cor_results$Correlation), ]
     neg <- cor_results[order(cor_results$Correlation), ]
+
     top_pos <- if (!is.null(n_pos) && !is.na(n_pos) && n_pos > 0) head(pos, n_pos) else NULL
     top_neg <- if (!is.null(n_neg) && !is.na(n_neg) && n_neg > 0) head(neg, n_neg) else NULL
     top_cor <- rbind(top_pos, top_neg)
@@ -648,18 +677,20 @@ splicing_correl <- function(charmobj, rbp, correl_num = NULL,
       geom_text(aes(label = sprintf("%.2f", Correlation),
                     color = ifelse(abs(Correlation) < 0.3, "black", "white")), size = 5) +
       scale_color_identity() +
-      scale_fill_gradient2(low = "black", mid = "grey50", high = "#601700", midpoint = 0, limits = c(-1,1)) +
+      scale_fill_gradient2(low = "black", mid = "grey50", high = "#601700",
+                           midpoint = 0, limits = c(-1, 1)) +
       labs(title = paste("Spearman correlations with", rbp_label, "- ΔPSI"),
            x = "Reference RBP", y = "Other RBPs") +
       theme_minimal(base_size = 14) +
       theme(axis.text.x = element_text(angle = 45, hjust = 1))
   }
 
-  return(list(correlation_table = cor_results,
-              top_table = top_cor,
-              heatmap = heatmap_plot))
+  return(list(
+    correlation_table = cor_results,
+    top_table = top_cor,
+    heatmap = heatmap_plot
+  ))
 }
-
 
 violin_splice_plot <- function(Charmobj, rbp) {
   dpsi_table <- Charmobj[[rbp]]$VulcanTable
@@ -767,9 +798,7 @@ plot_splice_volcano <- function(charmobj, rbp, other_events = NULL) {
   return(list(top_table = top.table, volcano_plot = volcano_plot))
 }
 
-
-correl_scatter_splicing <- function(charmobj, rbp, other_rbp) {
-
+correl_splicing_rbp_plotly <- function(charmobj, rbp, other_rbp, plot_title = NULL) {
   # --- Determine if rbp is user file or Charm object ---
   if (is.data.frame(rbp)) {
     ref_df <- rbp[, c("Event.ID", "dPSI")]
@@ -778,69 +807,62 @@ correl_scatter_splicing <- function(charmobj, rbp, other_rbp) {
     ref_df <- charmobj[[rbp]]$VulcanTable[, c("Event.ID", "dPSI")]
     rbp_label <- rbp
   } else {
-    stop("'", rbp, "' is neither a data.frame nor a known RBP in charmobj")
+    stop("rbp is neither a data.frame nor a known name in charmobj")
   }
 
-  # --- Load other_rbp from Charm object ---
+  # --- Load other RBP ---
   if (!(other_rbp %in% names(charmobj))) {
-    stop("'", other_rbp, "' not found in charmobj")
+    stop(paste("'", other_rbp, "' not found in charmobj"))
   }
   other_df <- charmobj[[other_rbp]]$VulcanTable[, c("Event.ID", "dPSI")]
   other_label <- other_rbp
 
-  # --- Ensure required columns exist ---
-  stopifnot(all(c("Event.ID", "dPSI") %in% colnames(ref_df)))
-  stopifnot(all(c("Event.ID", "dPSI") %in% colnames(other_df)))
-
-  # --- Merge tables by Event.ID ---
-  merged <- merge(ref_df, other_df, by = "Event.ID",
-                  suffixes = c(paste0("_", rbp_label), paste0("_", other_label)))
+  # --- Merge by Event.ID ---
+  merged <- merge(
+    ref_df, other_df, by = "Event.ID",
+    suffixes = c(paste0("_", rbp_label), paste0("_", other_label))
+  )
 
   if (nrow(merged) < 3) {
-    stop("Not enough overlapping events between ", rbp_label, " and ", other_label)
+    stop(paste("Not enough overlapping events between", rbp_label, "and", other_label))
   }
 
-  # --- Compute Spearman correlation ---
-  cor_test <- suppressWarnings(cor.test(
+  # --- Spearman correlation ---
+  test <- suppressWarnings(cor.test(
     merged[[paste0("dPSI_", rbp_label)]],
     merged[[paste0("dPSI_", other_label)]],
     method = "spearman"
   ))
-  rho <- unname(cor_test$estimate)
-  pval <- cor_test$p.value
+  rho <- unname(test$estimate)
+  pval <- test$p.value
 
-  # --- Plot ---
-  p <- ggplot(merged, aes_string(
-    x = paste0("dPSI_", rbp_label),
-    y = paste0("dPSI_", other_label)
-  )) +
-    geom_point(fill = "#DDDDDD", alpha = 0.4, size = 4, shape = 21, colour = "black") +
-    geom_density2d(color = "#800020", size = 1.2) +
-    theme_bw() +
-    xlab(paste(rbp_label, "ΔPSI")) +
-    ylab(paste(other_label, "ΔPSI")) +
-    ggtitle(paste("ΔPSI Correlation between", rbp_label, "and", other_label)) +
-    theme(
-      axis.line = element_line(colour = "black"),
-      panel.grid.minor = element_blank(),
-      panel.border = element_blank(),
-      panel.background = element_blank(),
-      panel.grid.major = element_blank(),
-      plot.title = element_text(hjust = 0.5),
-      text = element_text(size = 18, family = "Arial")
-    ) +
-    annotate("text", x = Inf, y = -Inf,
-             hjust = 1.1, vjust = -1,
-             label = sprintf("Spearman ρ = %.2f\np = %.2e", rho, pval),
-             size = 5, fontface = "bold", color = "#800020")
+  # --- Title ---
+  title_txt <- paste0(
+    if (!is.null(plot_title)) paste0(plot_title, ": ") else "",
+    "Correlation between ", rbp_label, " and ", other_label,
+    " (Spearman ρ = ", round(rho, 2),
+    ", p = ", signif(pval, 3), ")"
+  )
 
-  return(list(
-    plot = p,
-    correlation = rho,
-    pvalue = pval,
-    merged_data = merged
-  ))
+  # --- Plotly scatter (same style as expression one) ---
+  plot_ly(
+    merged,
+    x = ~get(paste0("dPSI_", rbp_label)),
+    y = ~get(paste0("dPSI_", other_label)),
+    type = "scatter",
+    mode = "markers",
+    text = ~paste("Event:", Event.ID),
+    hoverinfo = "text",
+    marker = list(size = 7, color = "#DDDDDD", line = list(width = 1, color = "black"))
+  ) %>%
+    layout(
+      title = title_txt,
+      xaxis = list(title = paste0(rbp_label, " ΔPSI")),
+      yaxis = list(title = paste0(other_label, " ΔPSI")),
+      showlegend = FALSE
+    )
 }
+
 
 
 plot_gene_logFC_heatmap <- function(CharmObj, gene) {

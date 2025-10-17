@@ -555,7 +555,7 @@ ui <- fluidPage(
             # --- User-provided splicing plots (Discovery Mode) ---
             conditionalPanel(
               condition = "input.splice_mode == 'Discovery Mode'",
-              uiOutput("similar_splice_plots")
+              uiOutput("similar_splice_plots_file")
             )
           )
         )
@@ -1109,7 +1109,7 @@ server <- function(input, output, session) {
 
     if (length(selected_rbps) == 0) selected_rbps <- NULL
 
-    output$similar_splice_plots <- renderUI({
+    output$similar_splice_plots_file <- renderUI({
       tagList(
         tags$div("Generating plots, please wait...",
                  style = "font-weight:bold;color:#A10702;margin-bottom:15px;"),
@@ -1155,41 +1155,6 @@ server <- function(input, output, session) {
     updateSelectizeInput(session, "user_file_compare_splice", selected = "")
   })
 
-
-  #SPLICING
-  observe({
-    if (is.null(input$user_file_splicing)) return(NULL)
-    file_path <- input$user_file_splicing$datapath
-    if (!file.exists(file_path)) return(NULL)
-
-    df <- tryCatch(
-      read.table(file_path, header = FALSE, sep = "\t", stringsAsFactors = FALSE),
-      error = function(e) NULL
-    )
-
-    upload_ok <- FALSE
-    error_msg <- NULL
-
-    if (is.null(df)) {
-      error_msg <- "Could not read the file. Make sure it is tab-delimited."
-    } else if (ncol(df) != 2) {
-      error_msg <- "File must have exactly 2 columns."
-    } else if (!is.character(df[[1]])) {
-      error_msg <- "First column must be character (gene names)."
-    } else if (!is.numeric(df[[2]])) {
-      error_msg <- "Second column must be numeric (t-statistics)."
-    } else {
-      upload_ok <- TRUE
-    }
-
-    output$file_warning_splicing <- renderUI({
-      if (upload_ok) {
-        div(style="color:green;font-weight:bold;margin-top:10px;", "Upload complete!")
-      } else {
-        div(style="color:red;font-weight:bold;margin-top:10px;", paste("Upload failed:", error_msg))
-      }
-    })
-  })
 
   #BINDING
   observe({
