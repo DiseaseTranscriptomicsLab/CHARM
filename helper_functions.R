@@ -289,36 +289,41 @@ plot_gsea <- function(charmobj, rbp, thresh = 0.05,
 }
 
 correl_exp_rbp_plotly <- function(rbp_results, rbp, other_rbp, plot_title = NULL) {
-  # --- Handle user-uploaded reference or internal RBP ---
+
+  # --- Determine if reference is user file or internal RBP ---
   if (is.data.frame(rbp)) {
+    # User file: must have two columns: Gene and t
     ref_df <- rbp
-    colnames(ref_df) <- c("Gene", "t")
+    if (ncol(ref_df) < 2) stop("User-supplied file must have at least two columns: Gene and t-statistic")
+    colnames(ref_df)[1:2] <- c("Gene", "t")
     rbp_label <- "UserFile"
   } else if (rbp %in% names(rbp_results)) {
     ref_df <- rbp_results[[rbp]]
     rbp_label <- rbp
   } else {
-    stop("rbp is neither a dataframe nor a known name in rbp_results")
+    stop("rbp is neither a data.frame nor a known name in rbp_results")
   }
 
-  # --- Skip invalid or self comparisons ---
-  if (!(other_rbp %in% names(rbp_results)) || other_rbp == rbp_label) {
-    return(plotly::plotly_empty(
-      type = "scatter", mode = "text",
-      text = paste("Invalid or self comparison for", other_rbp)
-    ))
+  # --- Validate other_rbp ---
+  if (!(other_rbp %in% names(rbp_results))) {
+    stop(paste("Other RBP", other_rbp, "not found in datasets"))
   }
 
-  # --- Merge by gene ---
+  # --- Prevent self-comparison if reference is internal ---
+  if (!is.data.frame(rbp) && rbp_label == other_rbp) {
+    stop("Cannot compare an RBP to itself")
+  }
+
+  # --- Merge by Gene ---
   other_df <- rbp_results[[other_rbp]]
-  merged <- merge(ref_df, other_df, by = "Gene",
-                  suffixes = c(paste0("_", rbp_label), paste0("_", other_rbp)))
+  merged <- merge(
+    ref_df, other_df,
+    by = "Gene",
+    suffixes = c(paste0("_", rbp_label), paste0("_", other_rbp))
+  )
 
   if (nrow(merged) < 3) {
-    return(plotly::plotly_empty(
-      type = "scatter", mode = "text",
-      text = paste("Not enough overlapping genes between", rbp_label, "and", other_rbp)
-    ))
+    stop(paste("Not enough overlapping genes between", rbp_label, "and", other_rbp))
   }
 
   # --- Spearman correlation ---
@@ -338,16 +343,16 @@ correl_exp_rbp_plotly <- function(rbp_results, rbp, other_rbp, plot_title = NULL
     ", p = ", signif(pval, 3), ")"
   )
 
-  # --- Scatter plotly ---
+  # --- Plotly scatter ---
   plotly::plot_ly(
     merged,
     x = ~get(paste0("t_", rbp_label)),
     y = ~get(paste0("t_", other_rbp)),
-    type = 'scatter',
-    mode = 'markers',
+    type = "scatter",
+    mode = "markers",
     text = ~paste("Gene:", Gene),
-    hoverinfo = 'text',
-    marker = list(size = 7, color = "#DDDDDD", line = list(width = 1, color = 'black'))
+    hoverinfo = "text",
+    marker = list(size = 7, color = "#DDDDDD", line = list(width = 1, color = "black"))
   ) %>%
     plotly::layout(
       title = title_txt,
@@ -357,75 +362,61 @@ correl_exp_rbp_plotly <- function(rbp_results, rbp, other_rbp, plot_title = NULL
     )
 }
 
-correl_scatter_gsea_plotly <- function(gsea_results, rbp, other_rbp, plot_title = NULL, thresh = 0.05,
-                                       species = "Homo sapiens",
-                                       collection = "H", subcollection = NULL,
+
+correl_scatter_gsea_plotly <- function(gsea_results, rbp, other_rbp, plot_title = NULL,
                                        up_color = "#BA3B46", down_color = "#53A2BE",
                                        show_legend = FALSE) {
 
+  # --- Reference RBP ---
   if (is.data.frame(rbp)) {
-    # rbp is user-uploaded
-    top.table <- rbp
-    colnames(top.table) <- c("Gene", "t")
+    # user-uploaded file
+    ref_df <- rbp
+    stopifnot(all(c("pathway","NES") %in% colnames(ref_df)))
     rbp_label <- "UserFile"
-
-    DEGenes <- top.table[order(top.table$t, decreasing = TRUE), ]
-    vectorranks <- DEGenes$t
-    names(vectorranks) <- DEGenes$Gene
-
-    hallmarks.gs <- msigdbr(species = species, collection = collection, subcollection = subcollection)
-    hallmarks.gsets <- split(hallmarks.gs$gene_symbol, hallmarks.gs$gs_name)
-    hallmarks.gsets <- lapply(hallmarks.gsets, toupper)
-    hallmarks.res <- fgsea(pathways = hallmarks.gsets, stats = vectorranks)
-    hallmarks.res.tidy <- hallmarks.res %>%
-      as_tibble() %>%
-      arrange(desc(NES)) %>%
-      mutate(Status = ifelse(NES > 0, "Upregulated", "Downregulated")) %>%
-      arrange(padj) %>%
-      mutate(pathway = gsub("^HALLMARK_", "", pathway))
-
-    ref_df <- hallmarks.res.tidy
-
   } else if (rbp %in% names(gsea_results)) {
     ref_df <- gsea_results[[rbp]]
     rbp_label <- rbp
   } else {
-    stop("rbp is neither a dataframe nor a known name in gsea_results")
+    stop("rbp is neither a dataframe nor a known RBP in gsea_results")
   }
 
+  # --- Other RBP ---
+  if (!(other_rbp %in% names(gsea_results))) {
+    stop(paste("other_rbp", other_rbp, "not found in gsea_results"))
+  }
   other_df <- gsea_results[[other_rbp]]
 
+  # --- Merge by pathway ---
   merged <- merge(
-    ref_df, other_df, by = "pathway",
-    suffixes = c(paste0("_", rbp_label), paste0("_", other_rbp))
+    ref_df %>% select(pathway, NES),
+    other_df %>% select(pathway, NES),
+    by = "pathway",
+    suffixes = c("_ref","_other")
   )
 
-  # Spearman correlation + p-value
-  test <- suppressWarnings(cor.test(
-    merged[[paste0("NES_", rbp_label)]],
-    merged[[paste0("NES_", other_rbp)]],
-    method = "spearman"
-  ))
+  if(nrow(merged) < 3) stop("Not enough overlapping pathways between RBPs")
+
+  # --- Spearman correlation ---
+  test <- suppressWarnings(cor.test(merged$NES_ref, merged$NES_other, method="spearman"))
   rho <- unname(test$estimate)
   pval <- test$p.value
 
-  # Plotly scatter
+  # --- Plotly scatter ---
   title_txt <- paste0(
-    if (!is.null(plot_title)) paste0(plot_title, ": ") else "",
+    if(!is.null(plot_title)) paste0(plot_title, ": ") else "",
     "GSEA correlation between ", rbp_label, " and ", other_rbp,
-    " (Spearman ρ = ", round(rho, 2),
-    ", p = ", signif(pval, 3), ")"
+    " (Spearman ρ = ", round(rho,2), ", p = ", signif(pval,3), ")"
   )
 
   plot_ly(
     merged,
-    x = ~get(paste0("NES_", rbp_label)),
-    y = ~get(paste0("NES_", other_rbp)),
-    type = 'scatter',
-    mode = 'markers',
+    x = ~NES_ref,
+    y = ~NES_other,
+    type = "scatter",
+    mode = "markers",
     text = ~paste("Pathway:", pathway),
-    hoverinfo = 'text',
-    marker = list(size = 7, color = "#DDDDDD", line = list(width = 1, color = 'black'))
+    hoverinfo = "text",
+    marker = list(size = 7, color = "#DDDDDD", line = list(width = 1, color = "black"))
   ) %>%
     layout(
       title = title_txt,
@@ -435,8 +426,12 @@ correl_scatter_gsea_plotly <- function(gsea_results, rbp, other_rbp, plot_title 
     )
 }
 
+
 exp_correl <- function(rbp_results, rbp, correl_num = NULL,
-                       n_pos = NULL, n_neg = NULL, other_rbps = NULL) {
+                       n_pos = NULL, n_neg = NULL, other_rbps = NULL,
+                       up_color = "#BA3B46",
+                       down_color = "#53A2BE",
+                       show_legend = FALSE) {
 
   if (is.data.frame(rbp)) {
     ref_df <- rbp
@@ -469,142 +464,166 @@ exp_correl <- function(rbp_results, rbp, correl_num = NULL,
 
   pos <- cor_results[order(-cor_results$Correlation), ]
   neg <- cor_results[order(cor_results$Correlation), ]
-
-  # Select top RBPs
+  # --- SAFER logic for selecting top RBPs ---
   if (!is.null(other_rbps)) {
     valid_rbps <- intersect(other_rbps, cor_results$RBP)
     top_cor <- cor_results[cor_results$RBP %in% valid_rbps, ]
+
   } else if (!is.null(correl_num) && !is.na(correl_num) && correl_num > 0) {
     top_cor <- head(cor_results[order(-abs(cor_results$Correlation)), ], correl_num)
-  } else if ((!is.null(n_pos) && !is.na(n_pos) && n_pos > 0) ||
-             (!is.null(n_neg) && !is.na(n_neg) && n_neg > 0)) {
 
-    top_pos <- if (!is.null(n_pos) && !is.na(n_pos) && n_pos > 0) head(pos, n_pos) else NULL
-    top_neg <- if (!is.null(n_neg) && !is.na(n_neg) && n_neg > 0) head(neg, n_neg) else NULL
+  } else if ((is.numeric(n_pos) && !is.na(n_pos) && n_pos > 0) ||
+             (is.numeric(n_neg) && !is.na(n_neg) && n_neg > 0)) {
+
+    top_pos <- if (is.numeric(n_pos) && !is.na(n_pos) && n_pos > 0) head(pos, n_pos) else NULL
+    top_neg <- if (is.numeric(n_neg) && !is.na(n_neg) && n_neg > 0) head(neg, n_neg) else NULL
     top_cor <- rbind(top_pos, top_neg)
+
   } else {
     stop("Please provide either other_rbps, correl_num, or n_pos/n_neg")
   }
 
+  # --- Bar plot instead of heatmap ---
   top_cor <- top_cor[order(top_cor$Correlation, decreasing = TRUE), ]
-  top_cor$RBP <- factor(top_cor$RBP, levels = top_cor$RBP)
+  top_cor$Status <- ifelse(top_cor$Correlation > 0, "Positive", "Negative")
+  top_cor$RBP <- factor(top_cor$RBP, levels = top_cor$RBP[order(top_cor$Correlation)])
 
-  heatmap_plot <- ggplot(top_cor, aes(x = rbp_label, y = RBP, fill = Correlation)) +
-    geom_tile(color = "white") +
-    geom_text(aes(label = sprintf("%.2f", Correlation),
-                  color = ifelse(abs(Correlation) < 0.3, "black", "white")), size = 5) +
-    scale_color_identity() +
-    scale_fill_gradient2(low = "black", mid = "grey50", high = "#601700",
-                         midpoint = 0, limits = c(-1, 1)) +
-    labs(title = paste("Spearman correlations with", rbp_label, "- Expression"),
-         x = "Reference RBP", y = "Other RBPs") +
-    theme_minimal(base_size = 14) +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  heatmap_plot <- ggplot(top_cor, aes(x = reorder(RBP, Correlation), y = Correlation, fill = Status)) +
+    geom_col(alpha = 0.8) +
+    scale_fill_manual(values = c("Positive" = up_color, "Negative" = down_color)) +
+    coord_flip() +
+    geom_text(aes(label = sprintf("%.2f", Correlation)),
+              hjust = ifelse(top_cor$Correlation > 0, -0.1, 1.1),
+              color = "white", size = 4) +
+    labs(
+      x = "RBP",
+      y = "Spearman correlation",
+      title = paste("Expression correlations with", rbp_label),
+      subtitle = paste0("Reference: ", rbp_label),
+      caption = "Method: Spearman"
+    ) +
+    theme_bw(base_family = "Arial MS") +
+    theme(
+      plot.title = element_text(hjust = 0.5, face = "bold"),
+      plot.subtitle = element_text(hjust = 0.5),
+      text = element_text(size = 12),
+      legend.position = if (show_legend) "right" else "none",
+      axis.text = element_text(face = "bold"),
+      axis.title = element_text(face = "bold")
+    )
 
-  return(list(correlation_table = cor_results,
-              top_table = top_cor,
-              heatmap = heatmap_plot))
+  return(list(
+    correlation_table = cor_results,
+    top_table = top_cor,
+    heatmap = heatmap_plot   # <-- keep same name so Shiny finds it
+  ))
 }
 
-
-gsea_correl <- function(gsea_results, rbp, correl_num = NULL,
+gsea_correl <- function(gsea_df, rbp, correl_num = NULL,
                         n_pos = NULL, n_neg = NULL, other_rbps = NULL,
-                        thresh = 0.05,
-                        species = "Homo sapiens",
-                        collection = "H", subcollection = NULL,
                         up_color = "#BA3B46", down_color = "#53A2BE",
                         show_legend = FALSE) {
 
-
-  if (is.data.frame(rbp)) {
-    # User uploaded file
-    top.table <- rbp
-    stopifnot(all(c("Gene","t") %in% colnames(top.table)))
-    rbp_label <- "UserFile"
-
-    # Create vector of ranks for fgsea
-    DEGenes <- top.table[order(top.table$t, decreasing = TRUE), ]
-    vectorranks <- DEGenes$t
-    names(vectorranks) <- toupper(DEGenes$Gene)
-
-    # Run GSEA on uploaded file
-    hallmarks.gs <- msigdbr(species = species, collection = collection, subcollection = subcollection)
-    hallmarks.gsets <- split(hallmarks.gs$gene_symbol, hallmarks.gs$gs_name)
-    hallmarks.gsets <- lapply(hallmarks.gsets, toupper)
-    hallmarks.res <- fgsea(pathways = hallmarks.gsets, stats = vectorranks)
-    hallmarks.res.tidy <- hallmarks.res %>%
-      as_tibble() %>%
-      arrange(desc(NES)) %>%
-      mutate(Status = ifelse(NES > 0, "Upregulated", "Downregulated")) %>%
-      arrange(padj) %>%
-      mutate(pathway = gsub("^HALLMARK_", "", pathway))
-
-    ref_df <- hallmarks.res.tidy %>% select(pathway, NES)
-  } else if (rbp %in% names(gsea_results)) {
-    ref_df <- gsea_results[[rbp]] %>% select(pathway, NES)
-    rbp_label <- rbp
-  } else {
-    stop("rbp is neither a dataframe nor a known name in gsea_results")
+  # --- Convert list of RBP tables to wide format ---
+  if (is.list(gsea_df)) {
+    gsea_df <- lapply(names(gsea_df), function(r) {
+      df <- gsea_df[[r]]
+      if (!"pathway" %in% colnames(df)) {
+        df <- df %>% tibble::rownames_to_column("pathway")
+      }
+      df <- df[, c("pathway", "NES"), drop = FALSE]
+      colnames(df) <- c("pathway", r)
+      df
+    })
+    gsea_df <- Reduce(function(x, y) merge(x, y, by = "pathway", all = TRUE), gsea_df)
   }
 
-  stopifnot(all(c("pathway","NES") %in% colnames(ref_df)))
-  ref_vec <- ref_df$NES
-  names(ref_vec) <- ref_df$pathway
+  stopifnot(all(c("pathway", rbp) %in% colnames(gsea_df)))
 
+  # --- Prepare reference vector ---
+  ref_vec <- gsea_df[[rbp]]
+  names(ref_vec) <- gsea_df$pathway
 
-  cor_results <- data.frame(RBP=character(), Correlation=numeric(), Pvalue=numeric())
-
-  for (other_rbp in setdiff(names(gsea_results), rbp_label)) {
-    other_df <- gsea_results[[other_rbp]] %>% select(pathway, NES)
-    merged <- merge(ref_df, other_df, by="pathway", suffixes=c("_ref","_other"))
-    if (nrow(merged) > 2) {
-      test <- suppressWarnings(cor.test(merged$NES_ref, merged$NES_other, method="spearman"))
-      cor_results <- rbind(cor_results,
-                           data.frame(RBP=other_rbp,
-                                      Correlation=unname(test$estimate),
-                                      Pvalue=test$p.value))
+  # --- Compute Spearman correlations ---
+  other_cols <- setdiff(colnames(gsea_df), c("pathway", rbp))
+  cor_results <- lapply(other_cols, function(other_rbp) {
+    merged <- gsea_df[, c("pathway", rbp, other_rbp)]
+    valid_rows <- sum(!is.na(merged[[rbp]]) & !is.na(merged[[other_rbp]]))
+    if (valid_rows > 2) {
+      test <- suppressWarnings(cor.test(merged[[rbp]], merged[[other_rbp]], method = "spearman"))
+      data.frame(RBP = other_rbp, Correlation = unname(test$estimate), Pvalue = test$p.value)
+    } else {
+      data.frame(RBP = other_rbp, Correlation = NA_real_, Pvalue = NA_real_)
     }
-  }
+  }) %>% bind_rows() %>% drop_na(Correlation)
 
+  # --- Sort correlations ---
+  pos <- cor_results[order(-cor_results$Correlation), ]
+  neg <- cor_results[order(cor_results$Correlation), ]
 
-  top_pos <- top_neg <- NULL
+  # --- Safe selection of top correlations ---
+  top_cor <- NULL
+
+  # Convert n_pos/n_neg to safe numeric values
+  n_pos_val <- if (!is.null(n_pos) && !is.na(n_pos)) n_pos else 0
+  n_neg_val <- if (!is.null(n_neg) && !is.na(n_neg)) n_neg else 0
 
   if (!is.null(other_rbps)) {
     valid_rbps <- intersect(other_rbps, cor_results$RBP)
-    top_cor <- cor_results[cor_results$RBP %in% valid_rbps, ]
-  } else if (!is.null(correl_num)) {
-    cor_results <- cor_results[order(-abs(cor_results$Correlation)), ]
-    top_cor <- head(cor_results, correl_num)
-  } else if (!is.null(n_pos) | !is.null(n_neg)) {
-    if (!is.null(n_pos)) top_pos <- head(cor_results[order(-cor_results$Correlation), ], n_pos)
-    if (!is.null(n_neg)) top_neg <- head(cor_results[order(cor_results$Correlation), ], n_neg)
-    # Combine only non-null
-    top_cor <- do.call(rbind, Filter(Negate(is.null), list(top_pos, top_neg)))
-    if (nrow(top_cor) == 0) stop("No correlations available with the given n_pos/n_neg")
+    top_cor <- cor_results %>% filter(RBP %in% valid_rbps)
+  } else if (!is.null(correl_num) && correl_num > 0) {
+    top_cor <- cor_results %>% arrange(desc(abs(Correlation))) %>% slice_head(n = correl_num)
+  } else if (n_pos_val > 0 || n_neg_val > 0) {
+    n_pos_safe <- min(n_pos_val, nrow(cor_results))
+    n_neg_safe <- min(n_neg_val, nrow(cor_results))
+
+    top_pos <- if (n_pos_safe > 0) head(pos, n_pos_safe) else NULL
+    top_neg <- if (n_neg_safe > 0) head(neg, n_neg_safe) else NULL
+    top_cor <- bind_rows(Filter(Negate(is.null), list(top_pos, top_neg)))
   } else {
-    stop("Please provide either other_rbps, correl_num, or (n_pos/n_neg)")
+    stop("Please provide either other_rbps, correl_num, or n_pos/n_neg")
   }
 
-  # Factor for plotting
-  top_cor <- top_cor[order(top_cor$Correlation, decreasing = TRUE), ]
-  top_cor$RBP <- factor(top_cor$RBP, levels=top_cor$RBP)
+  # --- Handle empty top_cor ---
+  if (is.null(top_cor) || nrow(top_cor) == 0) {
+    p <- ggplot() +
+      labs(title = paste("No correlations available for", rbp)) +
+      theme_minimal()
+    return(list(correlation_table = cor_results, top_table = top_cor, heatmap = p))
+  }
 
+  # --- Prepare for bar plot ---
+  top_cor <- top_cor %>% arrange(Correlation)
+  top_cor$Status <- ifelse(top_cor$Correlation > 0, "Upregulated", "Downregulated")
+  top_cor$RBP <- factor(top_cor$RBP, levels = top_cor$RBP)
 
-  heatmap_plot <- ggplot(top_cor, aes(x=rbp_label, y=RBP, fill=Correlation)) +
-    geom_tile(color="white") +
-    geom_text(aes(label=sprintf("%.2f", Correlation),
-                  color=ifelse(abs(Correlation)<0.3, "black","white")), size=5) +
-    scale_color_identity() +
-    scale_fill_gradient2(low="black", mid="grey50", high="#601700", midpoint=0, limits=c(-1,1)) +
-    labs(title=paste("Spearman correlations with", rbp_label, "- GSEA"),
-         x="Reference RBP", y="Other RBPs") +
-    theme_minimal(base_size=14) +
-    theme(axis.text.x=element_text(angle=45, hjust=1))
+  # --- Bar plot ---
+  heatmap_plot <- ggplot(top_cor, aes(x = RBP, y = Correlation, fill = Status)) +
+    geom_col(alpha = 0.8) +
+    scale_fill_manual(values = c("Upregulated" = up_color, "Downregulated" = down_color)) +
+    coord_flip() +
+    geom_text(aes(label = sprintf("%.2f", Correlation)),
+              hjust = ifelse(top_cor$Correlation > 0, -0.1, 1.1),
+              color = "white", size = 4) +
+    labs(
+      x = "RBP", y = "Spearman correlation",
+      title = paste("GSEA correlations with", rbp),
+      subtitle = paste0("Reference: ", rbp),
+      caption = "Method: Spearman"
+    ) +
+    theme_bw(base_family = "Arial MS") +
+    theme(
+      plot.title = element_text(hjust = 0.5, face = "bold"),
+      plot.subtitle = element_text(hjust = 0.5),
+      text = element_text(size = 12),
+      legend.position = if (show_legend) "right" else "none",
+      axis.text = element_text(face = "bold"),
+      axis.title = element_text(face = "bold")
+    )
 
-  return(list(correlation_table=cor_results,
-              top_table=top_cor,
-              heatmap=heatmap_plot))
+  return(list(correlation_table = cor_results, top_table = top_cor, heatmap = heatmap_plot))
 }
+
 
 
 splicing_correl <- function(charmobj, rbp, correl_num = NULL,
@@ -798,8 +817,10 @@ plot_splice_volcano <- function(charmobj, rbp, other_events = NULL) {
   return(list(top_table = top.table, volcano_plot = volcano_plot))
 }
 
+
 correl_splicing_rbp_plotly <- function(charmobj, rbp, other_rbp, plot_title = NULL) {
-  # --- Determine if rbp is user file or Charm object ---
+
+  # --- Determine reference RBP ---
   if (is.data.frame(rbp)) {
     ref_df <- rbp[, c("Event.ID", "dPSI")]
     rbp_label <- "UserFile"
@@ -810,29 +831,26 @@ correl_splicing_rbp_plotly <- function(charmobj, rbp, other_rbp, plot_title = NU
     stop("rbp is neither a data.frame nor a known name in charmobj")
   }
 
-  # --- Load other RBP ---
+  # --- Determine other RBP ---
   if (!(other_rbp %in% names(charmobj))) {
-    stop(paste("'", other_rbp, "' not found in charmobj"))
+    stop(paste0("'", other_rbp, "' not found in charmobj"))
   }
   other_df <- charmobj[[other_rbp]]$VulcanTable[, c("Event.ID", "dPSI")]
   other_label <- other_rbp
 
   # --- Merge by Event.ID ---
-  merged <- merge(
-    ref_df, other_df, by = "Event.ID",
-    suffixes = c(paste0("_", rbp_label), paste0("_", other_label))
-  )
+  merged <- merge(ref_df, other_df, by = "Event.ID", suffixes = c("_ref", "_other"))
+  colnames(merged) <- c("Event.ID", "dPSI_ref", "dPSI_other")
 
   if (nrow(merged) < 3) {
-    stop(paste("Not enough overlapping events between", rbp_label, "and", other_label))
+    return(plotly::plotly_empty(
+      type = "scatter", mode = "text",
+      text = paste("Not enough overlapping events between", rbp_label, "and", other_label)
+    ))
   }
 
   # --- Spearman correlation ---
-  test <- suppressWarnings(cor.test(
-    merged[[paste0("dPSI_", rbp_label)]],
-    merged[[paste0("dPSI_", other_label)]],
-    method = "spearman"
-  ))
+  test <- suppressWarnings(cor.test(merged$dPSI_ref, merged$dPSI_other, method = "spearman"))
   rho <- unname(test$estimate)
   pval <- test$p.value
 
@@ -844,18 +862,20 @@ correl_splicing_rbp_plotly <- function(charmobj, rbp, other_rbp, plot_title = NU
     ", p = ", signif(pval, 3), ")"
   )
 
-  # --- Plotly scatter (same style as expression one) ---
-  plot_ly(
+  # --- Plotly scatter ---
+  plotly::plot_ly(
     merged,
-    x = ~get(paste0("dPSI_", rbp_label)),
-    y = ~get(paste0("dPSI_", other_label)),
+    x = ~dPSI_ref,
+    y = ~dPSI_other,
     type = "scatter",
     mode = "markers",
-    text = ~paste("Event:", Event.ID),
+    text = ~paste0("Event: ", Event.ID,
+                   "<br>", rbp_label, " ΔPSI: ", round(dPSI_ref, 3),
+                   "<br>", other_label, " ΔPSI: ", round(dPSI_other, 3)),
     hoverinfo = "text",
     marker = list(size = 7, color = "#DDDDDD", line = list(width = 1, color = "black"))
   ) %>%
-    layout(
+    plotly::layout(
       title = title_txt,
       xaxis = list(title = paste0(rbp_label, " ΔPSI")),
       yaxis = list(title = paste0(other_label, " ΔPSI")),
@@ -865,18 +885,19 @@ correl_splicing_rbp_plotly <- function(charmobj, rbp, other_rbp, plot_title = NU
 
 
 
-plot_gene_logFC_heatmap <- function(CharmObj, gene) {
+plot_gene_logFC_barplot <- function(CharmObj, gene,
+                                    up_color = "#BA3B46",
+                                    down_color = "#53A2BE",
+                                    show_legend = FALSE) {
 
   # Extract LogFC for the gene across all RBPs safely
   logfc_data <- lapply(names(CharmObj), function(rbp) {
     df <- CharmObj[[rbp]]$DEGenes
 
-    # Check that DEGenes exists, has "LogFC", and contains the gene
     if (!is.null(df) && "logFC" %in% colnames(df) && gene %in% rownames(df)) {
-      data.frame(RBP = rbp, logFC = df[gene, "logFC"])
+      data.frame(RBP = rbp, logFC = df[gene, "logFC"], stringsAsFactors = FALSE)
     } else {
-      # Return NA if not found
-      data.frame(RBP = rbp, logFC = NA_real_)
+      data.frame(RBP = rbp, logFC = NA_real_, stringsAsFactors = FALSE)
     }
   }) %>%
     bind_rows() %>%
@@ -887,46 +908,57 @@ plot_gene_logFC_heatmap <- function(CharmObj, gene) {
     stop(paste("Gene", gene, "not found in any RBP DEGenes tables."))
   }
 
-  # Select top 10 and bottom 10
+  # Add "Status" for fill color
+  logfc_data <- logfc_data %>%
+    mutate(Status = ifelse(logFC > 0, "Upregulated", "Downregulated"))
+
+  # Select top 10 and bottom 10 by LogFC
   top10 <- logfc_data %>% arrange(desc(logFC)) %>% slice_head(n = 10)
   bottom10 <- logfc_data %>% arrange(logFC) %>% slice_head(n = 10)
   selected <- bind_rows(top10, bottom10)
 
-  # Order RBPs by LogFC for visualization
+  # Order RBPs by LogFC
   selected$RBP <- factor(selected$RBP, levels = selected$RBP[order(selected$logFC)])
 
-  # Create the heatmap
-  ggplot(selected, aes(x = gene, y = RBP, fill = logFC)) +
-    geom_tile(color = "white") +
-    geom_text(aes(label = sprintf("%.2f", logFC)), color = "white", size = 5) +
-    scale_fill_gradient2(low = "black", mid = "white", high = "#601700", midpoint = 0) +
+  # Build bar plot (styled like your favorite one)
+  ggplot(selected, aes(x = reorder(RBP, logFC), y = logFC, fill = Status)) +
+    geom_col(alpha = 0.8) +
+    scale_fill_manual(values = c("Upregulated" = up_color, "Downregulated" = down_color)) +
+    coord_flip() +
     labs(
-      title = bquote("Top/bottom RBPs by LogFC for " * italic(.(gene))),
-      x = "", y = "RBP"
+      x = "RBP",
+      y = "Log2 Fold Change",
+      title = paste0("Top/bottom RBPs by logFC for ", gene),
+      subtitle = paste0("Gene: ", gene),
+      caption = paste0("Only top/bottom 10 shown")
     ) +
-    theme_minimal(base_size = 14) +
+    theme_bw(base_family = "Arial MS") +
     theme(
-      axis.text.x = element_text(face = "italic"),
-      axis.ticks.x = element_blank()
+      plot.title = element_text(hjust = 0.5, size = 18, face = "bold"),
+      plot.subtitle = element_text(hjust = 0.5, size = 14),
+      text = element_text(size = 14),
+      legend.position = if (show_legend) "right" else "none",
+      axis.text = element_text(face = "bold"),
+      axis.title = element_text(face = "bold"),
+      legend.title = element_text(face = "bold"),
+      legend.text = element_text(face = "bold")
     )
 }
 
 
-plot_hallmark_nes_heatmap <- function(CharmObj, geneset) {
+plot_hallmark_nes_barplot <- function(CharmObj, geneset,
+                                      up_color = "#BA3B46",
+                                      down_color = "#53A2BE",
+                                      show_legend = FALSE) {
 
   # Extract NES for the geneset across all RBPs safely
   NES_data <- lapply(names(CharmObj), function(rbp) {
     df <- CharmObj[[rbp]]$GSEA
 
-    # Validate structure
     if (!is.null(df) && "NES" %in% colnames(df) && "pathway" %in% colnames(df)) {
-      # find rows matching the geneset
       hits <- which(df$pathway == geneset)
 
-      if (length(hits) == 1) {
-        data.frame(RBP = rbp, NES = as.numeric(df$NES[hits]), stringsAsFactors = FALSE)
-      } else if (length(hits) > 1) {
-        # If multiple entries for the same pathway, take the first (or change strategy)
+      if (length(hits) >= 1) {
         data.frame(RBP = rbp, NES = as.numeric(df$NES[hits[1]]), stringsAsFactors = FALSE)
       } else {
         data.frame(RBP = rbp, NES = NA_real_, stringsAsFactors = FALSE)
@@ -943,33 +975,41 @@ plot_hallmark_nes_heatmap <- function(CharmObj, geneset) {
     stop(paste0("Geneset '", geneset, "' not found in any RBP GSEA tables."))
   }
 
-  # Select top 10 and bottom 10
+  # Add up/down status for coloring
+  NES_data <- NES_data %>%
+    mutate(Status = ifelse(NES > 0, "Upregulated", "Downregulated"))
+
+  # Select top 10 and bottom 10 RBPs by NES
   top10 <- NES_data %>% arrange(desc(NES)) %>% slice_head(n = 10)
   bottom10 <- NES_data %>% arrange(NES) %>% slice_head(n = 10)
   selected <- bind_rows(top10, bottom10)
 
-  # Create a column to use as x-axis (single column heatmap)
-  selected$Geneset <- geneset
-
-  # Order RBPs by NES for visualization (from low -> high)
+  # Order RBPs by NES for plotting
   selected$RBP <- factor(selected$RBP, levels = selected$RBP[order(selected$NES)])
 
-  # Build and return the plot
-  p <- ggplot(selected, aes(x = Geneset, y = RBP, fill = NES)) +
-    geom_tile(color = "white") +
-    geom_text(aes(label = sprintf("%.2f", NES)), color = "white", size = 5) +
-    scale_fill_gradient2(low = "black", mid = "white", high = "#601700", midpoint = 0) +
+  # Create the bar plot (styled like your favourite one)
+  ggplot(selected, aes(x = reorder(RBP, NES), y = NES, fill = Status)) +
+    geom_col(alpha = 0.8) +
+    scale_fill_manual(values = c("Upregulated" = up_color, "Downregulated" = down_color)) +
+    coord_flip() +
     labs(
+      x = "RBP",
+      y = "Normalised Enrichment Score (NES)",
       title = paste0("Top/bottom RBPs by NES for ", geneset),
-      x = "", y = "RBP"
+      subtitle = paste0("Geneset: ", geneset),
+      caption = paste0("Only top/bottom 10 RBPs shown")
     ) +
-    theme_minimal(base_size = 14) +
+    theme_bw(base_family = "Arial MS") +
     theme(
-      axis.ticks.x = element_blank(),
-      axis.text.x = element_text(face = "italic")  # italic x-axis label (the geneset)
+      plot.title = element_text(hjust = 0.5, size = 18, face = "bold"),
+      plot.subtitle = element_text(hjust = 0.5, size = 14),
+      text = element_text(size = 14),
+      legend.position = if (show_legend) "right" else "none",
+      axis.text = element_text(face = "bold"),
+      axis.title = element_text(face = "bold"),
+      legend.title = element_text(face = "bold"),
+      legend.text = element_text(face = "bold")
     )
-
-  return(p)
 }
 
 

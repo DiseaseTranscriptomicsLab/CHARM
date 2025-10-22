@@ -968,7 +968,12 @@ server <- function(input, output, session) {
 
           output[[plotname]] <- if (!is.null(selected_rbps) && length(selected_rbps) == 1) {
             renderPlotly({
-              scatter_fun(datasets[[ds_name]], user_expr_df(), selected_rbps, plot_title = ds_name)
+              scatter_fun(
+                datasets[[ds_name]],
+                user_expr_df(),
+                selected_rbps[1],   # <-- force single string
+                plot_title = ds_name
+              )
             })
           } else {
             renderPlot({
@@ -979,7 +984,7 @@ server <- function(input, output, session) {
                 n_neg      = if (mode == "expr") input$user_file_n_neg_expr else input$user_file_n_neg_gsea,
                 other_rbps = if (!is.null(selected_rbps) && length(selected_rbps) > 1) selected_rbps else NULL
               )
-              heat_res$heatmap
+              heatmap$plot
             })
           }
 
@@ -1119,7 +1124,7 @@ server <- function(input, output, session) {
 
           output[[plotname]] <- if (!is.null(selected_rbps) && length(selected_rbps) == 1) {
             renderPlotly({
-              res <- correl_scatter_splicing(datasets[[ds_name]], user_splice_df(), selected_rbps)
+              res <- correl_splicing_rbp_plotly(datasets[[ds_name]], user_splice_df(), selected_rbps)
               ggplotly(res$plot)
             })
           } else {
@@ -1131,7 +1136,7 @@ server <- function(input, output, session) {
                 n_neg = input$user_file_n_neg_splice,
                 other_rbps = selected_rbps
               )
-              heat_res$heatmap
+              heatmap$plot
             })
           }
 
@@ -1342,7 +1347,7 @@ server <- function(input, output, session) {
         need(gene %in% unlist(lapply(charm_obj, function(x) rownames(x$DEGenes))),
              paste("Gene", gene, "not found in any RBP DEGenes tables."))
       )
-      plot_gene_logFC_heatmap(charm_obj, gene)
+      plot_gene_logFC_barplot(charm_obj, gene)
     })
 
     session$sendCustomMessage("toggleCursor", FALSE) # turn cursor back
@@ -1359,7 +1364,7 @@ server <- function(input, output, session) {
         need(geneset %in% unlist(lapply(charm_obj, function(x) x$GSEA$pathway)),
              paste0("Geneset '", geneset, "' not found in any RBP GSEA tables."))
       )
-      plot_hallmark_nes_heatmap(charm_obj, geneset)
+      plot_hallmark_nes_barplot(charm_obj, geneset)
     })
 
     session$sendCustomMessage("toggleCursor", FALSE)
@@ -1396,21 +1401,23 @@ server <- function(input, output, session) {
   # ---- Similar RBPs: Expression/GSEA correlation ----
   observeEvent(input$similar_plot_btn, {
     req(input$expr_dataset)
-    if(input$expr_dataset != "Similar RBPs") return(NULL)
+    if (input$expr_dataset != "Similar RBPs") return(NULL)
     req(input$expr_search_rbp)
     rbp1 <- input$expr_search_rbp
-
     mode <- input$similar_mode
 
-    # Choose dataset
+    # Datasets
     datasets <- list(
-      "Both Cells" = similar_expression_all,
-      "K562"       = similar_expression_K562,
-      "HEPG2"      = similar_expression_HEPG2
+      "Both Cells" = if(mode == "expr") similar_expression_all else similar_gsea_all,
+      "K562"       = if(mode == "expr") similar_expression_K562 else similar_gsea_K562,
+      "HEPG2"      = if(mode == "expr") similar_expression_HEPG2 else similar_gsea_HEPG2
     )
+
+    # Functions
     scatter_fun <- if(mode == "expr") correl_exp_rbp_plotly else correl_scatter_gsea_plotly
     heatmap_fun <- if(mode == "expr") exp_correl else gsea_correl
 
+    # Inputs
     selected_rbps <- if(mode == "expr") input$similar_rbps_select_expr else input$similar_rbps_select_gsea
     correl_num <- if(mode == "expr") input$correl_num_expr else input$correl_num_gsea
     n_pos      <- if(mode == "expr") input$n_pos_expr else input$n_pos_gsea
@@ -1418,18 +1425,20 @@ server <- function(input, output, session) {
 
     if(length(selected_rbps) == 0) selected_rbps <- NULL
 
-    # Render UI
+    # Render plots UI
     output$similar_expr_plots <- renderUI({
+      # Use lapply and wrap columns in tagList() properly
       tagList(
         lapply(names(datasets), function(ds_name) {
           plotname <- paste0("similar_plot_", ds_name)
 
-          output[[plotname]] <- if(!is.null(selected_rbps) && length(selected_rbps) == 1){
-            renderPlotly({
-              scatter_fun(datasets[[ds_name]], rbp1, selected_rbps, plot_title = ds_name)
+          if (!is.null(selected_rbps) && length(selected_rbps) == 1) {
+            output[[plotname]] <- renderPlotly({
+              scatter_fun(datasets[[ds_name]], rbp1, selected_rbps[1], plot_title = ds_name)
             })
+            plot_ui <- plotlyOutput(plotname, height = "500px")
           } else {
-            renderPlot({
+            output[[plotname]] <- renderPlot({
               heat_res <- heatmap_fun(
                 datasets[[ds_name]], rbp1,
                 correl_num = correl_num,
@@ -1437,23 +1446,23 @@ server <- function(input, output, session) {
                 n_neg = n_neg,
                 other_rbps = if(!is.null(selected_rbps) && length(selected_rbps) > 1) selected_rbps else NULL
               )
+              # always return ggplot object
               heat_res$heatmap
             })
+            plot_ui <- plotOutput(plotname, height = "500px")
           }
 
+          # Return the column for renderUI
           column(
             width = 12,
             tags$h4(ds_name, style = "text-align:center;"),
-            if(!is.null(selected_rbps) && length(selected_rbps) == 1){
-              shinycssloaders::withSpinner(plotlyOutput(plotname, height = "500px"))
-            } else {
-              shinycssloaders::withSpinner(plotOutput(plotname, height = "500px"))
-            }
+            shinycssloaders::withSpinner(plot_ui)
           )
-        })
+        }) %>% tagList()  # <-- flatten the list of columns
       )
     })
   })
+
   # ---- Main: Splicing Explore ----
   observeEvent(input$splice_search_btn, {
     req(input$splice_search)
@@ -1601,7 +1610,7 @@ server <- function(input, output, session) {
       "HEPG2"      = Charm.object_HEPG2
     )
 
-    scatter_fun <- correl_scatter_splicing
+    scatter_fun <- correl_splicing_rbp_plotly
     heatmap_fun <- splicing_correl
 
     selected_rbps <- input$similar_rbps_select_splice
@@ -1613,41 +1622,42 @@ server <- function(input, output, session) {
 
     # Render UI
     output$similar_splice_plots <- renderUI({
-      tagList(
-        lapply(names(datasets), function(ds_name) {
-          plotname <- paste0("similar_splice_plot_", ds_name)
+  tagList(
+    lapply(names(datasets), function(ds_name) {
+      plotname <- paste0("similar_splice_plot_", ds_name)
 
-          output[[plotname]] <- if(!is.null(selected_rbps) && length(selected_rbps) == 1){
-            renderPlotly({
-              res <- correl_scatter_splicing(datasets[[ds_name]], rbp1, selected_rbps)
-              ggplotly(res$plot)
-            })
-          } else {
-            renderPlot({
-              heat_res <- heatmap_fun(
-                datasets[[ds_name]], rbp1,
-                correl_num = correl_num,
-                n_pos = n_pos,
-                n_neg = n_neg,
-                other_rbps = if(!is.null(selected_rbps) && length(selected_rbps) > 1) selected_rbps else NULL
-              )
-              heat_res$heatmap
-            })
-          }
-
-          column(
-            width = 12,
-            tags$h4(ds_name, style = "text-align:center;"),
-            if(!is.null(selected_rbps) && length(selected_rbps) == 1){
-              shinycssloaders::withSpinner(plotlyOutput(plotname, height = "500px"))
-            } else {
-              shinycssloaders::withSpinner(plotOutput(plotname, height = "500px"))
-            }
-          )
+      output[[plotname]] <- if(!is.null(selected_rbps) && length(selected_rbps) == 1) {
+        renderPlotly({
+          # Just call the function directly; it returns a plotly object
+          correl_splicing_rbp_plotly(datasets[[ds_name]], rbp1, selected_rbps)
         })
+      } else {
+        renderPlot({
+          heat_res <- heatmap_fun(
+            datasets[[ds_name]], rbp1,
+            correl_num = correl_num,
+            n_pos = n_pos,
+            n_neg = n_neg,
+            other_rbps = if(!is.null(selected_rbps) && length(selected_rbps) > 1) selected_rbps else NULL
+          )
+          heatmap$plot
+        })
+      }
+
+      column(
+        width = 12,
+        tags$h4(ds_name, style = "text-align:center;"),
+        if(!is.null(selected_rbps) && length(selected_rbps) == 1) {
+          shinycssloaders::withSpinner(plotlyOutput(plotname, height = "500px"))
+        } else {
+          shinycssloaders::withSpinner(plotOutput(plotname, height = "500px"))
+        }
       )
     })
+  )
+})
   })
+
 
   # ---- Reset Similar RBPs Splicing plots ----
   observeEvent(input$similar_reset_btn_splice, {
