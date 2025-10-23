@@ -699,7 +699,9 @@ gsea_correl <- function(gsea_df, rbp, correl_num = NULL,
 
 
 splicing_correl <- function(charmobj, rbp, correl_num = NULL,
-                            n_pos = NULL, n_neg = NULL, other_rbps = NULL) {
+                            n_pos = NULL, n_neg = NULL, other_rbps = NULL,
+                            up_color = "#BA3B46", down_color = "#53A2BE",
+                            show_legend = FALSE) {
 
   # --- Determine if input is user file or Charm object ---
   if (is.data.frame(rbp)) {
@@ -712,17 +714,15 @@ splicing_correl <- function(charmobj, rbp, correl_num = NULL,
     stop("rbp is neither a data.frame nor a known name in charmobj")
   }
 
-  # --- Basic checks ---
   stopifnot(all(c("Event.ID", "dPSI") %in% colnames(ref_df)))
 
-  # Prepare cor_results
-  cor_results <- data.frame(RBP = character(), Correlation = numeric(), Pvalue = numeric(), stringsAsFactors = FALSE)
+  # --- Prepare correlation results ---
+  cor_results <- data.frame(RBP = character(),
+                            Correlation = numeric(),
+                            Pvalue = numeric(),
+                            stringsAsFactors = FALSE)
 
-  # Determine RBPs to test
-  rbp_list <- names(charmobj)
-
-  # 🧹 Exclude self (avoid ρ = 1)
-  rbp_list <- setdiff(rbp_list, rbp_label)
+  rbp_list <- setdiff(names(charmobj), rbp_label)
 
   # --- Loop over other RBPs ---
   for (other_rbp in rbp_list) {
@@ -736,50 +736,89 @@ splicing_correl <- function(charmobj, rbp, correl_num = NULL,
 
     cor_results <- rbind(
       cor_results,
-      data.frame(RBP = other_rbp, Correlation = unname(test$estimate), Pvalue = test$p.value)
+      data.frame(RBP = other_rbp,
+                 Correlation = unname(test$estimate),
+                 Pvalue = test$p.value,
+                 stringsAsFactors = FALSE)
     )
   }
 
+  # --- Safe numeric coercion (avoids "missing value where TRUE/FALSE needed") ---
+  safe_positive_int <- function(x) {
+    if (is.null(x) || length(x) == 0) return(0L)
+    x_num <- suppressWarnings(as.numeric(x))
+    if (is.na(x_num) || !is.finite(x_num)) return(0L)
+    as.integer(max(floor(x_num), 0L))
+  }
+
+  n_pos_val <- safe_positive_int(n_pos)
+  n_neg_val <- safe_positive_int(n_neg)
+  correl_num_val <- safe_positive_int(correl_num)
+
   # --- Select top correlations ---
+  pos <- cor_results[order(-cor_results$Correlation), ]
+  neg <- cor_results[order(cor_results$Correlation), ]
+
   if (!is.null(other_rbps)) {
-    top_cor <- cor_results[cor_results$RBP %in% other_rbps, ]
-  } else if (!is.null(correl_num) && !is.na(correl_num) && correl_num > 0) {
-    top_cor <- head(cor_results[order(-abs(cor_results$Correlation)), ], correl_num)
-  } else if ((!is.null(n_pos) && !is.na(n_pos) && n_pos > 0) ||
-             (!is.null(n_neg) && !is.na(n_neg) && n_neg > 0)) {
-
-    pos <- cor_results[order(-cor_results$Correlation), ]
-    neg <- cor_results[order(cor_results$Correlation), ]
-
-    top_pos <- if (!is.null(n_pos) && !is.na(n_pos) && n_pos > 0) head(pos, n_pos) else NULL
-    top_neg <- if (!is.null(n_neg) && !is.na(n_neg) && n_neg > 0) head(neg, n_neg) else NULL
-    top_cor <- rbind(top_pos, top_neg)
+    valid_rbps <- intersect(other_rbps, cor_results$RBP)
+    top_cor <- cor_results[cor_results$RBP %in% valid_rbps, ]
+  } else if (correl_num_val > 0) {
+    top_cor <- head(cor_results[order(-abs(cor_results$Correlation)), ], correl_num_val)
+  } else if (n_pos_val > 0 || n_neg_val > 0) {
+    top_pos <- if (n_pos_val > 0) head(pos, n_pos_val) else NULL
+    top_neg <- if (n_neg_val > 0) head(neg, n_neg_val) else NULL
+    top_cor <- dplyr::bind_rows(Filter(Negate(is.null), list(top_pos, top_neg)))
   } else {
     stop("Provide either other_rbps, correl_num, or (n_pos and/or n_neg)")
   }
 
-  # --- Heatmap ---
+  # --- Handle empty result gracefully ---
   if (nrow(top_cor) == 0) {
-    heatmap_plot <- NULL
-  } else {
-    top_cor$RBP <- factor(top_cor$RBP, levels = top_cor$RBP)
-    heatmap_plot <- ggplot(top_cor, aes(x = rbp_label, y = RBP, fill = Correlation)) +
-      geom_tile(color = "white") +
-      geom_text(aes(label = sprintf("%.2f", Correlation),
-                    color = ifelse(abs(Correlation) < 0.3, "black", "white")), size = 5) +
-      scale_color_identity() +
-      scale_fill_gradient2(low = "black", mid = "grey50", high = "#601700",
-                           midpoint = 0, limits = c(-1, 1)) +
-      labs(title = paste("Spearman correlations with", rbp_label, "- ΔPSI"),
-           x = "Reference RBP", y = "Other RBPs") +
-      theme_minimal(base_size = 14) +
-      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    p <- ggplot2::ggplot() +
+      ggplot2::labs(title = paste("No correlations available for", rbp_label, "(ΔPSI)")) +
+      ggplot2::theme_minimal()
+    return(list(correlation_table = cor_results, top_table = top_cor, heatmap = p))
   }
+
+  # --- Prepare for bar plot ---
+  top_cor <- top_cor[order(top_cor$Correlation, decreasing = TRUE), ]
+  top_cor$Status <- ifelse(top_cor$Correlation > 0, "Positive", "Negative")
+  top_cor$RBP <- factor(top_cor$RBP, levels = top_cor$RBP[order(top_cor$Correlation)])
+
+  # --- Build bar plot (styled like exp_correl/gsea_correl) ---
+  heatmap_plot <- ggplot2::ggplot(top_cor,
+                                  ggplot2::aes(x = reorder(RBP, Correlation),
+                                               y = Correlation,
+                                               fill = Status)) +
+    ggplot2::geom_col(alpha = 0.8) +
+    ggplot2::scale_fill_manual(values = c("Positive" = up_color, "Negative" = down_color)) +
+    ggplot2::coord_flip() +
+    ggplot2::geom_text(
+      ggplot2::aes(label = sprintf("%.2f", Correlation)),
+      hjust = ifelse(top_cor$Correlation > 0, -0.1, 1.1),
+      color = "white", size = 4
+    ) +
+    ggplot2::labs(
+      x = "RBP",
+      y = "Spearman correlation (ΔPSI)",
+      title = paste("Splicing correlations with", rbp_label),
+      subtitle = paste0("Reference: ", rbp_label),
+      caption = "Method: Spearman"
+    ) +
+    ggplot2::theme_bw(base_family = "Arial MS") +
+    ggplot2::theme(
+      plot.title = ggplot2::element_text(hjust = 0.5, face = "bold"),
+      plot.subtitle = ggplot2::element_text(hjust = 0.5),
+      text = ggplot2::element_text(size = 12),
+      legend.position = if (show_legend) "right" else "none",
+      axis.text = ggplot2::element_text(face = "bold"),
+      axis.title = ggplot2::element_text(face = "bold")
+    )
 
   return(list(
     correlation_table = cor_results,
     top_table = top_cor,
-    heatmap = heatmap_plot
+    heatmap = heatmap_plot   # keep same name for consistency
   ))
 }
 
@@ -1085,21 +1124,21 @@ plot_hallmark_nes_barplot <- function(CharmObj, geneset,
 }
 
 
-plot_event_dpsi_heatmap <- function(CharmObj, Event.ID) {
+plot_event_dpsi_barplot <- function(CharmObj, Event.ID,
+                                    up_color = "#BA3B46",
+                                    down_color = "#53A2BE",
+                                    show_legend = FALSE) {
 
-  # Extract dPSI for the Event.ID across all RBPs safely
-  dPSI_data <- lapply(names(CharmObj), function(rbp) {
+  # --- Extract dPSI for the event across all RBPs safely ---
+  dpsi_data <- lapply(names(CharmObj), function(rbp) {
     df <- CharmObj[[rbp]]$VulcanTable
 
     # Validate structure
     if (!is.null(df) && "dPSI" %in% colnames(df) && "Event.ID" %in% colnames(df)) {
-      # find rows matching the Event.ID
       hits <- which(df$Event.ID == Event.ID)
 
-      if (length(hits) == 1) {
-        data.frame(RBP = rbp, dPSI = as.numeric(df$dPSI[hits]), stringsAsFactors = FALSE)
-      } else if (length(hits) > 1) {
-        # If multiple entries for the same Event.ID, take the first (or change strategy)
+      if (length(hits) >= 1) {
+        # Take first hit if multiple
         data.frame(RBP = rbp, dPSI = as.numeric(df$dPSI[hits[1]]), stringsAsFactors = FALSE)
       } else {
         data.frame(RBP = rbp, dPSI = NA_real_, stringsAsFactors = FALSE)
@@ -1108,39 +1147,55 @@ plot_event_dpsi_heatmap <- function(CharmObj, Event.ID) {
       data.frame(RBP = rbp, dPSI = NA_real_, stringsAsFactors = FALSE)
     }
   }) %>%
-    bind_rows() %>%
-    drop_na(dPSI)
+    dplyr::bind_rows() %>%
+    tidyr::drop_na(dPSI)
 
-  # Check that we found the Event.ID somewhere
-  if (nrow(dPSI_data) == 0) {
-    stop(paste0("Event '", Event.ID, "' not found in any RBP GSEA tables."))
+  # --- Check that we found this Event.ID somewhere ---
+  if (nrow(dpsi_data) == 0) {
+    stop(paste0("Event '", Event.ID, "' not found in any RBP VulcanTable."))
   }
 
-  # Select top 10 and bottom 10
-  top10 <- dPSI_data %>% arrange(desc(dPSI)) %>% slice_head(n = 10)
-  bottom10 <- dPSI_data %>% arrange(dPSI) %>% slice_head(n = 10)
-  selected <- bind_rows(top10, bottom10)
+  # --- Add Status for fill color ---
+  dpsi_data <- dpsi_data %>%
+    dplyr::mutate(Status = ifelse(dPSI > 0, "Upregulated", "Downregulated"))
 
-  # Create a column to use as x-axis (single column heatmap)
-  selected$Event.ID <- Event.ID
+  # --- Select top 10 and bottom 10 by dPSI ---
+  top10 <- dpsi_data %>% dplyr::arrange(desc(dPSI)) %>% dplyr::slice_head(n = 10)
+  bottom10 <- dpsi_data %>% dplyr::arrange(dPSI) %>% dplyr::slice_head(n = 10)
+  selected <- dplyr::bind_rows(top10, bottom10)
 
-  # Order RBPs by NES for visualization (from low -> high)
+  # --- Order RBPs by dPSI value ---
   selected$RBP <- factor(selected$RBP, levels = selected$RBP[order(selected$dPSI)])
 
-  # Build and return the plot
-  p <- ggplot(selected, aes(x = Event.ID, y = RBP, fill = dPSI)) +
-    geom_tile(color = "white") +
-    geom_text(aes(label = sprintf("%.2f", dPSI)), color = "white", size = 5) +
-    scale_fill_gradient2(low = "black", mid = "white", high = "#601700", midpoint = 0) +
-    labs(
-      title = paste0("Top/bottom RBPs by NES for ", Event.ID),
-      x = "", y = "RBP"
+  # --- Build bar plot ---
+  p <- ggplot2::ggplot(selected, ggplot2::aes(x = reorder(RBP, dPSI), y = dPSI, fill = Status)) +
+    ggplot2::geom_col(alpha = 0.8) +
+    ggplot2::scale_fill_manual(values = c("Upregulated" = up_color, "Downregulated" = down_color)) +
+    ggplot2::coord_flip() +
+    ggplot2::geom_text(
+      ggplot2::aes(label = sprintf("%.2f", dPSI)),
+      hjust = ifelse(selected$dPSI > 0, -0.1, 1.1),
+      color = "white", size = 4
     ) +
-    theme_minimal(base_size = 14) +
-    theme(
-      axis.ticks.x = element_blank(),
-      axis.text.x = element_text(face = "italic")  # italic x-axis label (the geneset)
+    ggplot2::labs(
+      x = "RBP",
+      y = "ΔPSI",
+      title = paste0("Top/bottom RBPs by ΔPSI for event ", Event.ID),
+      subtitle = paste0("Event ID: ", Event.ID),
+      caption = "Only top/bottom 10 shown"
+    ) +
+    ggplot2::theme_bw(base_family = "Arial MS") +
+    ggplot2::theme(
+      plot.title = ggplot2::element_text(hjust = 0.5, face = "bold", size = 18),
+      plot.subtitle = ggplot2::element_text(hjust = 0.5, size = 14),
+      text = ggplot2::element_text(size = 14),
+      legend.position = if (show_legend) "right" else "none",
+      axis.text = ggplot2::element_text(face = "bold"),
+      axis.title = ggplot2::element_text(face = "bold"),
+      legend.title = ggplot2::element_text(face = "bold"),
+      legend.text = ggplot2::element_text(face = "bold")
     )
 
   return(p)
 }
+

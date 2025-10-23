@@ -773,7 +773,7 @@ server <- function(input, output, session) {
     charm_obj <- current_charm_splice()
 
     output$heatmap_splicing_dpsi <- renderPlot({
-      plot_event_dpsi_heatmap(charm_obj, event_id)
+      plot_event_dpsi_barplot(charm_obj, event_id)
     })
   })
 
@@ -1109,60 +1109,61 @@ server <- function(input, output, session) {
   observeEvent(input$user_file_plot_btn_splice, {
     req(user_splice_df())
     selected_rbps <- input$user_file_compare_splice
+
     datasets <- list(
       "Both Cells" = Charm.object,
-      "K562"       = Charm.object_K562,
-      "HEPG2"      = Charm.object_HEPG2
+      "K562" = Charm.object_K562,
+      "HEPG2" = Charm.object_HEPG2
     )
-
-    if (length(selected_rbps) == 0) selected_rbps <- NULL
 
     output$similar_splice_plots_file <- renderUI({
       tagList(
-        tags$div("Generating plots, please wait...",
-                 style = "font-weight:bold;color:#A10702;margin-bottom:15px;"),
-
+        tags$div("Generating plots, please wait...", style = "font-weight:bold;color:#A10702;margin-bottom:15px;"),
         lapply(names(datasets), function(ds_name) {
           plotname <- paste0("userfile_plot_splice_", ds_name)
 
-          output[[plotname]] <- if (!is.null(selected_rbps) && length(selected_rbps) == 1) {
-            renderPlotly({
-              res <- correl_splicing_rbp_plotly(datasets[[ds_name]], user_splice_df(), selected_rbps)
-              ggplotly(res$plot)
+          if (!is.null(selected_rbps) && length(selected_rbps) == 1) {
+            output[[plotname]] <- renderPlotly({
+              correl_splicing_rbp_plotly(datasets[[ds_name]], user_splice_df(), selected_rbps)
             })
+            plot_ui <- plotlyOutput(plotname, height = "500px")
           } else {
-            renderPlot({
+            output[[plotname]] <- renderPlot({
               heat_res <- splicing_correl(
-                datasets[[ds_name]], user_splice_df(),
+                datasets[[ds_name]],
+                user_splice_df(),
                 correl_num = input$user_file_topN_splice,
                 n_pos = input$user_file_n_pos_splice,
                 n_neg = input$user_file_n_neg_splice,
-                other_rbps = selected_rbps
+                other_rbps = if (!is.null(selected_rbps) && length(selected_rbps) > 1) selected_rbps else NULL
               )
-              heatmap$plot
+              heat_res$heatmap  # <-- make sure to return $heatmap, not $plot
             })
+            plot_ui <- plotOutput(plotname, height = "500px")
           }
 
           column(
             width = 12,
-            tags$h4(ds_name, style="text-align:center;"),
-            if (!is.null(selected_rbps) && length(selected_rbps) == 1) {
-              shinycssloaders::withSpinner(plotlyOutput(plotname, height="500px"))
-            } else {
-              shinycssloaders::withSpinner(plotOutput(plotname, height="500px"))
-            }
+            tags$h4(ds_name, style = "text-align:center;"),
+            shinycssloaders::withSpinner(plot_ui)
           )
-        })
+        }) %>% tagList()
       )
     })
   })
-
   # ---- Reset button ----
   observeEvent(input$user_file_reset_btn_splice, {
-    output$similar_splice_plots <- renderUI(NULL)
-    updateSelectizeInput(session, "user_file_compare_splice", selected = "")
-  })
+    # Clear the UI for user_file plots
+    output$similar_splice_plots_file <- renderUI(NULL)
 
+    # Reset the selectize input
+    updateSelectizeInput(session, "user_file_compare_splice", selected = "")
+
+    # Reset numeric inputs if any
+    updateNumericInput(session, "user_file_topN_splice", value = NA)
+    updateNumericInput(session, "user_file_n_pos_splice", value = NA)
+    updateNumericInput(session, "user_file_n_neg_splice", value = NA)
+  })
 
   #BINDING
   observe({
@@ -1593,18 +1594,19 @@ server <- function(input, output, session) {
     charm_obj <- current_charm_splice()
 
     output$heatmap_splicing_dpsi <- renderPlot({
-      plot_event_dpsi_heatmap(charm_obj, event_id)
+      plot_event_dpsi_barplot(charm_obj, event_id)
     })
   })
 
   # ---- Similar RBPs: Splicing correlation ----
   observeEvent(input$similar_plot_btn_splice, {
     req(input$splice_dataset)
-    if(input$splice_dataset != "Similar RBPs") return(NULL)
+    if (input$splice_dataset != "Similar RBPs") return(NULL)
     req(input$splice_search)
     rbp1 <- input$splice_search
 
-    mode <- "splice"  # Only one mode here, or could extend if needed
+    # Only one mode currently
+    mode <- "splice"
 
     # Choose datasets
     datasets <- list(
@@ -1621,44 +1623,40 @@ server <- function(input, output, session) {
     n_pos      <- input$n_pos_splice
     n_neg      <- input$n_neg_splice
 
-    if(length(selected_rbps) == 0) selected_rbps <- NULL
+    if (length(selected_rbps) == 0) selected_rbps <- NULL
 
-    # Render UI
     output$similar_splice_plots <- renderUI({
-  tagList(
-    lapply(names(datasets), function(ds_name) {
-      plotname <- paste0("similar_splice_plot_", ds_name)
+      tagList(
+        lapply(names(datasets), function(ds_name) {
+          plotname <- paste0("similar_splice_plot_", ds_name)
 
-      output[[plotname]] <- if(!is.null(selected_rbps) && length(selected_rbps) == 1) {
-        renderPlotly({
-          # Just call the function directly; it returns a plotly object
-          correl_splicing_rbp_plotly(datasets[[ds_name]], rbp1, selected_rbps)
-        })
-      } else {
-        renderPlot({
-          heat_res <- heatmap_fun(
-            datasets[[ds_name]], rbp1,
-            correl_num = correl_num,
-            n_pos = n_pos,
-            n_neg = n_neg,
-            other_rbps = if(!is.null(selected_rbps) && length(selected_rbps) > 1) selected_rbps else NULL
+          if (!is.null(selected_rbps) && length(selected_rbps) == 1) {
+            output[[plotname]] <- renderPlotly({
+              scatter_fun(datasets[[ds_name]], rbp1, selected_rbps)
+            })
+            plot_ui <- plotlyOutput(plotname, height = "500px")
+          } else {
+            output[[plotname]] <- renderPlot({
+              heat_res <- heatmap_fun(
+                datasets[[ds_name]], rbp1,
+                correl_num = correl_num,
+                n_pos = n_pos,
+                n_neg = n_neg,
+                other_rbps = if (!is.null(selected_rbps) && length(selected_rbps) > 1) selected_rbps else NULL
+              )
+              heat_res$heatmap   # ✅ FIXED LINE
+            })
+            plot_ui <- plotOutput(plotname, height = "500px")
+          }
+
+          column(
+            width = 12,
+            tags$h4(ds_name, style = "text-align:center;"),
+            shinycssloaders::withSpinner(plot_ui)
           )
-          heatmap$plot
-        })
-      }
-
-      column(
-        width = 12,
-        tags$h4(ds_name, style = "text-align:center;"),
-        if(!is.null(selected_rbps) && length(selected_rbps) == 1) {
-          shinycssloaders::withSpinner(plotlyOutput(plotname, height = "500px"))
-        } else {
-          shinycssloaders::withSpinner(plotOutput(plotname, height = "500px"))
-        }
+        }) %>% tagList()  # flatten
       )
     })
-  )
-})
   })
 
 
