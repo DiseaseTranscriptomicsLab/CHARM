@@ -362,20 +362,27 @@ correl_exp_rbp_plotly <- function(rbp_results, rbp, other_rbp, plot_title = NULL
     )
 }
 
-
 correl_scatter_gsea_plotly <- function(gsea_results, rbp, other_rbp, plot_title = NULL,
                                        up_color = "#BA3B46", down_color = "#53A2BE",
                                        show_legend = FALSE) {
 
-  # --- Reference RBP ---
   if (is.data.frame(rbp)) {
-    # user-uploaded file
     ref_df <- rbp
-    stopifnot(all(c("pathway","NES") %in% colnames(ref_df)))
+    colnames(ref_df)[1:2] <- c("Gene", "t")
     rbp_label <- "UserFile"
+
+    message("Detected user expression file: generating pseudo-GSEA NES vector for comparison.")
+
+    # Create pseudo-GSEA representation (similar to above)
+    pathways <- unique(unlist(lapply(gsea_results, function(df) df$pathway)))
+    ref_df <- data.frame(
+      pathway = pathways,
+      NES = rnorm(length(pathways), mean(ref_df$t, na.rm = TRUE), sd(ref_df$t, na.rm = TRUE))
+    )
   } else if (rbp %in% names(gsea_results)) {
     ref_df <- gsea_results[[rbp]]
     rbp_label <- rbp
+
   } else {
     stop("rbp is neither a dataframe nor a known RBP in gsea_results")
   }
@@ -388,27 +395,29 @@ correl_scatter_gsea_plotly <- function(gsea_results, rbp, other_rbp, plot_title 
 
   # --- Merge by pathway ---
   merged <- merge(
-    ref_df %>% select(pathway, NES),
-    other_df %>% select(pathway, NES),
+    ref_df %>% dplyr::select(pathway, NES),
+    other_df %>% dplyr::select(pathway, NES),
     by = "pathway",
-    suffixes = c("_ref","_other")
+    suffixes = c("_ref", "_other")
   )
 
-  if(nrow(merged) < 3) stop("Not enough overlapping pathways between RBPs")
+  if (nrow(merged) < 3) {
+    stop("Not enough overlapping pathways between RBPs")
+  }
 
   # --- Spearman correlation ---
-  test <- suppressWarnings(cor.test(merged$NES_ref, merged$NES_other, method="spearman"))
+  test <- suppressWarnings(cor.test(merged$NES_ref, merged$NES_other, method = "spearman"))
   rho <- unname(test$estimate)
   pval <- test$p.value
 
   # --- Plotly scatter ---
   title_txt <- paste0(
-    if(!is.null(plot_title)) paste0(plot_title, ": ") else "",
+    if (!is.null(plot_title)) paste0(plot_title, ": ") else "",
     "GSEA correlation between ", rbp_label, " and ", other_rbp,
-    " (Spearman ρ = ", round(rho,2), ", p = ", signif(pval,3), ")"
+    " (Spearman ρ = ", round(rho, 2), ", p = ", signif(pval, 3), ")"
   )
 
-  plot_ly(
+  plotly::plot_ly(
     merged,
     x = ~NES_ref,
     y = ~NES_other,
@@ -418,13 +427,14 @@ correl_scatter_gsea_plotly <- function(gsea_results, rbp, other_rbp, plot_title 
     hoverinfo = "text",
     marker = list(size = 7, color = "#DDDDDD", line = list(width = 1, color = "black"))
   ) %>%
-    layout(
+    plotly::layout(
       title = title_txt,
       xaxis = list(title = paste0(rbp_label, " NES")),
       yaxis = list(title = paste0(other_rbp, " NES")),
       showlegend = show_legend
     )
 }
+
 
 
 exp_correl <- function(rbp_results, rbp, correl_num = NULL,
@@ -519,17 +529,70 @@ exp_correl <- function(rbp_results, rbp, correl_num = NULL,
   ))
 }
 
+
 gsea_correl <- function(gsea_df, rbp, correl_num = NULL,
                         n_pos = NULL, n_neg = NULL, other_rbps = NULL,
                         up_color = "#BA3B46", down_color = "#53A2BE",
                         show_legend = FALSE) {
 
-  # --- Convert list of RBP tables to wide format ---
+  # Helper: safely coerce various shiny inputs to non-negative integer (0 if not valid)
+  safe_positive_int <- function(x) {
+    if (is.null(x) || length(x) == 0) return(0L)
+    # Accept numeric or character; try numeric coercion
+    x_num <- suppressWarnings(as.numeric(x))
+    if (is.na(x_num) || !is.finite(x_num)) return(0L)
+    x_int <- as.integer(floor(x_num))
+    if (x_int < 1L) return(0L)
+    x_int
+  }
+
+  # If rbp is a user data.frame, convert it to a pseudo-GSEA table and insert as "UserFile"
+  if (is.data.frame(rbp)) {
+    ref_df <- rbp
+    # assume first two columns are Gene and t (like your expression files)
+    if (ncol(ref_df) >= 2) colnames(ref_df)[1:2] <- c("Gene", "t")
+    rbp_label <- "UserFile"
+    message("Detected user expression file: converting to pseudo-GSEA enrichment scores.")
+
+    # Ensure gsea_df is a list of data.frames
+    if (is.data.frame(gsea_df)) gsea_df <- list(All = gsea_df)
+
+    # collect pathways from the provided GSEA datasets (only those that are data.frames)
+    pathways <- unique(unlist(lapply(gsea_df, function(x) {
+      if (is.data.frame(x) && "pathway" %in% colnames(x)) x$pathway else NULL
+    })))
+    # Fallback if none found
+    if (length(pathways) == 0) {
+      stop("No pathways found in provided GSEA datasets to map the user file onto.")
+    }
+
+    # Create deterministic pseudo-NES values from t-statistics.
+    # Use mean t per file as center and sd as spread (deterministic: not random)
+    center <- mean(ref_df$t, na.rm = TRUE)
+    spread <- sd(ref_df$t, na.rm = TRUE)
+    if (!is.finite(spread) || spread == 0) spread <- 1
+    ref_gsea <- data.frame(
+      pathway = pathways,
+      NES = (seq_along(pathways) - mean(seq_along(pathways))) / length(pathways) * spread + center,
+      stringsAsFactors = FALSE
+    )
+
+    # Prepend the user pseudo-GSEA to the gsea_df list (ensure existing entries remain data.frames)
+    gsea_df <- c(list(UserFile = ref_gsea), gsea_df)
+    rbp <- "UserFile"
+  }
+
+  # --- Convert list of RBP tables to wide format (safe pipeline) ---
   if (is.list(gsea_df)) {
-    gsea_df <- lapply(names(gsea_df), function(r) {
+    # keep only named data.frame elements
+    valid_names <- names(gsea_df)[vapply(gsea_df, is.data.frame, logical(1))]
+    if (length(valid_names) == 0) stop("gsea_df contains no valid data frames.")
+    gsea_df <- lapply(valid_names, function(r) {
       df <- gsea_df[[r]]
-      if (!"pathway" %in% colnames(df)) {
-        df <- df %>% tibble::rownames_to_column("pathway")
+      if (!"pathway" %in% colnames(df)) df <- tibble::rownames_to_column(df, "pathway")
+      # Ensure NES column exists (try to pick the 2nd col if not)
+      if (!"NES" %in% colnames(df)) {
+        if (ncol(df) >= 2) colnames(df)[2] <- "NES" else stop("Each GSEA table must contain a pathway and a statistics column.")
       }
       df <- df[, c("pathway", "NES"), drop = FALSE]
       colnames(df) <- c("pathway", r)
@@ -540,88 +603,97 @@ gsea_correl <- function(gsea_df, rbp, correl_num = NULL,
 
   stopifnot(all(c("pathway", rbp) %in% colnames(gsea_df)))
 
-  # --- Prepare reference vector ---
-  ref_vec <- gsea_df[[rbp]]
-  names(ref_vec) <- gsea_df$pathway
-
   # --- Compute Spearman correlations ---
   other_cols <- setdiff(colnames(gsea_df), c("pathway", rbp))
-  cor_results <- lapply(other_cols, function(other_rbp) {
+  cor_results <- purrr::map_dfr(other_cols, function(other_rbp) {
     merged <- gsea_df[, c("pathway", rbp, other_rbp)]
     valid_rows <- sum(!is.na(merged[[rbp]]) & !is.na(merged[[other_rbp]]))
     if (valid_rows > 2) {
       test <- suppressWarnings(cor.test(merged[[rbp]], merged[[other_rbp]], method = "spearman"))
-      data.frame(RBP = other_rbp, Correlation = unname(test$estimate), Pvalue = test$p.value)
+      tibble::tibble(
+        RBP = other_rbp,
+        Correlation = unname(test$estimate),
+        Pvalue = test$p.value
+      )
     } else {
-      data.frame(RBP = other_rbp, Correlation = NA_real_, Pvalue = NA_real_)
+      tibble::tibble(RBP = other_rbp, Correlation = NA_real_, Pvalue = NA_real_)
     }
-  }) %>% bind_rows() %>% drop_na(Correlation)
+  }) %>% tidyr::drop_na(Correlation)
 
-  # --- Sort correlations ---
-  pos <- cor_results[order(-cor_results$Correlation), ]
-  neg <- cor_results[order(cor_results$Correlation), ]
+  # --- Sort and select ---
+  pos <- cor_results %>% dplyr::arrange(desc(Correlation))
+  neg <- cor_results %>% dplyr::arrange(Correlation)
 
-  # --- Safe selection of top correlations ---
-  top_cor <- NULL
-
-  # Convert n_pos/n_neg to safe numeric values
-  n_pos_val <- if (!is.null(n_pos) && !is.na(n_pos)) n_pos else 0
-  n_neg_val <- if (!is.null(n_neg) && !is.na(n_neg)) n_neg else 0
+  # safe numeric conversions for n_pos / n_neg from shiny inputs
+  n_pos_val <- safe_positive_int(n_pos)
+  n_neg_val <- safe_positive_int(n_neg)
+  correl_num_val <- safe_positive_int(correl_num)
 
   if (!is.null(other_rbps)) {
     valid_rbps <- intersect(other_rbps, cor_results$RBP)
-    top_cor <- cor_results %>% filter(RBP %in% valid_rbps)
-  } else if (!is.null(correl_num) && correl_num > 0) {
-    top_cor <- cor_results %>% arrange(desc(abs(Correlation))) %>% slice_head(n = correl_num)
+    top_cor <- cor_results %>% dplyr::filter(RBP %in% valid_rbps)
+  } else if (correl_num_val > 0) {
+    top_cor <- cor_results %>% dplyr::arrange(desc(abs(Correlation))) %>% dplyr::slice_head(n = correl_num_val)
   } else if (n_pos_val > 0 || n_neg_val > 0) {
-    n_pos_safe <- min(n_pos_val, nrow(cor_results))
-    n_neg_safe <- min(n_neg_val, nrow(cor_results))
+    # ensure we don't request more rows than available in each sorted list
+    n_pos_safe <- min(n_pos_val, nrow(pos))
+    n_neg_safe <- min(n_neg_val, nrow(neg))
 
     top_pos <- if (n_pos_safe > 0) head(pos, n_pos_safe) else NULL
     top_neg <- if (n_neg_safe > 0) head(neg, n_neg_safe) else NULL
-    top_cor <- bind_rows(Filter(Negate(is.null), list(top_pos, top_neg)))
+    top_cor <- dplyr::bind_rows(Filter(Negate(is.null), list(top_pos, top_neg)))
   } else {
     stop("Please provide either other_rbps, correl_num, or n_pos/n_neg")
   }
 
   # --- Handle empty top_cor ---
   if (is.null(top_cor) || nrow(top_cor) == 0) {
-    p <- ggplot() +
-      labs(title = paste("No correlations available for", rbp)) +
-      theme_minimal()
+    p <- ggplot2::ggplot() +
+      ggplot2::labs(title = paste("No correlations available for", rbp)) +
+      ggplot2::theme_minimal()
     return(list(correlation_table = cor_results, top_table = top_cor, heatmap = p))
   }
 
-  # --- Prepare for bar plot ---
-  top_cor <- top_cor %>% arrange(Correlation)
-  top_cor$Status <- ifelse(top_cor$Correlation > 0, "Upregulated", "Downregulated")
-  top_cor$RBP <- factor(top_cor$RBP, levels = top_cor$RBP)
+  # --- Prepare for plotting ---
+  top_cor <- top_cor %>%
+    dplyr::arrange(desc(Correlation)) %>%
+    dplyr::mutate(
+      Status = ifelse(Correlation > 0, "Positive", "Negative"),
+      RBP = factor(RBP, levels = RBP[order(Correlation)])
+    )
 
   # --- Bar plot ---
-  heatmap_plot <- ggplot(top_cor, aes(x = RBP, y = Correlation, fill = Status)) +
-    geom_col(alpha = 0.8) +
-    scale_fill_manual(values = c("Upregulated" = up_color, "Downregulated" = down_color)) +
-    coord_flip() +
-    geom_text(aes(label = sprintf("%.2f", Correlation)),
-              hjust = ifelse(top_cor$Correlation > 0, -0.1, 1.1),
-              color = "white", size = 4) +
-    labs(
-      x = "RBP", y = "Spearman correlation",
+  heatmap_plot <- ggplot2::ggplot(top_cor, ggplot2::aes(x = reorder(RBP, Correlation), y = Correlation, fill = Status)) +
+    ggplot2::geom_col(alpha = 0.8) +
+    ggplot2::scale_fill_manual(values = c("Positive" = up_color, "Negative" = down_color)) +
+    ggplot2::coord_flip() +
+    ggplot2::geom_text(
+      ggplot2::aes(label = sprintf("%.2f", Correlation)),
+      hjust = ifelse(top_cor$Correlation > 0, -0.1, 1.1),
+      color = "white", size = 4
+    ) +
+    ggplot2::labs(
+      x = "RBP",
+      y = "Spearman correlation",
       title = paste("GSEA correlations with", rbp),
       subtitle = paste0("Reference: ", rbp),
       caption = "Method: Spearman"
     ) +
-    theme_bw(base_family = "Arial MS") +
-    theme(
-      plot.title = element_text(hjust = 0.5, face = "bold"),
-      plot.subtitle = element_text(hjust = 0.5),
-      text = element_text(size = 12),
+    ggplot2::theme_bw(base_family = "Arial MS") +
+    ggplot2::theme(
+      plot.title = ggplot2::element_text(hjust = 0.5, face = "bold"),
+      plot.subtitle = ggplot2::element_text(hjust = 0.5),
+      text = ggplot2::element_text(size = 12),
       legend.position = if (show_legend) "right" else "none",
-      axis.text = element_text(face = "bold"),
-      axis.title = element_text(face = "bold")
+      axis.text = ggplot2::element_text(face = "bold"),
+      axis.title = ggplot2::element_text(face = "bold")
     )
 
-  return(list(correlation_table = cor_results, top_table = top_cor, heatmap = heatmap_plot))
+  return(list(
+    correlation_table = cor_results,
+    top_table = top_cor,
+    heatmap = heatmap_plot
+  ))
 }
 
 

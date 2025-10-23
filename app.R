@@ -960,48 +960,51 @@ server <- function(input, output, session) {
 
     output[[target_ui]] <- renderUI({
       tagList(
-        tags$div("Generating plots, please wait...",
-                 style = "font-weight:bold;color:#A10702;margin-bottom:15px;"),
+        tags$div(
+          "Generating plots, please wait...",
+          style = "font-weight:bold;color:#A10702;margin-bottom:15px;"
+        ),
 
+        # Generate all dataset plots dynamically
         lapply(names(datasets), function(ds_name) {
           plotname <- paste0("userfile_plot_", ds_name)
 
-          output[[plotname]] <- if (!is.null(selected_rbps) && length(selected_rbps) == 1) {
-            renderPlotly({
+          # Dynamic output creation
+          if (!is.null(selected_rbps) && length(selected_rbps) == 1) {
+            output[[plotname]] <- renderPlotly({
               scatter_fun(
                 datasets[[ds_name]],
                 user_expr_df(),
-                selected_rbps[1],   # <-- force single string
+                selected_rbps[1],
                 plot_title = ds_name
               )
             })
+            plot_ui <- plotlyOutput(plotname, height = "500px")
           } else {
-            renderPlot({
+            output[[plotname]] <- renderPlot({
               heat_res <- heatmap_fun(
-                datasets[[ds_name]], user_expr_df(),
+                datasets[[ds_name]],
+                user_expr_df(),
                 correl_num = if (mode == "expr") input$user_file_topN_expr else input$user_file_topN_gsea,
                 n_pos      = if (mode == "expr") input$user_file_n_pos_expr else input$user_file_n_pos_gsea,
                 n_neg      = if (mode == "expr") input$user_file_n_neg_expr else input$user_file_n_neg_gsea,
                 other_rbps = if (!is.null(selected_rbps) && length(selected_rbps) > 1) selected_rbps else NULL
               )
-              heatmap$plot
+              heat_res$heatmap   # ✅ FIXED
             })
+            plot_ui <- plotOutput(plotname, height = "500px")
           }
 
+          # Return UI element for each dataset
           column(
             width = 12,
-            tags$h4(ds_name, style="text-align:center;"),
-            if (!is.null(selected_rbps) && length(selected_rbps) == 1) {
-              shinycssloaders::withSpinner(plotlyOutput(plotname, height="500px"))
-            } else {
-              shinycssloaders::withSpinner(plotOutput(plotname, height="500px"))
-            }
+            tags$h4(ds_name, style = "text-align:center;"),
+            shinycssloaders::withSpinner(plot_ui)
           )
-        })
+        }) %>% tagList()  # flatten
       )
     })
   })
-
   # ---- Reset button ----
   observeEvent(input$user_file_reset_btn, {
     output$userfilesimilar_expr <- renderUI(NULL)
