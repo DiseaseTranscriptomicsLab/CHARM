@@ -1,0 +1,903 @@
+---
+title: "CHARM: Data Processing"
+subtitle: "Comprehensive Hub for Alternative Regulatory Mapping"
+author: 
+  - name: "Alexandre Kaizeler^[Disease Transcriptomics Group, Gulbenkian Institute of Molecular Medicine]"
+    email: alexandreafonso@gimm.pt
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: 
+  rmdformats::downcute:
+    downcute_theme: "chaos"
+---
+
+# General
+
+## Import libraries
+
+```{r libraries, echo=FALSE}
+# These are all the libraries I used throughout the analysis. Not all of them will be required on this guidebook
+library(Rsubread)
+library(limma)
+library(edgeR)
+library(DESeq2)
+library(magrittr)
+library(ggrepel)
+library(tidyverse)
+library(vsn)
+library(ggplot2)
+library(NMF)
+library(biomaRt)
+library(ggpubr)
+library(factoextra)
+library(ggfortify)
+library(plotly)
+library(reshape2)
+library(fgsea)
+library(msigdbr)
+library(data.table)
+library(colorspace)
+library(readxl)
+library(fs)
+library(betAS)
+
+set.seed(1906)
+```
+
+# A. Data Processing 
+
+*Date: August 22th 2025*
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Setup
+
+### Import data
+
+To create the R object that we will use for CHARM, we need three data types:
+
+Expression: Differential expression upon RBP knockdown/knockout, with pathway-level insights from Gene Set Enrichment Analysis.
+
+Splicing: Alternative splicing changes quantified with betAS (Ferreira et al., 2024), using VastDB nomenclature (Tapial et al., 2017).
+
+Binding: Altered RNA binding patterns of the silenced RBP and other RBPs, characterized with the eCLIPSE tool.
+
+### Binding
+
+This is a complex process, so we will start by simplifying the data we already have. First, we sabe all the tables from betAS has .txt files. This is because since this process is very heavy and slow, we won't use R for this, but instead python. To facilitate file usage between the two programming languages, these files will always be saved as .txt or other similar file types.
+
+```{r}
+
+CharmObj_rbp_All <- readRDS("~/Projects/CHARM/data/Charm.object.RDS")
+CharmObj_rbp_HEPG2 <- readRDS("~/Projects/CHARM/data/Charm.object_HEPG2.RDS")
+CharmObj_rbp_K562 <- readRDS("~/Projects/CHARM/data/Charm.object_K562.RDS")
+eCLIPSE_BigExon_full <- fread("~/Projects/StressGranules/AS.WC_Transcriptome/eCLIPSE/eCLIPSE_BigExon.csv", header = T)[,-1]
+
+for (rbp in unique(eCLIPSE_BigExon_full$RBP)) {
+  if (!is.null(CharmObj_rbp_All[[rbp]])) {
+    betAsframe <- CharmObj_rbp_All[[rbp]]$VulcanTable
+    
+    outfile <- file.path(
+      path.expand("~/Projects/StressGranules/AS.WC_Transcriptome"),
+      paste0("shRNAExp/", rbp,"/", rbp,  "_VulcanTable_both.txt")
+    )
+    
+    write.table(betAsframe, outfile, row.names = FALSE, col.names = TRUE, sep = "\t", quote = FALSE)
+    message("Saved: ", outfile)
+  } else {
+    message("Skipping missing RBP: ", rbp)
+  }
+}
+
+for (rbp in unique(eCLIPSE_BigExon_full$RBP)) {
+  if (!is.null(CharmObj_rbp_HEPG2[[rbp]])) {
+    betAsframe <- CharmObj_rbp_HEPG2[[rbp]]$VulcanTable
+    
+    outfile <- file.path(
+      path.expand("~/Projects/StressGranules/AS.WC_Transcriptome"),
+      paste0("shRNAExp/", rbp,"/", rbp,  "_VulcanTable_HEPG2.txt")
+    )
+    
+    write.table(betAsframe, outfile, row.names = FALSE, col.names = TRUE, sep = "\t", quote = FALSE)
+    message("Saved: ", outfile)
+  } else {
+    message("Skipping missing RBP: ", rbp)
+  }
+}
+
+for (rbp in unique(eCLIPSE_BigExon_full$RBP)) {
+  if (!is.null(CharmObj_rbp_K562[[rbp]])) {
+    betAsframe <- CharmObj_rbp_K562[[rbp]]$VulcanTable
+    
+    outfile <- file.path(
+      path.expand("~/Projects/StressGranules/AS.WC_Transcriptome"),
+      paste0("shRNAExp/", rbp,"/", rbp,  "_VulcanTable_K562.txt")
+    )
+    
+    write.table(betAsframe, outfile, row.names = FALSE, col.names = TRUE, sep = "\t", quote = FALSE)
+    message("Saved: ", outfile)
+  } else {
+    message("Skipping missing RBP: ", rbp)
+  }
+}
+
+
+```
+
+### File Filtration
+
+```{r}
+EventsBoth <- readRDS("~/Projects/CHARM/data/AvailableEvents_Both.RDS")
+EventsK562 <- readRDS("~/Projects/CHARM/data/AvailableEvents_K562.RDS")
+EventsHEPG2 <- readRDS("~/Projects/CHARM/data/AvailableEvents_HEPG2.RDS")
+
+eCLIPSE_BigExon_full_both <- eCLIPSE_BigExon_full[eCLIPSE_BigExon_full$EVENTS %in% EventsBoth,]
+eCLIPSE_BigExon_full_K562 <- eCLIPSE_BigExon_full[eCLIPSE_BigExon_full$EVENTS %in% EventsK562,]
+eCLIPSE_BigExon_full_HEPG2 <- eCLIPSE_BigExon_full[eCLIPSE_BigExon_full$EVENTS %in% EventsHEPG2,]
+
+write.table(eCLIPSE_BigExon_full_both, "~/Projects/CHARM/data/eCLIPSE_BigExon_both.txt", row.names = F, col.names = T)
+write.table(eCLIPSE_BigExon_full_K562, "~/Projects/CHARM/data/eCLIPSE_BigExon_K562.txt", row.names = F, col.names = T)
+write.table(eCLIPSE_BigExon_full_HEPG2, "~/Projects/CHARM/data/eCLIPSE_BigExon_HEPG2.txt", row.names = F, col.names = T)
+
+eCLIPSE_Intron_full_both <- eCLIPSE_Intron_full[eCLIPSE_Intron_full$EVENTS %in% EventsBoth,]
+eCLIPSE_Intron_full_K562 <- eCLIPSE_Intron_full[eCLIPSE_Intron_full$EVENTS %in% EventsK562,]
+eCLIPSE_Intron_full_HEPG2 <- eCLIPSE_Intron_full[eCLIPSE_Intron_full$EVENTS %in% EventsHEPG2,]
+
+write.table(eCLIPSE_Intron_full_both, "~/Projects/CHARM/data/eCLIPSE_Intron_both.txt", row.names = F, col.names = T)
+write.table(eCLIPSE_Intron_full_K562, "~/Projects/CHARM/data/eCLIPSE_Intron_K562.txt", row.names = F, col.names = T)
+write.table(eCLIPSE_Intron_full_HEPG2, "~/Projects/CHARM/data/eCLIPSE_Intron_HEPG2.txt", row.names = F, col.names = T)
+```
+
+
+# B. Function preparation (R Based)
+
+These are the relevant functions I have used as a standalone eCLIPSE tool. Here, I will make some changes to accomodate and simplyfy the process.
+
+## Exon Skipping Analysis
+
+```{r}
+eCLIPSE_BigExon_full <- fread("~/Projects/StressGranules/AS.WC_Transcriptome/eCLIPSE/eCLIPSE_BigExon.csv", header = T)[,-1]
+
+
+eCLIPSE_heatmap <- function(metric, rnamapfile, pvalthreshold=0.05, PSIthreshold=0.05, ASfile, rnaBP, plot=FALSE){
+  
+  ASfile <- ASfile[grepl("HsaEX", Event.ID)]
+  
+  AS_events <- ASfile$Event.ID
+ 
+  ASfile_filt_increased <- subset(ASfile, dPSI>PSIthreshold)
+  ASfile_filt_decreased <- subset(ASfile, dPSI< -PSIthreshold)
+  ASfile_filt_maintained <- subset(ASfile, !(dPSI > PSIthreshold) & !(dPSI < -PSIthreshold))
+
+  #And now the eCLIPSE file
+  rnamapfile_rbp_increased <- subset(rnamapfile, EVENTS %in% ASfile_filt_increased$Event.ID)
+  rnamapfile_rbp_maintained <- subset(rnamapfile, EVENTS %in% ASfile_filt_maintained$Event.ID)
+  rnamapfile_rbp_decreased <- subset(rnamapfile, EVENTS %in% ASfile_filt_decreased$Event.ID)
+  
+  rnamapfile_rbp_increased_rbp <- subset(rnamapfile_rbp_increased, RBP==rnaBP)
+  rnamapfile_rbp_increased_nrbp <- subset(rnamapfile_rbp_increased, RBP!=rnaBP)
+  rnamapfile_rbp_increased_nrbp <- rnamapfile_rbp_increased_nrbp[!duplicated(rnamapfile_rbp_increased_nrbp$EVENTS), ]
+  rnamapfile_rbp_increased_nrbp[rnamapfile_rbp_increased_nrbp == 1] <- 0
+  rnamapfile_rbp_maintained_rbp <- subset(rnamapfile_rbp_maintained, RBP==rnaBP)
+  rnamapfile_rbp_maintained_nrbp <-subset(rnamapfile_rbp_maintained, RBP!=rnaBP)
+  rnamapfile_rbp_maintained_nrbp <- rnamapfile_rbp_maintained_nrbp[!duplicated(rnamapfile_rbp_maintained_nrbp$EVENTS), ]
+  rnamapfile_rbp_maintained_nrbp[rnamapfile_rbp_maintained_nrbp == 1] <- 0
+  rnamapfile_rbp_decreased_rbp <- subset(rnamapfile_rbp_decreased, RBP==rnaBP)
+  rnamapfile_rbp_decreased_nrbp <- subset(rnamapfile_rbp_decreased, RBP!=rnaBP)
+  rnamapfile_rbp_decreased_nrbp <- rnamapfile_rbp_decreased_nrbp[!duplicated(rnamapfile_rbp_decreased_nrbp$EVENTS), ]
+  rnamapfile_rbp_decreased_nrbp[rnamapfile_rbp_decreased_nrbp == 1] <- 0
+  
+  rnamapfile_rbp_increased <- rbind(rnamapfile_rbp_increased_rbp, rnamapfile_rbp_increased_nrbp)
+  rnamapfile_rbp_decreased <- rbind(rnamapfile_rbp_decreased_rbp, rnamapfile_rbp_decreased_nrbp)
+  rnamapfile_rbp_maintained <- rbind(rnamapfile_rbp_maintained_rbp, rnamapfile_rbp_maintained_nrbp)
+  
+  if (nrow(rnamapfile_rbp_increased) < 10 || 
+      nrow(rnamapfile_rbp_maintained) < 10 || 
+      nrow(rnamapfile_rbp_decreased) < 10) {
+    print(paste0(rnaBP," does not have enough events."))
+    return()  # Skip to the next iteration
+  }
+  
+  rnamapfile_rbp_increased <- rnamapfile_rbp_increased[,-c(1001,1002)]
+  rnamapfile_rbp_increased <- apply(rnamapfile_rbp_increased, c(1, 2), as.numeric)
+  rnamapfile_rbp_increased_comp <- colSums(rnamapfile_rbp_increased, na.rm = TRUE)
+  rnamapfile_rbp_increased_incomp <- colSums(!is.na(rnamapfile_rbp_increased))
+  
+  rnamapfile_rbp_decreased <- rnamapfile_rbp_decreased[,-c(1001,1002)]
+  rnamapfile_rbp_decreased <- apply(rnamapfile_rbp_decreased, c(1, 2), as.numeric)
+  rnamapfile_rbp_decreased_comp <- colSums(rnamapfile_rbp_decreased, na.rm = TRUE)
+  rnamapfile_rbp_decreased_incomp <- colSums(!is.na(rnamapfile_rbp_decreased))
+  
+  
+  rnamapfile_rbp_maintained <- rnamapfile_rbp_maintained[,-c(1001,1002)]
+  rnamapfile_rbp_maintained <- apply(rnamapfile_rbp_maintained, c(1, 2), as.numeric)
+  rnamapfile_rbp_maintained_comp <- colSums(rnamapfile_rbp_maintained, na.rm = TRUE)
+  rnamapfile_rbp_maintained_incomp <- colSums(!is.na(rnamapfile_rbp_maintained))
+
+  #PLOTTING
+  dfforvis <- data.frame(
+    Name = as.numeric(names(rnamapfile_rbp_maintained_comp)),  # the names are the metagenomic coordinates
+    IncreasedEvents = as.numeric(rnamapfile_rbp_increased_comp+1),
+    DecreasedEvents = as.numeric(rnamapfile_rbp_decreased_comp+1),
+    MaintainedEvents = as.numeric(rnamapfile_rbp_maintained_comp+1)
+  )
+  
+  
+  pval_inc <- c()
+  pval_dec <- c()
+  oddsratio_inc <- c()
+  oddsratio_dec <- c()
+  for (i in 1:1000){
+    inc_fish <- dfforvis[i,2]
+    inc_fish_rev <- (rnamapfile_rbp_increased_incomp[i] - dfforvis[i,2])
+    inc_fish_vs <- (dfforvis[i,4])
+    inc_fish_vs_rev <- (rnamapfile_rbp_maintained_incomp[i])-(dfforvis[i,4])
+    
+    dec_fish <- dfforvis[i,3]
+    dec_fish_rev <- (rnamapfile_rbp_decreased_incomp[i] - dfforvis[i,3])
+    dec_fish_vs <- (dfforvis[i,4])
+    dec_fish_vs_rev <- (rnamapfile_rbp_maintained_incomp[i])-(dfforvis[i,4])
+    
+    inc_df <- matrix(c(inc_fish, inc_fish_rev, inc_fish_vs, inc_fish_vs_rev), nrow = 2)
+    inc_pval <- chisq.test(inc_df)$p.value
+    inc_odds <- chisq.test(inc_df)$statistic
+    
+    dec_df <- matrix(c(dec_fish, dec_fish_rev, dec_fish_vs, dec_fish_vs_rev), nrow = 2)
+    dec_pval <- chisq.test(dec_df)$p.value
+    dec_odds <- chisq.test(dec_df)$statistic
+    
+    inc_pval <- -log10(p.adjust(inc_pval, method = "BH", n = 1000))
+    dec_pval <- -log10(p.adjust(dec_pval, method = "BH", n = 1000))
+    
+    if ((inc_fish/rnamapfile_rbp_increased_incomp[i]) <=(inc_fish_vs/(rnamapfile_rbp_maintained_incomp[i]))){
+      inc_pval <- inc_pval*-1
+      inc_odds <- inc_odds*-1
+    }
+    if ((dec_fish/rnamapfile_rbp_decreased_incomp[i]) <=(dec_fish_vs/(rnamapfile_rbp_maintained_incomp[i]))){
+      dec_pval <- dec_pval*-1
+      dec_odds <- dec_odds*-1
+    }
+    pval_inc <- c(pval_inc,inc_pval)
+    oddsratio_inc <- c(oddsratio_inc, inc_odds)
+    pval_dec <- c(pval_dec,dec_pval)
+    oddsratio_dec <- c(oddsratio_dec, dec_odds)
+    
+  }
+  
+dfforvis_pval <- data.frame(pos = 1:1000, pvalinc = pval_inc, pvaldec = pval_dec)
+dfforvis_oddsratio <- data.frame(pos = 1:1000, oddsratinc = oddsratio_inc, oddsratdec = oddsratio_dec)
+
+# Return both data frames as a list, regardless of the 'metric'
+return(list(pval_data = dfforvis_pval, oddsratio_data = dfforvis_oddsratio))
+}
+
+
+
+
+
+
+# Initialize results list
+eCLIPSE_heatmap_results <- list()
+
+rbps <- unique(eCLIPSE_BigExon_full$RBP)
+targets <- rbps
+
+for (rbp in rbps) {
+  file_path <- file.path("~/Projects/StressGranules/AS.WC_Transcriptome/shRNAExp", rbp, paste0(rbp, "_VulcanTable_both.txt"))
+  
+  if (!file.exists(file_path)) {
+    message("Skipping missing file for ", rbp)
+    next
+  }
+  
+  message("Processing ", rbp, " ...")
+  betAS <- fread(file_path, header = TRUE)
+  eCLIPSE_heatmap_results[[rbp]] <- list()
+  
+  # Initialize collector for saving later
+  all_metrics <- list()
+  
+  for (target in targets) {
+    message("  Target: ", target)
+    
+    dpsi_values <- seq(0.01, 0.1, by = 0.01)
+    temp_results <- list()
+    
+    # Run eCLIPSE_heatmap for multiple dPSIs
+    for (dpsi in dpsi_values) {
+      res <- tryCatch({
+        eCLIPSE_heatmap(
+          metric = NULL,
+          rnamapfile = eCLIPSE_BigExon_full,
+          pvalthreshold = 0.05,
+          PSIthreshold = dpsi,
+          ASfile = betAS,
+          rnaBP = target,
+          plot = FALSE
+        )
+      }, error = function(e) {
+        message("    Error for dPSI=", dpsi, ": ", e$message)
+        NULL
+      })
+      
+      if (!is.null(res)) {
+        temp_results[[as.character(dpsi)]] <- res
+      }
+    }
+    
+    if (length(temp_results) == 0) next
+    
+    # Compute metrics summary
+    stats <- data.frame(
+      dpsi = as.numeric(names(temp_results)),
+      sum_pvalinc = sapply(temp_results, function(x) sum(x$pval_data$pvalinc, na.rm = TRUE)),
+      sum_pvaldec = sapply(temp_results, function(x) sum(x$pval_data$pvaldec, na.rm = TRUE)),
+      sum_oddsinc = sapply(temp_results, function(x) sum(x$oddsratio_data$oddsratinc, na.rm = TRUE)),
+      sum_oddsdec = sapply(temp_results, function(x) sum(x$oddsratio_data$oddsratdec, na.rm = TRUE))
+    )
+    
+    # Pick relevant dPSIs (fixed + best)
+    best_pvalinc <- stats$dpsi[which.max(stats$sum_pvalinc)]
+    best_pvaldec <- stats$dpsi[which.max(stats$sum_pvaldec)]
+    best_oddsinc <- stats$dpsi[which.max(stats$sum_oddsinc)]
+    best_oddsdec <- stats$dpsi[which.max(stats$sum_oddsdec)]
+    
+    keep_dpsis <- unique(na.omit(c(0.05, 0.1, best_pvalinc, best_pvaldec, best_oddsinc, best_oddsdec)))
+    message("    Keeping dPSIs: ", paste(keep_dpsis, collapse = ", "))
+    
+    # Save results to list
+    eCLIPSE_heatmap_results[[rbp]][[target]] <- temp_results[as.character(keep_dpsis)]
+    
+    # Flatten into tidy table
+    for (dpsi_sel in keep_dpsis) {
+      res <- temp_results[[as.character(dpsi_sel)]]
+      if (is.null(res)) next
+      
+      df_long <- rbind(
+        data.frame(Pos = res$pval_data$pos, Metric = "pvalinc", Value = res$pval_data$pvalinc, dPSI = dpsi_sel, Target = target),
+        data.frame(Pos = res$pval_data$pos, Metric = "pvaldec", Value = res$pval_data$pvaldec, dPSI = dpsi_sel, Target = target),
+        data.frame(Pos = res$oddsratio_data$pos, Metric = "oddsratinc", Value = res$oddsratio_data$oddsratinc, dPSI = dpsi_sel, Target = target),
+        data.frame(Pos = res$oddsratio_data$pos, Metric = "oddsratdec", Value = res$oddsratio_data$oddsratdec, dPSI = dpsi_sel, Target = target)
+      )
+      
+      all_metrics[[length(all_metrics) + 1]] <- df_long
+    }
+  }
+  
+  # Save all results for this RBP as a .txt file
+  if (length(all_metrics) > 0) {
+    combined_df <- rbindlist(all_metrics)
+    
+    outfile <- file.path(
+      path.expand("~/Projects/StressGranules/AS.WC_Transcriptome"),
+      paste0("shRNAExp/", rbp, "/", rbp, "_BindingValues_both.txt")
+    )
+    
+    fwrite(combined_df, outfile, sep = "\t")
+    message("✅ Saved ", nrow(combined_df), " rows for ", rbp, " → ", outfile)
+  } else {
+    message("⚠️ No results to save for ", rbp)
+  }
+}
+
+
+```
+
+## Intron Retention Analysis
+
+```{r}
+eCLIPSE_Intron_full <- fread("~/Projects/StressGranules/AS.WC_Transcriptome/eCLIPSE/eCLIPSE_INTRONRET.txt", header = T)
+
+
+eCLIPSE_heatmap_IR <- function(metric, rnamapfile, pvalthreshold=0.05, PSIthreshold=0.05, ASfile, rnaBP, plot=FALSE){
+  
+  ASfile <- ASfile[grepl("HsaINT", Event.ID)]
+
+
+  AS_events <- ASfile$Event.ID
+ 
+  ASfile_filt_increased <- subset(ASfile, dPSI>PSIthreshold)
+  ASfile_filt_decreased <- subset(ASfile, dPSI< -PSIthreshold)
+  ASfile_filt_maintained <- subset(ASfile, !(dPSI > PSIthreshold) & !(dPSI < -PSIthreshold))
+
+  #And now the eCLIPSE file
+  rnamapfile_rbp_increased <- subset(rnamapfile, EVENTS %in% ASfile_filt_increased$Event.ID)
+  rnamapfile_rbp_maintained <- subset(rnamapfile, EVENTS %in% ASfile_filt_maintained$Event.ID)
+  rnamapfile_rbp_decreased <- subset(rnamapfile, EVENTS %in% ASfile_filt_decreased$Event.ID)
+  
+  rnamapfile_rbp_increased_rbp <- subset(rnamapfile_rbp_increased, RBP==rnaBP)
+  rnamapfile_rbp_increased_nrbp <- subset(rnamapfile_rbp_increased, RBP!=rnaBP)
+  rnamapfile_rbp_increased_nrbp <- rnamapfile_rbp_increased_nrbp[!duplicated(rnamapfile_rbp_increased_nrbp$EVENTS), ]
+  rnamapfile_rbp_increased_nrbp[rnamapfile_rbp_increased_nrbp == 1] <- 0
+  rnamapfile_rbp_maintained_rbp <- subset(rnamapfile_rbp_maintained, RBP==rnaBP)
+  rnamapfile_rbp_maintained_nrbp <-subset(rnamapfile_rbp_maintained, RBP!=rnaBP)
+  rnamapfile_rbp_maintained_nrbp <- rnamapfile_rbp_maintained_nrbp[!duplicated(rnamapfile_rbp_maintained_nrbp$EVENTS), ]
+  rnamapfile_rbp_maintained_nrbp[rnamapfile_rbp_maintained_nrbp == 1] <- 0
+  rnamapfile_rbp_decreased_rbp <- subset(rnamapfile_rbp_decreased, RBP==rnaBP)
+  rnamapfile_rbp_decreased_nrbp <- subset(rnamapfile_rbp_decreased, RBP!=rnaBP)
+  rnamapfile_rbp_decreased_nrbp <- rnamapfile_rbp_decreased_nrbp[!duplicated(rnamapfile_rbp_decreased_nrbp$EVENTS), ]
+  rnamapfile_rbp_decreased_nrbp[rnamapfile_rbp_decreased_nrbp == 1] <- 0
+  
+  rnamapfile_rbp_increased <- rbind(rnamapfile_rbp_increased_rbp, rnamapfile_rbp_increased_nrbp)
+  rnamapfile_rbp_decreased <- rbind(rnamapfile_rbp_decreased_rbp, rnamapfile_rbp_decreased_nrbp)
+  rnamapfile_rbp_maintained <- rbind(rnamapfile_rbp_maintained_rbp, rnamapfile_rbp_maintained_nrbp)
+  
+  if (nrow(rnamapfile_rbp_increased) < 10 || 
+      nrow(rnamapfile_rbp_maintained) < 10 || 
+      nrow(rnamapfile_rbp_decreased) < 10) {
+    print(paste0(rnaBP," does not have enough events."))
+    return()  # Skip to the next iteration
+  }
+  
+  rnamapfile_rbp_increased <- rnamapfile_rbp_increased[,-c(501,502)]
+  rnamapfile_rbp_increased <- apply(rnamapfile_rbp_increased, c(1, 2), as.numeric)
+  rnamapfile_rbp_increased_comp <- colSums(rnamapfile_rbp_increased, na.rm = TRUE)
+  rnamapfile_rbp_increased_incomp <- colSums(!is.na(rnamapfile_rbp_increased))
+  
+  rnamapfile_rbp_decreased <- rnamapfile_rbp_decreased[,-c(501,502)]
+  rnamapfile_rbp_decreased <- apply(rnamapfile_rbp_decreased, c(1, 2), as.numeric)
+  rnamapfile_rbp_decreased_comp <- colSums(rnamapfile_rbp_decreased, na.rm = TRUE)
+  rnamapfile_rbp_decreased_incomp <- colSums(!is.na(rnamapfile_rbp_decreased))
+  
+  
+  rnamapfile_rbp_maintained <- rnamapfile_rbp_maintained[,-c(501,502)]
+  rnamapfile_rbp_maintained <- apply(rnamapfile_rbp_maintained, c(1, 2), as.numeric)
+  rnamapfile_rbp_maintained_comp <- colSums(rnamapfile_rbp_maintained, na.rm = TRUE)
+  rnamapfile_rbp_maintained_incomp <- colSums(!is.na(rnamapfile_rbp_maintained))
+
+  #PLOTTING
+  dfforvis <- data.frame(
+    Name = as.numeric(names(rnamapfile_rbp_maintained_comp)),  # the names are the metagenomic coordinates
+    IncreasedEvents = as.numeric(rnamapfile_rbp_increased_comp+1),
+    DecreasedEvents = as.numeric(rnamapfile_rbp_decreased_comp+1),
+    MaintainedEvents = as.numeric(rnamapfile_rbp_maintained_comp+1)
+  )
+  
+  
+  pval_inc <- c()
+  pval_dec <- c()
+  oddsratio_inc <- c()
+  oddsratio_dec <- c()
+  for (i in 1:500){
+    inc_fish <- dfforvis[i,2]
+    inc_fish_rev <- (rnamapfile_rbp_increased_incomp[i] - dfforvis[i,2])
+    inc_fish_vs <- (dfforvis[i,4])
+    inc_fish_vs_rev <- (rnamapfile_rbp_maintained_incomp[i])-(dfforvis[i,4])
+    
+    dec_fish <- dfforvis[i,3]
+    dec_fish_rev <- (rnamapfile_rbp_decreased_incomp[i] - dfforvis[i,3])
+    dec_fish_vs <- (dfforvis[i,4])
+    dec_fish_vs_rev <- (rnamapfile_rbp_maintained_incomp[i])-(dfforvis[i,4])
+    
+    inc_df <- matrix(c(inc_fish, inc_fish_rev, inc_fish_vs, inc_fish_vs_rev), nrow = 2)
+    inc_pval <- chisq.test(inc_df)$p.value
+    inc_odds <- chisq.test(inc_df)$statistic
+    
+    dec_df <- matrix(c(dec_fish, dec_fish_rev, dec_fish_vs, dec_fish_vs_rev), nrow = 2)
+    dec_pval <- chisq.test(dec_df)$p.value
+    dec_odds <- chisq.test(dec_df)$statistic
+    
+    inc_pval <- -log10(p.adjust(inc_pval, method = "BH", n = 500))
+    dec_pval <- -log10(p.adjust(dec_pval, method = "BH", n = 500))
+    
+    if ((inc_fish/rnamapfile_rbp_increased_incomp[i]) <=(inc_fish_vs/(rnamapfile_rbp_decreased_incomp[i]+rnamapfile_rbp_maintained_incomp[i]))){
+      inc_pval <- inc_pval*-1
+      inc_odds <- inc_odds*-1
+    }
+    if ((dec_fish/rnamapfile_rbp_decreased_incomp[i]) <=(dec_fish_vs/(rnamapfile_rbp_increased_incomp[i]+rnamapfile_rbp_maintained_incomp[i]))){
+      dec_pval <- dec_pval*-1
+      dec_odds <- dec_odds*-1
+      
+    }
+    pval_inc <- c(pval_inc,inc_pval)
+    oddsratio_inc <- c(oddsratio_inc, inc_odds)
+    pval_dec <- c(pval_dec,dec_pval)
+    oddsratio_dec <- c(oddsratio_dec, dec_odds)
+    
+  }
+  
+dfforvis_pval <- data.frame(pos = 1:500, pvalinc = pval_inc, pvaldec = pval_dec)
+dfforvis_oddsratio <- data.frame(pos = 1:500, oddsratinc = oddsratio_inc, oddsratdec = oddsratio_dec)
+
+# Return both data frames as a list, regardless of the 'metric'
+return(list(pval_data = dfforvis_pval, oddsratio_data = dfforvis_oddsratio))
+}
+
+
+# Initialize results list
+eCLIPSE_heatmap_results <- list()
+
+rbps <- unique(eCLIPSE_Intron_full$RBP)
+targets <- rbps
+
+for (rbp in rbps) {
+  file_path <- file.path("~/Projects/StressGranules/AS.WC_Transcriptome/shRNAExp", rbp, paste0(rbp, "_VulcanTable_both.txt"))
+  
+  if (!file.exists(file_path)) {
+    message("Skipping missing file for ", rbp)
+    next
+  }
+  
+  message("Processing ", rbp, " ...")
+  betAS <- fread(file_path, header = TRUE)
+  eCLIPSE_heatmap_results[[rbp]] <- list()
+  
+  # Initialize collector for saving later
+  all_metrics <- list()
+  
+  for (target in targets) {
+    message("  Target: ", target)
+    
+    dpsi_values <- seq(0.01, 0.1, by = 0.01)
+    temp_results <- list()
+    
+    # Run eCLIPSE_heatmap for multiple dPSIs
+    for (dpsi in dpsi_values) {
+      res <- tryCatch({
+        eCLIPSE_heatmap_IR(
+          metric = NULL,
+          rnamapfile = eCLIPSE_Intron_full,
+          pvalthreshold = 0.05,
+          PSIthreshold = dpsi,
+          ASfile = betAS,
+          rnaBP = target,
+          plot = FALSE
+        )
+      }, error = function(e) {
+        message("    Error for dPSI=", dpsi, ": ", e$message)
+        NULL
+      })
+      
+      if (!is.null(res)) {
+        temp_results[[as.character(dpsi)]] <- res
+      }
+    }
+    
+    if (length(temp_results) == 0) next
+    
+    # Compute metrics summary
+    stats <- data.frame(
+      dpsi = as.numeric(names(temp_results)),
+      sum_pvalinc = sapply(temp_results, function(x) sum(x$pval_data$pvalinc, na.rm = TRUE)),
+      sum_pvaldec = sapply(temp_results, function(x) sum(x$pval_data$pvaldec, na.rm = TRUE)),
+      sum_oddsinc = sapply(temp_results, function(x) sum(x$oddsratio_data$oddsratinc, na.rm = TRUE)),
+      sum_oddsdec = sapply(temp_results, function(x) sum(x$oddsratio_data$oddsratdec, na.rm = TRUE))
+    )
+    
+    # Pick relevant dPSIs (fixed + best)
+    best_pvalinc <- stats$dpsi[which.max(stats$sum_pvalinc)]
+    best_pvaldec <- stats$dpsi[which.max(stats$sum_pvaldec)]
+    best_oddsinc <- stats$dpsi[which.max(stats$sum_oddsinc)]
+    best_oddsdec <- stats$dpsi[which.max(stats$sum_oddsdec)]
+    
+    keep_dpsis <- unique(na.omit(c(0.05, 0.1, best_pvalinc, best_pvaldec, best_oddsinc, best_oddsdec)))
+    message("    Keeping dPSIs: ", paste(keep_dpsis, collapse = ", "))
+    
+    # Save results to list
+    eCLIPSE_heatmap_results[[rbp]][[target]] <- temp_results[as.character(keep_dpsis)]
+    
+    # Flatten into tidy table
+    for (dpsi_sel in keep_dpsis) {
+      res <- temp_results[[as.character(dpsi_sel)]]
+      if (is.null(res)) next
+      
+      df_long <- rbind(
+        data.frame(Pos = res$pval_data$pos, Metric = "pvalinc", Value = res$pval_data$pvalinc, dPSI = dpsi_sel, Target = target),
+        data.frame(Pos = res$pval_data$pos, Metric = "pvaldec", Value = res$pval_data$pvaldec, dPSI = dpsi_sel, Target = target),
+        data.frame(Pos = res$oddsratio_data$pos, Metric = "oddsratinc", Value = res$oddsratio_data$oddsratinc, dPSI = dpsi_sel, Target = target),
+        data.frame(Pos = res$oddsratio_data$pos, Metric = "oddsratdec", Value = res$oddsratio_data$oddsratdec, dPSI = dpsi_sel, Target = target)
+      )
+      
+      all_metrics[[length(all_metrics) + 1]] <- df_long
+    }
+  }
+  
+  # Save all results for this RBP as a .txt file
+  if (length(all_metrics) > 0) {
+    combined_df <- rbindlist(all_metrics)
+    
+    outfile <- file.path(
+      path.expand("~/Projects/StressGranules/AS.WC_Transcriptome"),
+      paste0("shRNAExp/", rbp, "/", rbp, "_BindingValues_IR_both.txt")
+    )
+    
+    fwrite(combined_df, outfile, sep = "\t")
+    message("✅ Saved ", nrow(combined_df), " rows for ", rbp, " → ", outfile)
+  } else {
+    message("⚠️ No results to save for ", rbp)
+  }
+}
+
+```
+
+# C. Results Integration
+
+## Exon Skipping
+
+```{r}
+build_bindingvalues_list <- function(
+  base_path = "~/Projects/StressGranules/AS.WC_Transcriptome/shRNAExp"
+) {
+  # Expand base path
+  base_path <- fs::path_expand(base_path)
+
+  # List all immediate subdirectories (each RBP)
+  subdirs <- fs::dir_ls(base_path, type = "directory", recurse = FALSE)
+  folder_names <- fs::path_file(subdirs)
+
+  # Initialize list for results
+  out_list <- list()
+
+  # Iterate through each folder and look for BindingValues_both.txt
+  for (folder in folder_names) {
+    folder_path <- fs::path(base_path, folder)
+    
+    # Find BindingValues_both.txt file
+    matches <- fs::dir_ls(folder_path, regexp = "BindingValues_both\\.txt$", type = "file")
+    
+    if (length(matches) == 0) {
+      message("No 'BindingValues_both.txt' file found in: ", folder_path)
+      next  # skip this folder entirely
+    }
+    
+    if (length(matches) > 1) {
+      info <- fs::file_info(matches)
+      matches <- matches[order(info$modification_time, decreasing = TRUE)]
+      message("Multiple BindingValues_both.txt files in ", folder_path, 
+              "; using latest: ", fs::path_file(matches[1]))
+    }
+
+    # Read the selected file
+    dt <- data.table::fread(matches[1])
+
+    # Add to output list, using folder name as key
+    out_list[[folder]] <- list(bindingvalues = dt)
+  }
+
+  return(out_list)
+}
+
+# Example usage
+CharmObj_bindingvalues <- build_bindingvalues_list()
+
+
+
+
+restructure_bindingvalues_full <- function(bindingvalues_list) {
+  out <- list()
+  
+  for (rbp_name in names(bindingvalues_list)) {
+    df <- bindingvalues_list[[rbp_name]]$bindingvalues
+    if (is.null(df) || nrow(df) == 0) next
+    
+    setDT(df)  # ensure it's a data.table
+    
+    # Group by Target, dPSI, Metric → store only Pos & Value
+    nested_list <- df[, .(data = list(.SD[, .(Pos, Value)])), 
+                      by = .(Target, dPSI, Metric)]
+    
+    # Now structure as: RBP → Target → dPSI → Metric → data.frame
+    rbp_nested <- split(nested_list, by = "Target", keep.by = FALSE)
+    
+    rbp_nested <- lapply(rbp_nested, function(target_dt) {
+      target_split <- split(target_dt, by = "dPSI", keep.by = FALSE)
+      
+      lapply(target_split, function(dpsi_dt) {
+        setNames(dpsi_dt$data, dpsi_dt$Metric)
+      })
+    })
+    
+    out[[rbp_name]] <- rbp_nested
+  }
+  
+  return(out)
+}
+
+# Example usage:
+CharmObj_bindingvalues_nested <- restructure_bindingvalues_full(CharmObj_bindingvalues)
+
+CharmObj_bindingvalues <- readRDS("~/Projects/CHARM/data/Binding_both.RDS")
+```
+
+# D. Single RBP Map
+
+```{r}
+
+eCLIPSE_full <- function(rnamapfile, pvalthreshold=0.05, PSIthreshold=0.05, ASfile, rnaBP, metric = "FDR", plot = T, title = NULL){
+  
+  ASfile <- ASfile[grepl("HsaEX", Event.ID)]
+  AS_events <- ASfile$Event.ID
+ 
+  ASfile_filt_increased <- subset(ASfile, dPSI>PSIthreshold)
+  ASfile_filt_decreased <- subset(ASfile, dPSI< -PSIthreshold)
+  ASfile_filt_maintained <- subset(ASfile, !(dPSI > PSIthreshold) & !(dPSI < -PSIthreshold))
+
+  #And now the eCLIPSE file
+  rnamapfile_rbp_increased <- subset(rnamapfile, EVENTS %in% ASfile_filt_increased$Event.ID)
+  rnamapfile_rbp_maintained <- subset(rnamapfile, EVENTS %in% ASfile_filt_maintained$Event.ID)
+  rnamapfile_rbp_decreased <- subset(rnamapfile, EVENTS %in% ASfile_filt_decreased$Event.ID)
+  
+  rnamapfile_rbp_increased_rbp <- subset(rnamapfile_rbp_increased, RBP==rnaBP)
+  rnamapfile_rbp_increased_nrbp <- subset(rnamapfile_rbp_increased, RBP!=rnaBP)
+  rnamapfile_rbp_increased_nrbp <- rnamapfile_rbp_increased_nrbp[!duplicated(rnamapfile_rbp_increased_nrbp$EVENTS), ]
+  rnamapfile_rbp_increased_nrbp[rnamapfile_rbp_increased_nrbp == 1] <- 0
+  rnamapfile_rbp_maintained_rbp <- subset(rnamapfile_rbp_maintained, RBP==rnaBP)
+  rnamapfile_rbp_maintained_nrbp <-subset(rnamapfile_rbp_maintained, RBP!=rnaBP)
+  rnamapfile_rbp_maintained_nrbp <- rnamapfile_rbp_maintained_nrbp[!duplicated(rnamapfile_rbp_maintained_nrbp$EVENTS), ]
+  rnamapfile_rbp_maintained_nrbp[rnamapfile_rbp_maintained_nrbp == 1] <- 0
+  rnamapfile_rbp_decreased_rbp <- subset(rnamapfile_rbp_decreased, RBP==rnaBP)
+  rnamapfile_rbp_decreased_nrbp <- subset(rnamapfile_rbp_decreased, RBP!=rnaBP)
+  rnamapfile_rbp_decreased_nrbp <- rnamapfile_rbp_decreased_nrbp[!duplicated(rnamapfile_rbp_decreased_nrbp$EVENTS), ]
+  rnamapfile_rbp_decreased_nrbp[rnamapfile_rbp_decreased_nrbp == 1] <- 0
+  
+  rnamapfile_rbp_increased <- rbind(rnamapfile_rbp_increased_rbp, rnamapfile_rbp_increased_nrbp)
+  rnamapfile_rbp_decreased <- rbind(rnamapfile_rbp_decreased_rbp, rnamapfile_rbp_decreased_nrbp)
+  rnamapfile_rbp_maintained <- rbind(rnamapfile_rbp_maintained_rbp, rnamapfile_rbp_maintained_nrbp)
+  
+  if (nrow(rnamapfile_rbp_increased) < 10 || 
+      nrow(rnamapfile_rbp_maintained) < 10 || 
+      nrow(rnamapfile_rbp_decreased) < 10) {
+    print(paste0(rnaBP," does not have enough events."))
+    return()  # Skip to the next iteration
+  }
+  
+  rnamapfile_rbp_increased <- rnamapfile_rbp_increased[,-c(1001,1002)]
+  rnamapfile_rbp_increased <- apply(rnamapfile_rbp_increased, c(1, 2), as.numeric)
+  rnamapfile_rbp_increased_comp <- colSums(rnamapfile_rbp_increased, na.rm = TRUE)
+  rnamapfile_rbp_increased_incomp <- colSums(!is.na(rnamapfile_rbp_increased))
+  
+  rnamapfile_rbp_decreased <- rnamapfile_rbp_decreased[,-c(1001,1002)]
+  rnamapfile_rbp_decreased <- apply(rnamapfile_rbp_decreased, c(1, 2), as.numeric)
+  rnamapfile_rbp_decreased_comp <- colSums(rnamapfile_rbp_decreased, na.rm = TRUE)
+  rnamapfile_rbp_decreased_incomp <- colSums(!is.na(rnamapfile_rbp_decreased))
+  
+  
+  rnamapfile_rbp_maintained <- rnamapfile_rbp_maintained[,-c(1001,1002)]
+  rnamapfile_rbp_maintained <- apply(rnamapfile_rbp_maintained, c(1, 2), as.numeric)
+  rnamapfile_rbp_maintained_comp <- colSums(rnamapfile_rbp_maintained, na.rm = TRUE)
+  rnamapfile_rbp_maintained_incomp <- colSums(!is.na(rnamapfile_rbp_maintained))
+
+  #PLOTTING
+  dfforvis <- data.frame(
+    Name = as.numeric(names(rnamapfile_rbp_maintained_comp)),  # the names are the metagenomic coordinates
+    IncreasedEvents = as.numeric(rnamapfile_rbp_increased_comp+1),
+    DecreasedEvents = as.numeric(rnamapfile_rbp_decreased_comp+1),
+    MaintainedEvents = as.numeric(rnamapfile_rbp_maintained_comp+1)
+  )
+  
+  
+  pval_inc <- c()
+  pval_dec <- c()
+  oddsratio_inc <- c()
+  oddsratio_dec <- c()
+  for (i in 1:1000){
+    inc_fish <- dfforvis[i,2]
+    inc_fish_rev <- (rnamapfile_rbp_increased_incomp[i] - dfforvis[i,2])
+    inc_fish_vs <- (dfforvis[i,4])
+    inc_fish_vs_rev <- (rnamapfile_rbp_maintained_incomp[i])-(dfforvis[i,4])
+    
+    dec_fish <- dfforvis[i,3]
+    dec_fish_rev <- (rnamapfile_rbp_decreased_incomp[i] - dfforvis[i,3])
+    dec_fish_vs <- (dfforvis[i,4])
+    dec_fish_vs_rev <- (rnamapfile_rbp_maintained_incomp[i])-(dfforvis[i,4])
+    
+    inc_df <- matrix(c(inc_fish, inc_fish_rev, inc_fish_vs, inc_fish_vs_rev), nrow = 2)
+    inc_pval <- chisq.test(inc_df)$p.value
+    inc_odds <- chisq.test(inc_df)$statistic
+    
+    dec_df <- matrix(c(dec_fish, dec_fish_rev, dec_fish_vs, dec_fish_vs_rev), nrow = 2)
+    dec_pval <- chisq.test(dec_df)$p.value
+    dec_odds <- chisq.test(dec_df)$statistic
+    
+    inc_pval <- -log10(p.adjust(inc_pval, method = "BH", n = 1000))
+    dec_pval <- -log10(p.adjust(dec_pval, method = "BH", n = 1000))
+    
+    if ((inc_fish/rnamapfile_rbp_increased_incomp[i]) <=(inc_fish_vs/(rnamapfile_rbp_maintained_incomp[i]))){
+      inc_pval <- inc_pval*-1
+      inc_odds <- inc_odds*-1
+    }
+    if ((dec_fish/rnamapfile_rbp_decreased_incomp[i]) <=(dec_fish_vs/(+rnamapfile_rbp_maintained_incomp[i]))){
+      dec_pval <- dec_pval*-1
+      dec_odds <- dec_odds*-1
+    }
+    pval_inc <- c(pval_inc,inc_pval)
+    oddsratio_inc <- c(oddsratio_inc, inc_odds)
+    pval_dec <- c(pval_dec,dec_pval)
+    oddsratio_dec <- c(oddsratio_dec, dec_odds)
+    
+  }
+  
+  dfforvis_pval <- data.frame(pos=1:1000, pvalinc=pval_inc, pvaldec=pval_dec)
+  dfforvis_oddsratio <- data.frame(pos=1:1000, oddsratinc=oddsratio_inc, oddsratdec=oddsratio_dec)
+  
+  #The dataframe must be modified beforehand
+  dfforvis$IncreasedEvents <- dfforvis$IncreasedEvents/rnamapfile_rbp_increased_incomp
+  dfforvis$DecreasedEvents <- dfforvis$DecreasedEvents/rnamapfile_rbp_decreased_incomp
+  dfforvis$MaintainedEvents <- dfforvis$MaintainedEvents/rnamapfile_rbp_maintained_incomp
+  
+  if (plot==TRUE){
+    
+mapplot <- ggplot(dfforvis, aes(x = Name)) +
+      geom_line(aes(y = IncreasedEvents, color = "IncreasedEvents"), size = 1) +
+      geom_line(aes(y = DecreasedEvents, color = "DecreasedEvents"), size = 1) +
+      geom_line(aes(y = MaintainedEvents, color = "MaintainedEvents"), size = 1) + xlim(0, 1000) +
+      labs(title = paste0(rnaBP, " RNA Binding Map - ", title),
+           x = "",
+           y = " Normalised\nDensity\n") +
+      scale_color_manual(values = c(IncreasedEvents = "#de425b", DecreasedEvents = "#769fca", MaintainedEvents = "black")) +
+      theme_bw() +
+      geom_vline(xintercept = c(0,50, 250, 450,500,550,750,950,1000), linetype = "dashed") +
+      theme(axis.line = element_line(colour = "black"),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        legend.position = "None")+theme(text=element_text(size=15))
+
+    labels_plot <- ggplot() +
+  annotate("text", x = 1, y = 0, label = paste0("Increased: ",length(table(rnamapfile_rbp_increased_rbp$EVENT)), " (", nrow(ASfile_filt_increased), ")\n"), 
+           color = "#de425b", size = 4.5, fontface = "bold", hjust= -0.75) +
+  annotate("text", x = 1, y = 0, label = paste0("Maintained: ",length(table(rnamapfile_rbp_maintained_rbp$EVENT)), " (", nrow(ASfile_filt_maintained), ")\n"), 
+           color = "black", size = 4.5, fontface = "bold",hjust=0.5) +
+  annotate("text", x = 1, y = 0, label = paste0("Decreased: ",length(table(rnamapfile_rbp_decreased_rbp$EVENT)), " (", nrow(ASfile_filt_decreased), ")\n"), 
+           color = "#769fca", size = 4.5, fontface = "bold", hjust=1.75) +
+  theme_void() + # Removes all axes and background
+  theme(plot.margin = margin(t = 0, r = 0, b = 0, l = 0))
+    
+  }
+  
+  if (plot==TRUE){
+    if (metric=="EffectSize"){
+    metricplot <- ggplot(dfforvis_oddsratio, aes(x = pos)) +
+      geom_line(aes(y = oddsratinc, color = "Increased"), size = 1) +
+      geom_line(aes(y = oddsratdec, color = "Decreased"), size = 1) +
+      xlim(0, 1000) +
+      labs(x = "Position",
+           y = "Chi-Squared\nStatistic\n") +
+      theme_bw() +
+      geom_vline(xintercept = c(0,50, 250, 450,500,550,750,950,1000), linetype = "dashed")+
+  scale_color_manual(values = c("Increased" = "#de425b", "Decreased" = "#769fca"))+ theme(axis.line = element_line(colour = "black"),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        legend.position = "None")+theme(text=element_text(size=15))+
+  scale_y_continuous(
+    labels = scales::label_number(accuracy = 0.01)
+  )}
+    if (metric=="FDR"){
+    metricplot <- ggplot(dfforvis_pval, aes(x = pos)) +
+      geom_line(aes(y = pvalinc, color = "Increased"), size = 1) +
+      geom_line(aes(y = pvaldec, color = "Decreased"), size = 1) +
+      xlim(0, 1000) +
+      labs(x = "Position",
+           y = "-log10 (FDR)\n") +
+      theme_bw() +
+      geom_vline(xintercept = c(0,50, 250, 450,500,550,750,950,1000), linetype = "dashed")+
+  scale_color_manual(values = c("Increased" = "#de425b", "Decreased" = "#769fca"))+ theme(axis.line = element_line(colour = "black"),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        legend.position = "None")+theme(text=element_text(size=15))+
+  scale_y_continuous(
+    labels = scales::label_number(accuracy = 0.01)
+  )}
+    
+    completeplot <- ggarrange(mapplot, labels_plot, metricplot, ncol=1, heights = c(0.4,0.1,0.4), align="v")
+  }
+  
+  if (plot){
+    return(completeplot)
+  }
+  else{
+    return(list(pval_data = dfforvis_pval, oddsratio_data = dfforvis_oddsratio))
+  }
+}
+```
+
+

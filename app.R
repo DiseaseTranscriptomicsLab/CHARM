@@ -555,7 +555,16 @@ ui <- fluidPage(
             # --- User-provided splicing plots (Discovery Mode) ---
             conditionalPanel(
               condition = "input.splice_mode == 'Discovery Mode'",
-              uiOutput("similar_splice_plots_file")
+              tagList(
+                # Auto-preview plot of the uploaded file (violin by Type)
+                shinycssloaders::withSpinner(
+                  plotOutput("user_file_initial_plot_splice", height = "420px"),
+                  type = 6
+                ),
+                br(),
+                # Main comparison plots when user clicks Plot
+                uiOutput("similar_splice_plots_file")
+              )
             )
           )
         )
@@ -1023,7 +1032,7 @@ server <- function(input, output, session) {
     file_path <- input$user_file_splice$datapath
 
     df <- tryCatch(
-      read.table(file_path, header = T, sep = " ", stringsAsFactors = FALSE),
+      read.table(file_path, header = TRUE, sep = "\t", stringsAsFactors = FALSE),
       error = function(e) NULL
     )
 
@@ -1046,19 +1055,21 @@ server <- function(input, output, session) {
     } else {
       colnames(df) <- c("Event.ID", "Gene", "dPSI", "PDiff")
       upload_ok_splice(TRUE)
-      user_splice_df(df)   # save dataframe globally
+      user_splice_df(df)
       error_msg <- NULL
+
     }
 
     output$file_warning_splice <- renderUI({
       if (upload_ok_splice()) {
-        div(style="color:green;font-weight:bold;margin-top:10px;", "Upload complete!")
+        div(style = "color:green;font-weight:bold;margin-top:10px;",
+            "Upload complete!")
       } else {
-        div(style="color:red;font-weight:bold;margin-top:10px;", paste("Upload failed:", error_msg))
+        div(style = "color:red;font-weight:bold;margin-top:10px;",
+            paste("Upload failed:", error_msg))
       }
     })
   })
-
   # ---- Only show extra options if upload is successful ----
   output$user_file_options_splice <- renderUI({
     if (!upload_ok_splice()) return(NULL)
@@ -1103,6 +1114,56 @@ server <- function(input, output, session) {
         )
       )
     )
+  })
+
+  # Auto-preview violin plot for uploaded file
+  output$user_file_initial_plot_splice <- renderPlot({
+    req(upload_ok_splice())          # only plot after successful upload
+    df <- user_splice_df()
+    req(df)
+
+    # derive Type from Event.ID (same logic as your function)
+    dpsi_table <- df %>%
+      mutate(Type = case_when(
+        startsWith(Event.ID, "HsaEX")  ~ "ES",
+        startsWith(Event.ID, "HsaINT") ~ "IR",
+        TRUE                           ~ NA_character_
+      )) %>%
+      filter(!is.na(Type))
+
+    # If no ES/IR events present, show a message plot
+    if (nrow(dpsi_table) == 0) {
+      plot.new()
+      title(main = "No ES or IR events detected in uploaded file")
+      return(invisible(NULL))
+    }
+
+    # Calculate average ΔPSI by type (safe)
+    avg_vals <- dpsi_table %>%
+      group_by(Type) %>%
+      summarise(mean_dPSI = mean(dPSI, na.rm = TRUE)) %>%
+      pivot_wider(names_from = Type, values_from = mean_dPSI)
+
+    # Build subtitle text safely (handle missing types)
+    mean_ES <- ifelse("ES" %in% names(avg_vals), sprintf("%.3f", avg_vals$ES), "NA")
+    mean_IR <- ifelse("IR" %in% names(avg_vals), sprintf("%.3f", avg_vals$IR), "NA")
+    subtitle_text <- paste0("Mean ΔPSI — ES: ", mean_ES, " | IR: ", mean_IR)
+
+    # Violin + jitter plot similar to your function
+    ggplot(dpsi_table, aes(x = Type, y = dPSI)) +
+      geom_jitter(width = 0.2, alpha = 0.6, size = 1.5) +
+      geom_violin(alpha = .7) +
+      theme_minimal() +
+      ylab("ΔPSI (shRNA - CTRL)") +
+      xlab("Event Type") +
+      ggtitle("Uploaded data", subtitle = subtitle_text) +
+      coord_flip() +
+      geom_hline(yintercept = 0, linetype = "dashed") +
+      theme(
+        plot.title = element_text(hjust = 0.5),
+        text = element_text(size = 20, family = "Arial MS"),
+        plot.subtitle = element_text(hjust = 0.5)
+      )
   })
 
   # ---- Render similarity plots ----
