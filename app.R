@@ -289,64 +289,43 @@ ui <- fluidPage(
             width = 9,
             tags$h3("Expression Data Results"),
 
-            # --- Warning message ---
-            div(
-              "⚠ Please press reset after every plot!",
-              style = "border: 2px solid #f0ad4e;
-           background-color: #fff3cd;
-           padding: 8px;
-           border-radius: 6px;
-           font-weight: bold;
-           color: #856404;"
-            ),
-            div(
-              "⚠ If in discovery mode please scroll down!",
-              style = "border: 2px solid #8F283A;
-           background-color: #DB7F8E;
-           padding: 8px;
-           border-radius: 6px;
-           font-weight: bold;
-           color: #8F283A;"
-            ),
-
-            # --- Gene search plot (appear at top when searched) ---
+            # --- Explore Mode (default mode) ---
             conditionalPanel(
-              condition = "input.search_btn_gene > 0",
-              fluidRow(
-                column(
-                  width = 12,
-                  plotOutput("expr_gene_plot", height = "600px")
+              condition = "input.expr_mode == 'Explore Mode' && input.expr_dataset != 'Similar RBPs'",
+              # --- Warning message ---
+              div(
+                "⚠ Please press reset after every plot!",
+                style = "border: 2px solid #f0ad4e;
+               background-color: #fff3cd;
+               padding: 8px;
+               border-radius: 6px;
+               font-weight: bold;
+               color: #856404;"
+              ),
+
+              # --- Gene search plot (appear at top when searched) ---
+              conditionalPanel(
+                condition = "input.search_btn_gene > 0",
+                fluidRow(
+                  column(
+                    width = 12,
+                    plotOutput("expr_gene_plot", height = "600px")
+                  )
                 )
-              )
-            ),
+              ),
 
-            # --- Hallmark gene set search plot (appear at top when searched) ---
-            conditionalPanel(
-              condition = "input.search_btn_hallmark > 0",
-              fluidRow(
-                column(
-                  width = 12,
-                  plotOutput("expr_hallmark_plot", height = "600px")
+              # --- Hallmark gene set search plot (appear at top when searched) ---
+              conditionalPanel(
+                condition = "input.search_btn_hallmark > 0",
+                fluidRow(
+                  column(
+                    width = 12,
+                    plotOutput("expr_hallmark_plot", height = "600px")
+                  )
                 )
-              )
-            ),
+              ),
 
-            # --- User-provided expression plots ---
-            conditionalPanel(
-              condition = "input.user_file_mode_expr == 'expr'",
-              uiOutput("userfilesimilar_expr")
-            ),
-            conditionalPanel(
-              condition = "input.user_file_mode_expr == 'gsea'",
-              uiOutput("userfilesimilar_gsea")
-            ),
-
-            # Always present; server will hide it if not needed
-            uiOutput("similar_expr_plots"),
-
-            # --- Default RBP plots (appear when dataset != 'Similar RBPs') ---
-            conditionalPanel(
-              condition = "input.expr_dataset != 'Similar RBPs'",
+              # --- Default RBP plots ---
               fluidRow(
                 column(width = 6, plotOutput("expr_violin", height = "400px")),
                 column(
@@ -363,6 +342,39 @@ ui <- fluidPage(
                 column(width = 6, plotOutput("gsea_plot", height = "600px")),
                 column(width = 6, DTOutput("geneset_table"))
               )
+            ),
+
+            # --- Similar RBPs (Explore Mode, special layout) ---
+            conditionalPanel(
+              condition = "input.expr_mode == 'Explore Mode' && input.expr_dataset == 'Similar RBPs'",
+              div(
+                "⚠ Please press reset after every plot!",
+                style = "border: 2px solid #f0ad4e;
+               background-color: #fff3cd;
+               padding: 8px;
+               border-radius: 6px;
+               font-weight: bold;
+               color: #856404;
+               margin-bottom: 10px;"
+              ),
+              uiOutput("similar_expr_plots")
+            ),
+
+            # --- Discovery Mode ---
+            conditionalPanel(
+              condition = "input.expr_mode == 'Discovery Mode'",
+              div(
+                "⚠ Please press reset after every plot!",
+                style = "border: 2px solid #f0ad4e;
+               background-color: #fff3cd;
+               padding: 8px;
+               border-radius: 6px;
+               font-weight: bold;
+               color: #856404;
+               margin-bottom: 10px;"
+              ),
+              uiOutput("userfilesimilar_expr"),
+              uiOutput("userfilesimilar_gsea")
             )
           )
         )

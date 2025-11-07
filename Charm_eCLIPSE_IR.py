@@ -57,7 +57,6 @@ def eCLIPSE_heatmap_IR(metric, rnamapfile, pvalthreshold, PSIthreshold, ASfile, 
     dec = prepare_subsets(dec, rnaBP)
     mai = prepare_subsets(mai, rnaBP)
 
-    # Skip if not enough events
     if any(len(x) < 10 for x in [inc, dec, mai]):
         return None
 
@@ -184,7 +183,9 @@ def eCLIPSE_heatmap_IR(metric, rnamapfile, pvalthreshold, PSIthreshold, ASfile, 
         "oddsratdec": odds_dec
     })
 
-    return {"pval_data": pval_data, "oddsratio_data": oddsratio_data, "raw_data": df_raw}
+    raw_data = df_raw.melt(id_vars=["pos"], var_name="Metric", value_name="Value")
+
+    return {"pval_data": pval_data, "oddsratio_data": oddsratio_data, "raw_data": raw_data}
 
 
 # =====================================================
@@ -224,7 +225,6 @@ def process_rbp(rbp):
         if not temp_results:
             continue
 
-        # summarize metrics
         stats = pd.DataFrame({
             "dpsi": list(temp_results.keys()),
             "sum_pvalinc": [res["pval_data"]["pvalinc"].sum() for res in temp_results.values()],
@@ -233,7 +233,6 @@ def process_rbp(rbp):
             "sum_oddsdec": [res["oddsratio_data"]["oddsratdec"].sum() for res in temp_results.values()]
         })
 
-        # select dPSIs using absolute value maximisation
         best_pvalinc = stats.loc[stats["sum_pvalinc"].abs().idxmax(), "dpsi"]
         best_pvaldec = stats.loc[stats["sum_pvaldec"].abs().idxmax(), "dpsi"]
         best_oddsinc = stats.loc[stats["sum_oddsinc"].abs().idxmax(), "dpsi"]
@@ -250,7 +249,6 @@ def process_rbp(rbp):
         keep_dpsis = np.unique(list(keep_dpsis_info.keys()))
         print(f"  Target {target}: keeping {[f'{v:.2f} ({keep_dpsis_info[v]})' for v in keep_dpsis]}")
 
-        # flatten results
         for dpsi_sel in keep_dpsis:
             res = temp_results.get(round(dpsi_sel, 3))
             if res is None:
@@ -267,8 +265,7 @@ def process_rbp(rbp):
                     .rename(columns={"oddsratinc": "Value", "pos": "Pos"})[["Pos", "Metric", "Value", "dPSI", "Target"]],
                 res["oddsratio_data"].assign(Metric="oddsratdec", dPSI=label, Target=target)
                     .rename(columns={"oddsratdec": "Value", "pos": "Pos"})[["Pos", "Metric", "Value", "dPSI", "Target"]],
-                res["raw_data"].melt(id_vars=["pos"], var_name="Metric", value_name="Value")
-                    .assign(dPSI=label, Target=target)
+                res["raw_data"].assign(dPSI=label, Target=target)
                     .rename(columns={"pos": "Pos"})[["Pos", "Metric", "Value", "dPSI", "Target"]]
             ], ignore_index=True)
 

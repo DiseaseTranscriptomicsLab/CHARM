@@ -27,7 +27,7 @@ def eCLIPSE_heatmap(rnamapfile, ASfile, rnaBP, PSIthreshold=0.05):
     """
     Computes per-position chi-square enrichment and odds ratios between 
     inclusion/exclusion (ASfile) and eCLIP binding (rnamapfile) for a given RBP.
-    Now NaN-safe and division-by-zero-safe.
+    NaN- and zero-safe. Returns pval, oddsratio, raw normalized bindings, and event counts.
     """
 
     # ---------------------------------------------------------------
@@ -100,6 +100,26 @@ def eCLIPSE_heatmap(rnamapfile, ASfile, rnaBP, PSIthreshold=0.05):
         "MaintainedEvents": maintained_norm
     })
 
+    # ---------------------------------------------------------------
+    # 4c. Compute event count summary metrics (from ggplot annotations)
+    # ---------------------------------------------------------------
+    inc_target_events = inc[inc["RBP"] == rnaBP]["EVENTS"].nunique()
+    dec_target_events = dec[dec["RBP"] == rnaBP]["EVENTS"].nunique()
+    main_target_events = main[main["RBP"] == rnaBP]["EVENTS"].nunique()
+
+    total_increased = ASfile_filt_increased.shape[0]
+    total_decreased = ASfile_filt_decreased.shape[0]
+    total_maintained = ASfile_filt_maintained.shape[0]
+
+    df_counts = pd.DataFrame([
+        {"Pos": np.nan, "Metric": "IncreasedTargetEvents", "Value": inc_target_events},
+        {"Pos": np.nan, "Metric": "TotalIncreasedEvents", "Value": total_increased},
+        {"Pos": np.nan, "Metric": "MaintainedTargetEvents", "Value": main_target_events},
+        {"Pos": np.nan, "Metric": "TotalMaintainedEvents", "Value": total_maintained},
+        {"Pos": np.nan, "Metric": "DecreasedTargetEvents", "Value": dec_target_events},
+        {"Pos": np.nan, "Metric": "TotalDecreasedEvents", "Value": total_decreased}
+    ])
+
     positions = np.arange(1, 1001)
 
     pval_inc, pval_dec, odds_inc, odds_dec = [], [], [], []
@@ -111,8 +131,7 @@ def eCLIPSE_heatmap(rnamapfile, ASfile, rnaBP, PSIthreshold=0.05):
         return a / b if b != 0 else np.nan
 
     def safe_chi2(table):
-        # if any cell = 0, skip
-        if np.any(table == 0):
+        if np.any(table == 0) or np.any(np.isnan(table)):
             return np.nan, np.nan
         try:
             chi2, p, _, _ = stats.chi2_contingency(table)
@@ -189,7 +208,7 @@ def eCLIPSE_heatmap(rnamapfile, ASfile, rnaBP, PSIthreshold=0.05):
         "oddsratdec": odds_dec
     })
 
-    return {"pval_data": df_pval, "oddsratio_data": df_odds, "raw_data": df_raw}
+    return {"pval_data": df_pval, "oddsratio_data": df_odds, "raw_data": df_raw, "counts_data": df_counts}
 
 
 # =====================================================
@@ -269,7 +288,8 @@ def process_rbp(rbp):
                     .rename(columns={"oddsratdec": "Value", "pos": "Pos"})[["Pos", "Metric", "Value", "dPSI", "Target"]],
                 res["raw_data"].melt(id_vars=["pos"], var_name="Metric", value_name="Value")
                     .assign(dPSI=label, Target=target)
-                    .rename(columns={"pos": "Pos"})[["Pos", "Metric", "Value", "dPSI", "Target"]]
+                    .rename(columns={"pos": "Pos"})[["Pos", "Metric", "Value", "dPSI", "Target"]],
+                res["counts_data"].assign(dPSI=label, Target=target)[["Pos", "Metric", "Value", "dPSI", "Target"]]
             ], ignore_index=True)
 
             results_all.append(df_long)

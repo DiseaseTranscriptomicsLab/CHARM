@@ -703,201 +703,195 @@ CharmObj_bindingvalues <- readRDS("~/Projects/CHARM/data/Binding_both.RDS")
 # D. Single RBP Map
 
 ```{r}
-
-eCLIPSE_full <- function(rnamapfile, pvalthreshold=0.05, PSIthreshold=0.05, ASfile, rnaBP, metric = "FDR", plot = T, title = NULL){
+eCLIPSE_full <- function(bindingvalues_nested, 
+                         rnaBP, 
+                         target, 
+                         dPSI,
+                         metric = "FDR", 
+                         title = NULL, 
+                         plot = TRUE) {
   
-  ASfile <- ASfile[grepl("HsaEX", Event.ID)]
-  AS_events <- ASfile$Event.ID
- 
-  ASfile_filt_increased <- subset(ASfile, dPSI>PSIthreshold)
-  ASfile_filt_decreased <- subset(ASfile, dPSI< -PSIthreshold)
-  ASfile_filt_maintained <- subset(ASfile, !(dPSI > PSIthreshold) & !(dPSI < -PSIthreshold))
-
-  #And now the eCLIPSE file
-  rnamapfile_rbp_increased <- subset(rnamapfile, EVENTS %in% ASfile_filt_increased$Event.ID)
-  rnamapfile_rbp_maintained <- subset(rnamapfile, EVENTS %in% ASfile_filt_maintained$Event.ID)
-  rnamapfile_rbp_decreased <- subset(rnamapfile, EVENTS %in% ASfile_filt_decreased$Event.ID)
+  # --- 1. Validate RBP and target
+  if (!rnaBP %in% names(bindingvalues_nested)) 
+    stop(paste("RBP", rnaBP, "not found."))
   
-  rnamapfile_rbp_increased_rbp <- subset(rnamapfile_rbp_increased, RBP==rnaBP)
-  rnamapfile_rbp_increased_nrbp <- subset(rnamapfile_rbp_increased, RBP!=rnaBP)
-  rnamapfile_rbp_increased_nrbp <- rnamapfile_rbp_increased_nrbp[!duplicated(rnamapfile_rbp_increased_nrbp$EVENTS), ]
-  rnamapfile_rbp_increased_nrbp[rnamapfile_rbp_increased_nrbp == 1] <- 0
-  rnamapfile_rbp_maintained_rbp <- subset(rnamapfile_rbp_maintained, RBP==rnaBP)
-  rnamapfile_rbp_maintained_nrbp <-subset(rnamapfile_rbp_maintained, RBP!=rnaBP)
-  rnamapfile_rbp_maintained_nrbp <- rnamapfile_rbp_maintained_nrbp[!duplicated(rnamapfile_rbp_maintained_nrbp$EVENTS), ]
-  rnamapfile_rbp_maintained_nrbp[rnamapfile_rbp_maintained_nrbp == 1] <- 0
-  rnamapfile_rbp_decreased_rbp <- subset(rnamapfile_rbp_decreased, RBP==rnaBP)
-  rnamapfile_rbp_decreased_nrbp <- subset(rnamapfile_rbp_decreased, RBP!=rnaBP)
-  rnamapfile_rbp_decreased_nrbp <- rnamapfile_rbp_decreased_nrbp[!duplicated(rnamapfile_rbp_decreased_nrbp$EVENTS), ]
-  rnamapfile_rbp_decreased_nrbp[rnamapfile_rbp_decreased_nrbp == 1] <- 0
+  if (!target %in% names(bindingvalues_nested[[rnaBP]]))
+    stop(paste("Target", target, "not found for", rnaBP))
   
-  rnamapfile_rbp_increased <- rbind(rnamapfile_rbp_increased_rbp, rnamapfile_rbp_increased_nrbp)
-  rnamapfile_rbp_decreased <- rbind(rnamapfile_rbp_decreased_rbp, rnamapfile_rbp_decreased_nrbp)
-  rnamapfile_rbp_maintained <- rbind(rnamapfile_rbp_maintained_rbp, rnamapfile_rbp_maintained_nrbp)
+  # --- 2. Fuzzy numeric matching for dPSI
+  available_dpsis <- names(bindingvalues_nested[[rnaBP]][[target]])
+  available_nums <- suppressWarnings(as.numeric(sub(" .*", "", available_dpsis)))
+  dpsi_numeric <- as.numeric(dPSI)
   
-  if (nrow(rnamapfile_rbp_increased) < 10 || 
-      nrow(rnamapfile_rbp_maintained) < 10 || 
-      nrow(rnamapfile_rbp_decreased) < 10) {
-    print(paste0(rnaBP," does not have enough events."))
-    return()  # Skip to the next iteration
+  if (is.na(dpsi_numeric))
+    stop("dPSI must be numeric or numeric-like, e.g. '0.05'")
+  
+  diff_vals <- abs(available_nums - dpsi_numeric)
+  if (all(is.na(diff_vals)))
+    stop(paste("No valid numeric dPSIs found for", rnaBP, "-", target))
+  
+  best_idx <- which.min(diff_vals)
+  chosen_dpsi_name <- available_dpsis[best_idx]
+  
+  message("→ Using dPSI = ", chosen_dpsi_name, 
+          " (closest to requested ", dPSI, ")")
+  
+  # --- 3. Extract nested data
+  this_data <- bindingvalues_nested[[rnaBP]][[target]][[chosen_dpsi_name]]
+  
+  # --- 4. Extract raw event data
+  raw_inc   <- this_data$raw$IncreasedEvents
+  raw_dec   <- this_data$raw$DecreasedEvents
+  raw_maint <- this_data$raw$MaintainedEvents
+  
+  # --- 5. Extract summary metrics (new)
+  get_value <- function(df) {
+    if (is.null(df) || nrow(df) == 0) return(NA)
+    if ("Value" %in% names(df)) return(df$Value[1])
+    as.numeric(df[1, 1])
   }
   
-  rnamapfile_rbp_increased <- rnamapfile_rbp_increased[,-c(1001,1002)]
-  rnamapfile_rbp_increased <- apply(rnamapfile_rbp_increased, c(1, 2), as.numeric)
-  rnamapfile_rbp_increased_comp <- colSums(rnamapfile_rbp_increased, na.rm = TRUE)
-  rnamapfile_rbp_increased_incomp <- colSums(!is.na(rnamapfile_rbp_increased))
+  inc_target  <- get_value(this_data$raw$IncreasedTargetEvents)
+  inc_total   <- get_value(this_data$raw$TotalIncreasedEvents)
+  maint_target <- get_value(this_data$raw$MaintainedTargetEvents)
+  maint_total  <- get_value(this_data$raw$TotalMaintainedEvents)
+  dec_target  <- get_value(this_data$raw$DecreasedTargetEvents)
+  dec_total   <- get_value(this_data$raw$TotalDecreasedEvents)
   
-  rnamapfile_rbp_decreased <- rnamapfile_rbp_decreased[,-c(1001,1002)]
-  rnamapfile_rbp_decreased <- apply(rnamapfile_rbp_decreased, c(1, 2), as.numeric)
-  rnamapfile_rbp_decreased_comp <- colSums(rnamapfile_rbp_decreased, na.rm = TRUE)
-  rnamapfile_rbp_decreased_incomp <- colSums(!is.na(rnamapfile_rbp_decreased))
+  # --- 6. Extract pval/oddsrat data
+  pval_inc <- this_data$pval$pvalinc
+  pval_dec <- this_data$pval$pvaldec
+  odds_inc <- this_data$oddsrat$oddsratinc
+  odds_dec <- this_data$oddsrat$oddsratdec
   
-  
-  rnamapfile_rbp_maintained <- rnamapfile_rbp_maintained[,-c(1001,1002)]
-  rnamapfile_rbp_maintained <- apply(rnamapfile_rbp_maintained, c(1, 2), as.numeric)
-  rnamapfile_rbp_maintained_comp <- colSums(rnamapfile_rbp_maintained, na.rm = TRUE)
-  rnamapfile_rbp_maintained_incomp <- colSums(!is.na(rnamapfile_rbp_maintained))
-
-  #PLOTTING
-  dfforvis <- data.frame(
-    Name = as.numeric(names(rnamapfile_rbp_maintained_comp)),  # the names are the metagenomic coordinates
-    IncreasedEvents = as.numeric(rnamapfile_rbp_increased_comp+1),
-    DecreasedEvents = as.numeric(rnamapfile_rbp_decreased_comp+1),
-    MaintainedEvents = as.numeric(rnamapfile_rbp_maintained_comp+1)
+  # --- 7. Build data frames for plotting
+  dfforvis_raw <- data.frame(
+    Pos = raw_inc$Pos,
+    IncreasedEvents = raw_inc$Value,
+    DecreasedEvents = raw_dec$Value,
+    MaintainedEvents = raw_maint$Value
   )
   
+  dfforvis_pval <- data.frame(
+    pos = pval_inc$Pos,
+    pvalinc = pval_inc$Value,
+    pvaldec = pval_dec$Value
+  )
   
-  pval_inc <- c()
-  pval_dec <- c()
-  oddsratio_inc <- c()
-  oddsratio_dec <- c()
-  for (i in 1:1000){
-    inc_fish <- dfforvis[i,2]
-    inc_fish_rev <- (rnamapfile_rbp_increased_incomp[i] - dfforvis[i,2])
-    inc_fish_vs <- (dfforvis[i,4])
-    inc_fish_vs_rev <- (rnamapfile_rbp_maintained_incomp[i])-(dfforvis[i,4])
-    
-    dec_fish <- dfforvis[i,3]
-    dec_fish_rev <- (rnamapfile_rbp_decreased_incomp[i] - dfforvis[i,3])
-    dec_fish_vs <- (dfforvis[i,4])
-    dec_fish_vs_rev <- (rnamapfile_rbp_maintained_incomp[i])-(dfforvis[i,4])
-    
-    inc_df <- matrix(c(inc_fish, inc_fish_rev, inc_fish_vs, inc_fish_vs_rev), nrow = 2)
-    inc_pval <- chisq.test(inc_df)$p.value
-    inc_odds <- chisq.test(inc_df)$statistic
-    
-    dec_df <- matrix(c(dec_fish, dec_fish_rev, dec_fish_vs, dec_fish_vs_rev), nrow = 2)
-    dec_pval <- chisq.test(dec_df)$p.value
-    dec_odds <- chisq.test(dec_df)$statistic
-    
-    inc_pval <- -log10(p.adjust(inc_pval, method = "BH", n = 1000))
-    dec_pval <- -log10(p.adjust(dec_pval, method = "BH", n = 1000))
-    
-    if ((inc_fish/rnamapfile_rbp_increased_incomp[i]) <=(inc_fish_vs/(rnamapfile_rbp_maintained_incomp[i]))){
-      inc_pval <- inc_pval*-1
-      inc_odds <- inc_odds*-1
-    }
-    if ((dec_fish/rnamapfile_rbp_decreased_incomp[i]) <=(dec_fish_vs/(+rnamapfile_rbp_maintained_incomp[i]))){
-      dec_pval <- dec_pval*-1
-      dec_odds <- dec_odds*-1
-    }
-    pval_inc <- c(pval_inc,inc_pval)
-    oddsratio_inc <- c(oddsratio_inc, inc_odds)
-    pval_dec <- c(pval_dec,dec_pval)
-    oddsratio_dec <- c(oddsratio_dec, dec_odds)
-    
-  }
+  dfforvis_oddsratio <- data.frame(
+    pos = odds_inc$Pos,
+    oddsratinc = odds_inc$Value,
+    oddsratdec = odds_dec$Value
+  )
   
-  dfforvis_pval <- data.frame(pos=1:1000, pvalinc=pval_inc, pvaldec=pval_dec)
-  dfforvis_oddsratio <- data.frame(pos=1:1000, oddsratinc=oddsratio_inc, oddsratdec=oddsratio_dec)
+  # --- 8. Plot main binding density
+  mapplot <- ggplot(dfforvis_raw, aes(x = Pos)) +
+    geom_line(aes(y = IncreasedEvents, color = "IncreasedEvents"), size = 1) +
+    geom_line(aes(y = DecreasedEvents, color = "DecreasedEvents"), size = 1) +
+    geom_line(aes(y = MaintainedEvents, color = "MaintainedEvents"), size = 1) +
+    xlim(0, 1000) +
+    labs(title = paste0(rnaBP, " RNA Binding Map - ", title),
+         x = "",
+         y = " Normalised\nDensity\n") +
+    scale_color_manual(values = c(
+      IncreasedEvents = "#de425b", 
+      DecreasedEvents = "#769fca", 
+      MaintainedEvents = "black"
+    )) +
+    theme_bw() +
+    geom_vline(xintercept = c(0,50,250,450,500,550,750,950,1000), linetype = "dashed") +
+    theme(
+      axis.line = element_line(colour = "black"),
+      panel.grid.minor = element_blank(),
+      panel.border = element_blank(),
+      panel.background = element_blank(),
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      legend.position = "none",
+      text = element_text(size = 15)
+    )
   
-  #The dataframe must be modified beforehand
-  dfforvis$IncreasedEvents <- dfforvis$IncreasedEvents/rnamapfile_rbp_increased_incomp
-  dfforvis$DecreasedEvents <- dfforvis$DecreasedEvents/rnamapfile_rbp_decreased_incomp
-  dfforvis$MaintainedEvents <- dfforvis$MaintainedEvents/rnamapfile_rbp_maintained_incomp
+  # --- 9. New label section with summary counts
+  labels_plot <- ggplot() +
+    annotate("text", x = 1, y = 0,
+             label = paste0("Increased: ", inc_target, " (", inc_total, ")\n"),
+             color = "#de425b", size = 4, fontface = "bold", hjust = -0.75) +
+    annotate("text", x = 1, y = 0,
+             label = paste0("Maintained: ", maint_target, " (", maint_total, ")\n"),
+             color = "black", size = 4, fontface = "bold", hjust = 0.5) +
+    annotate("text", x = 1, y = 0,
+             label = paste0("Decreased: ", dec_target, " (", dec_total, ")\n"),
+             color = "#769fca", size = 4, fontface = "bold", hjust = 1.75) +
+    theme_void() +
+    theme(plot.margin = margin(t = 0, r = 0, b = 0, l = 0))
   
-  if (plot==TRUE){
-    
-mapplot <- ggplot(dfforvis, aes(x = Name)) +
-      geom_line(aes(y = IncreasedEvents, color = "IncreasedEvents"), size = 1) +
-      geom_line(aes(y = DecreasedEvents, color = "DecreasedEvents"), size = 1) +
-      geom_line(aes(y = MaintainedEvents, color = "MaintainedEvents"), size = 1) + xlim(0, 1000) +
-      labs(title = paste0(rnaBP, " RNA Binding Map - ", title),
-           x = "",
-           y = " Normalised\nDensity\n") +
-      scale_color_manual(values = c(IncreasedEvents = "#de425b", DecreasedEvents = "#769fca", MaintainedEvents = "black")) +
-      theme_bw() +
-      geom_vline(xintercept = c(0,50, 250, 450,500,550,750,950,1000), linetype = "dashed") +
-      theme(axis.line = element_line(colour = "black"),
-        panel.grid.minor = element_blank(),
-        panel.border = element_blank(),
-        panel.background = element_blank(),
-        axis.text.x=element_blank(),
-        axis.ticks.x=element_blank(),
-        legend.position = "None")+theme(text=element_text(size=15))
-
-    labels_plot <- ggplot() +
-  annotate("text", x = 1, y = 0, label = paste0("Increased: ",length(table(rnamapfile_rbp_increased_rbp$EVENT)), " (", nrow(ASfile_filt_increased), ")\n"), 
-           color = "#de425b", size = 4.5, fontface = "bold", hjust= -0.75) +
-  annotate("text", x = 1, y = 0, label = paste0("Maintained: ",length(table(rnamapfile_rbp_maintained_rbp$EVENT)), " (", nrow(ASfile_filt_maintained), ")\n"), 
-           color = "black", size = 4.5, fontface = "bold",hjust=0.5) +
-  annotate("text", x = 1, y = 0, label = paste0("Decreased: ",length(table(rnamapfile_rbp_decreased_rbp$EVENT)), " (", nrow(ASfile_filt_decreased), ")\n"), 
-           color = "#769fca", size = 4.5, fontface = "bold", hjust=1.75) +
-  theme_void() + # Removes all axes and background
-  theme(plot.margin = margin(t = 0, r = 0, b = 0, l = 0))
-    
-  }
-  
-  if (plot==TRUE){
-    if (metric=="EffectSize"){
+  # --- 10. Metric-specific plots
+  if (metric == "EffectSize") {
     metricplot <- ggplot(dfforvis_oddsratio, aes(x = pos)) +
       geom_line(aes(y = oddsratinc, color = "Increased"), size = 1) +
       geom_line(aes(y = oddsratdec, color = "Decreased"), size = 1) +
       xlim(0, 1000) +
-      labs(x = "Position",
-           y = "Chi-Squared\nStatistic\n") +
+      labs(x = "Position", y = "Chi-Squared\nStatistic\n") +
       theme_bw() +
-      geom_vline(xintercept = c(0,50, 250, 450,500,550,750,950,1000), linetype = "dashed")+
-  scale_color_manual(values = c("Increased" = "#de425b", "Decreased" = "#769fca"))+ theme(axis.line = element_line(colour = "black"),
+      geom_vline(xintercept = c(0,50,250,450,500,550,750,950,1000), linetype = "dashed") +
+      scale_color_manual(values = c("Increased" = "#de425b", "Decreased" = "#769fca")) +
+      theme(
+        axis.line = element_line(colour = "black"),
         panel.grid.minor = element_blank(),
         panel.border = element_blank(),
         panel.background = element_blank(),
-        axis.text.x=element_blank(),
-        axis.ticks.x=element_blank(),
-        legend.position = "None")+theme(text=element_text(size=15))+
-  scale_y_continuous(
-    labels = scales::label_number(accuracy = 0.01)
-  )}
-    if (metric=="FDR"){
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        legend.position = "none",
+        text = element_text(size = 15)
+      ) +
+      scale_y_continuous(labels = scales::label_number(accuracy = 0.01))
+  } else if (metric == "FDR") {
     metricplot <- ggplot(dfforvis_pval, aes(x = pos)) +
       geom_line(aes(y = pvalinc, color = "Increased"), size = 1) +
       geom_line(aes(y = pvaldec, color = "Decreased"), size = 1) +
       xlim(0, 1000) +
-      labs(x = "Position",
-           y = "-log10 (FDR)\n") +
+      labs(x = "Position", y = "-log10 (FDR)\n") +
       theme_bw() +
-      geom_vline(xintercept = c(0,50, 250, 450,500,550,750,950,1000), linetype = "dashed")+
-  scale_color_manual(values = c("Increased" = "#de425b", "Decreased" = "#769fca"))+ theme(axis.line = element_line(colour = "black"),
+      geom_vline(xintercept = c(0,50,250,450,500,550,750,950,1000), linetype = "dashed") +
+      scale_color_manual(values = c("Increased" = "#de425b", "Decreased" = "#769fca")) +
+      theme(
+        axis.line = element_line(colour = "black"),
         panel.grid.minor = element_blank(),
         panel.border = element_blank(),
         panel.background = element_blank(),
-        axis.text.x=element_blank(),
-        axis.ticks.x=element_blank(),
-        legend.position = "None")+theme(text=element_text(size=15))+
-  scale_y_continuous(
-    labels = scales::label_number(accuracy = 0.01)
-  )}
-    
-    completeplot <- ggarrange(mapplot, labels_plot, metricplot, ncol=1, heights = c(0.4,0.1,0.4), align="v")
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        legend.position = "none",
+        text = element_text(size = 15)
+      ) +
+      scale_y_continuous(labels = scales::label_number(accuracy = 0.01))
+  } else {
+    stop("metric must be 'FDR' or 'EffectSize'")
   }
   
-  if (plot){
+  # --- 11. Combine plots
+  completeplot <- ggarrange(
+    mapplot, labels_plot, metricplot,
+    ncol = 1, heights = c(0.4, 0.1, 0.4), align = "v"
+  )
+  
+  if (plot) {
     return(completeplot)
-  }
-  else{
+  } else {
     return(list(pval_data = dfforvis_pval, oddsratio_data = dfforvis_oddsratio))
   }
 }
+
+plot1 <- eCLIPSE_full(
+  bindingvalues_nested = CharmObj_bindingvalues,
+  rnaBP = "TIA1",
+  target = "G3BP1",
+  dPSI = "0.05",
+  metric = "FDR",
+  title = "G3BP1"
+)
+plot1
 ```
 
 
