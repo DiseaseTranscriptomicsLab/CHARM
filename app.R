@@ -513,39 +513,27 @@ ui <- fluidPage(
             )
           ),
           #Right Side, where plots will appear
+          # Right Side, where plots will appear
           column(
             width = 9,
             tags$h3("Splicing Data Results"),
 
-            # --- Warning message ---
-            div(
-              "⚠ Please press reset after every plot!",
-              style = "border: 2px solid #f0ad4e;
-           background-color: #fff3cd;
-           padding: 8px;
-           border-radius: 6px;
-           font-weight: bold;
-           color: #856404;"
-            ),
-            div(
-              "⚠ If searching by event  or in discovery mode, please scroll down!",
-              style = "border: 2px solid #8F283A;
-           background-color: #DB7F8E;
-           padding: 8px;
-           border-radius: 6px;
-           font-weight: bold;
-           color: #8F283A;"
-            ),
-
-            # ---- Similar RBPs Results ----
+            # --- Explore Mode (default mode, NOT Similar RBPs) ---
             conditionalPanel(
-              condition = "input.splice_dataset == 'Similar RBPs'",
-              uiOutput("similar_splice_plots")
-            ),
+              condition = "input.splice_mode == 'Explore Mode' && input.splice_dataset != 'Similar RBPs'",
+              # --- Warning message ---
+              div(
+                "⚠ Please press reset after every plot!",
+                style = "border: 2px solid #f0ad4e;
+               background-color: #fff3cd;
+               padding: 8px;
+               border-radius: 6px;
+               font-weight: bold;
+               color: #856404;
+               margin-bottom: 10px;"
+              ),
 
-            # ---- Default view when not Similar RBPs ----
-            conditionalPanel(
-              condition = "input.splice_dataset != 'Similar RBPs'",
+              # --- Default Explore-Mode Plots ---
               fluidRow(
                 column(width = 6, plotOutput("violin_splice_plot", height = "400px")),
                 column(width = 6, plotOutput("plot_shrna_effect", height = "400px"))
@@ -554,29 +542,46 @@ ui <- fluidPage(
                 column(width = 6, plotlyOutput("plot_splice_volcano", height = "450px")),
                 column(width = 6, DTOutput("splice_volcano_table"))
               ),
-
-
-            ),
-            # Event ID heatmap placeholder
-            fluidRow(
-              column(
-                width = 12,
-                plotOutput("heatmap_splicing_dpsi", height = "600px")
+              fluidRow(
+                column(width = 12, plotOutput("heatmap_splicing_dpsi", height = "600px"))
               )
             ),
-            # --- User-provided splicing plots (Discovery Mode) ---
+
+            # --- Explore Mode: Similar RBPs ---
+            conditionalPanel(
+              condition = "input.splice_mode == 'Explore Mode' && input.splice_dataset == 'Similar RBPs'",
+              div(
+                "⚠ Please press reset after every plot!",
+                style = "border: 2px solid #f0ad4e;
+               background-color: #fff3cd;
+               padding: 8px;
+               border-radius: 6px;
+               font-weight: bold;
+               color: #856404;
+               margin-bottom: 10px;"
+              ),
+              uiOutput("similar_splice_plots")
+            ),
+
+            # --- Discovery Mode ---
             conditionalPanel(
               condition = "input.splice_mode == 'Discovery Mode'",
-              tagList(
-                # Auto-preview plot of the uploaded file (violin by Type)
-                shinycssloaders::withSpinner(
-                  plotOutput("user_file_initial_plot_splice", height = "420px"),
-                  type = 6
-                ),
-                br(),
-                # Main comparison plots when user clicks Plot
-                uiOutput("similar_splice_plots_file")
-              )
+              div(
+                "⚠ Please press reset after every plot!",
+                style = "border: 2px solid #f0ad4e;
+               background-color: #fff3cd;
+               padding: 8px;
+               border-radius: 6px;
+               font-weight: bold;
+               color: #856404;
+               margin-bottom: 10px;"
+              ),
+              shinycssloaders::withSpinner(
+                plotOutput("user_file_initial_plot_splice", height = "420px"),
+                type = 6
+              ),
+              br(),
+              uiOutput("similar_splice_plots_file")
             )
           )
         )
@@ -1044,14 +1049,14 @@ server <- function(input, output, session) {
     file_path <- input$user_file_splice$datapath
 
     df <- tryCatch(
-      read.table(file_path, header = TRUE, sep = "\t", stringsAsFactors = FALSE),
+      read.table(file_path, header = TRUE, sep = " ", stringsAsFactors = FALSE),
       error = function(e) NULL
     )
 
     if (is.null(df)) {
       upload_ok_splice(FALSE)
       user_splice_df(NULL)
-      error_msg <- "Could not read the file. Make sure it is tab-delimited."
+      error_msg <- "Could not read the file. Make sure it is space-delimited."
     } else if (ncol(df) != 4) {
       upload_ok_splice(FALSE)
       user_splice_df(NULL)
