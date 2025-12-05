@@ -10,23 +10,22 @@ warnings.filterwarnings("ignore")
 
 # === Load Intron file ===
 print("Loading eCLIPSE_Intron_full ...")
-ECLIPSE_INTRON_PATH = os.path.expanduser("~/Projects/CHARM/data/eCLIPSE_Intron_HEPG2.txt")
+ECLIPSE_INTRON_PATH = os.path.expanduser("~/Projects/CHARM/data/eCLIPSE_Intron_K562.txt")
 eCLIPSE_Intron_full = pd.read_csv(ECLIPSE_INTRON_PATH, sep=" ")
 print(f"✅ Loaded {eCLIPSE_Intron_full.shape[0]} rows, {eCLIPSE_Intron_full.shape[1]} columns.")
 
 
 # =====================================================
-# eCLIPSE_heatmap_IR (safe + normalized raw values)
+# eCLIPSE_heatmap_IR (safe + normalized raw values + event counts)
 # =====================================================
 def eCLIPSE_heatmap_IR(metric, rnamapfile, pvalthreshold, PSIthreshold, ASfile, rnaBP, plot=False):
     """
     Safe version of eCLIPSE_heatmap_IR.
     Handles zeros, NaNs, and invalid contingency tables gracefully.
+    Returns pval_data, oddsratio_data, raw_data, counts_data.
     """
 
-    # ---------------------------------------------------------------
-    # 1. Filter intron retention (HsaINT) events
-    # ---------------------------------------------------------------
+    # 1. Filter intron retention events
     ASfile = ASfile[ASfile["Event.ID"].str.contains("HsaINT", na=False)]
     if ASfile.empty:
         return None
@@ -37,16 +36,12 @@ def eCLIPSE_heatmap_IR(metric, rnamapfile, pvalthreshold, PSIthreshold, ASfile, 
         (~(ASfile["dPSI"] > PSIthreshold)) & (~(ASfile["dPSI"] < -PSIthreshold))
     ]
 
-    # ---------------------------------------------------------------
     # 2. Subset RNA map by events
-    # ---------------------------------------------------------------
     inc = rnamapfile[rnamapfile["EVENTS"].isin(ASfile_filt_increased["Event.ID"])]
     dec = rnamapfile[rnamapfile["EVENTS"].isin(ASfile_filt_decreased["Event.ID"])]
     mai = rnamapfile[rnamapfile["EVENTS"].isin(ASfile_filt_maintained["Event.ID"])]
 
-    # ---------------------------------------------------------------
     # 3. Separate target RBP vs non-RBP
-    # ---------------------------------------------------------------
     def prepare_subsets(df, rnaBP):
         rbp = df[df["RBP"] == rnaBP]
         nrbp = df[df["RBP"] != rnaBP].drop_duplicates(subset="EVENTS").copy()
@@ -60,9 +55,7 @@ def eCLIPSE_heatmap_IR(metric, rnamapfile, pvalthreshold, PSIthreshold, ASfile, 
     if any(len(x) < 10 for x in [inc, dec, mai]):
         return None
 
-    # ---------------------------------------------------------------
-    # 4. Convert numeric data, ignoring last two columns (metadata)
-    # ---------------------------------------------------------------
+    # 4. Convert numeric data
     def to_numeric(df):
         return df.iloc[:, :-2].apply(pd.to_numeric, errors="coerce")
 
@@ -70,9 +63,7 @@ def eCLIPSE_heatmap_IR(metric, rnamapfile, pvalthreshold, PSIthreshold, ASfile, 
     dec_num = to_numeric(dec)
     mai_num = to_numeric(mai)
 
-    # ---------------------------------------------------------------
     # 5. Compute counts and completeness
-    # ---------------------------------------------------------------
     inc_comp = np.nansum(inc_num.values, axis=0)
     dec_comp = np.nansum(dec_num.values, axis=0)
     mai_comp = np.nansum(mai_num.values, axis=0)
@@ -81,9 +72,7 @@ def eCLIPSE_heatmap_IR(metric, rnamapfile, pvalthreshold, PSIthreshold, ASfile, 
     dec_incomp = np.sum(~np.isnan(dec_num.values), axis=0)
     mai_incomp = np.sum(~np.isnan(mai_num.values), axis=0)
 
-    # ---------------------------------------------------------------
-    # 6. Build normalized raw values
-    # ---------------------------------------------------------------
+    # 6. Normalized raw values
     def safe_div(a, b):
         with np.errstate(divide="ignore", invalid="ignore"):
             return np.where(b != 0, a / b, np.nan)
@@ -99,9 +88,25 @@ def eCLIPSE_heatmap_IR(metric, rnamapfile, pvalthreshold, PSIthreshold, ASfile, 
         "MaintainedEvents": maintained_norm
     })
 
-    # ---------------------------------------------------------------
+    # 6b. Compute event counts
+    inc_target_events = inc[inc["RBP"] == rnaBP]["EVENTS"].nunique()
+    dec_target_events = dec[dec["RBP"] == rnaBP]["EVENTS"].nunique()
+    mai_target_events = mai[mai["RBP"] == rnaBP]["EVENTS"].nunique()
+
+    total_increased = ASfile_filt_increased.shape[0]
+    total_decreased = ASfile_filt_decreased.shape[0]
+    total_maintained = ASfile_filt_maintained.shape[0]
+
+    df_counts = pd.DataFrame([
+        {"Pos": np.nan, "Metric": "IncreasedTargetEvents", "Value": inc_target_events},
+        {"Pos": np.nan, "Metric": "TotalIncreasedEvents", "Value": total_increased},
+        {"Pos": np.nan, "Metric": "MaintainedTargetEvents", "Value": mai_target_events},
+        {"Pos": np.nan, "Metric": "TotalMaintainedEvents", "Value": total_maintained},
+        {"Pos": np.nan, "Metric": "DecreasedTargetEvents", "Value": dec_target_events},
+        {"Pos": np.nan, "Metric": "TotalDecreasedEvents", "Value": total_decreased}
+    ])
+
     # 7. Safe helpers
-    # ---------------------------------------------------------------
     def safe_chi2(table):
         if np.any(np.isnan(table)) or np.any(table <= 0):
             return np.nan, np.nan
@@ -114,9 +119,7 @@ def eCLIPSE_heatmap_IR(metric, rnamapfile, pvalthreshold, PSIthreshold, ASfile, 
     def safe_ratio(a, b):
         return a / b if b != 0 else np.nan
 
-    # ---------------------------------------------------------------
     # 8. Run chi-square tests across positions
-    # ---------------------------------------------------------------
     pval_inc, pval_dec, odds_inc, odds_dec = [], [], [], []
     n_positions = min(500, len(df_raw))
 
@@ -138,9 +141,7 @@ def eCLIPSE_heatmap_IR(metric, rnamapfile, pvalthreshold, PSIthreshold, ASfile, 
         odds_inc.append(inc_chi)
         odds_dec.append(dec_chi)
 
-    # ---------------------------------------------------------------
-    # 9. BH correction with NaN safety
-    # ---------------------------------------------------------------
+    # 9. BH correction
     def safe_multipletests(pvals):
         pvals = np.array(pvals, dtype=float)
         mask = ~np.isnan(pvals)
@@ -153,9 +154,7 @@ def eCLIPSE_heatmap_IR(metric, rnamapfile, pvalthreshold, PSIthreshold, ASfile, 
     pval_inc_corr = safe_multipletests(pval_inc)
     pval_dec_corr = safe_multipletests(pval_dec)
 
-    # ---------------------------------------------------------------
-    # 10. Directional sign flipping
-    # ---------------------------------------------------------------
+    # 10. Sign flipping
     for i in range(n_positions):
         inc_ratio = safe_ratio(inc_comp[i], inc_incomp[i])
         main_ratio = safe_ratio(mai_comp[i], mai_incomp[i])
@@ -168,9 +167,7 @@ def eCLIPSE_heatmap_IR(metric, rnamapfile, pvalthreshold, PSIthreshold, ASfile, 
             pval_dec_corr[i] = -abs(pval_dec_corr[i]) if not np.isnan(pval_dec_corr[i]) else np.nan
             odds_dec[i] = -abs(odds_dec[i]) if not np.isnan(odds_dec[i]) else np.nan
 
-    # ---------------------------------------------------------------
     # 11. Build output DataFrames
-    # ---------------------------------------------------------------
     pval_data = pd.DataFrame({
         "pos": np.arange(1, n_positions + 1),
         "pvalinc": pval_inc_corr,
@@ -185,7 +182,7 @@ def eCLIPSE_heatmap_IR(metric, rnamapfile, pvalthreshold, PSIthreshold, ASfile, 
 
     raw_data = df_raw.melt(id_vars=["pos"], var_name="Metric", value_name="Value")
 
-    return {"pval_data": pval_data, "oddsratio_data": oddsratio_data, "raw_data": raw_data}
+    return {"pval_data": pval_data, "oddsratio_data": oddsratio_data, "raw_data": raw_data, "counts_data": df_counts}
 
 
 # =====================================================
@@ -193,7 +190,7 @@ def eCLIPSE_heatmap_IR(metric, rnamapfile, pvalthreshold, PSIthreshold, ASfile, 
 # =====================================================
 def process_rbp(rbp):
     base_path = os.path.expanduser("~/Projects/StressGranules/AS.WC_Transcriptome/shRNAExp")
-    file_path = os.path.join(base_path, rbp, f"{rbp}_VulcanTable_HEPG2.txt")
+    file_path = os.path.join(base_path, rbp, f"{rbp}_VulcanTable_K562.txt")
 
     if not os.path.exists(file_path):
         print(f"Skipping missing file for {rbp}")
@@ -225,6 +222,7 @@ def process_rbp(rbp):
         if not temp_results:
             continue
 
+        # summarize metrics
         stats = pd.DataFrame({
             "dpsi": list(temp_results.keys()),
             "sum_pvalinc": [res["pval_data"]["pvalinc"].sum() for res in temp_results.values()],
@@ -266,14 +264,15 @@ def process_rbp(rbp):
                 res["oddsratio_data"].assign(Metric="oddsratdec", dPSI=label, Target=target)
                     .rename(columns={"oddsratdec": "Value", "pos": "Pos"})[["Pos", "Metric", "Value", "dPSI", "Target"]],
                 res["raw_data"].assign(dPSI=label, Target=target)
-                    .rename(columns={"pos": "Pos"})[["Pos", "Metric", "Value", "dPSI", "Target"]]
+                    .rename(columns={"pos": "Pos"})[["Pos", "Metric", "Value", "dPSI", "Target"]],
+                res["counts_data"].assign(dPSI=label, Target=target)[["Pos", "Metric", "Value", "dPSI", "Target"]]
             ], ignore_index=True)
 
             all_metrics.append(df_long)
 
     if all_metrics:
         combined_df = pd.concat(all_metrics, ignore_index=True)
-        outfile = os.path.join(base_path, rbp, f"{rbp}_BindingValues_IR_HEPG2.txt")
+        outfile = os.path.join(base_path, rbp, f"{rbp}_BindingValues_IR_K562.txt")
         combined_df.to_csv(outfile, sep="\t", index=False)
         print(f"✅ Saved {len(combined_df)} rows for {rbp} → {outfile}")
     else:

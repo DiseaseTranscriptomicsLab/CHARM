@@ -11,32 +11,67 @@ library(fgsea)
 library(msigdbr)
 library(dplyr)
 library(tidyr)
+library(qs)
+library(ggpubr)
 
 source("helper_functions.R")
 
 # Load CHARM object once when app starts
-Charm.object <- readRDS("data/Charm.object.RDS")
-sh_effect_vector <- readRDS("data/shRNA_Efficiency.Rds")
-Charm.object_K562 <- readRDS("data/Charm.object_K562.RDS")
-sh_effect_vector_K562 <- readRDS("data/shRNA_Efficiency_K562.Rds")
-Charm.object_HEPG2 <- readRDS("data/Charm.object_HEPG2.RDS")
-sh_effect_vector_HEPG2 <- readRDS("data/shRNA_Efficiency_HEPG2.Rds")
+#Charm.object <- readRDS("data/Charm.object.RDS")
+Charm.object <- qs::qread("data/QS_Files/Charm.object.qs")
+#sh_effect_vector <- readRDS("data/shRNA_Efficiency.Rds")
+sh_effect_vector <- qs::qread("data/QS_Files/shRNA_Efficiency.qs")
+#Charm.object_K562 <- readRDS("data/Charm.object_K562.RDS")
+Charm.object_K562 <- qs::qread("data/QS_Files/Charm.object_K562.qs")
+#sh_effect_vector_K562 <- readRDS("data/shRNA_Efficiency_K562.Rds")
+sh_effect_vector_K562 <- qs::qread("data/QS_Files/shRNA_Efficiency_K562.qs")
+#Charm.object_HEPG2 <- readRDS("data/Charm.object_HEPG2.RDS")
+Charm.object_HEPG2 <- qs::qread("data/QS_Files/Charm.object_HEPG2.qs")
+#sh_effect_vector_HEPG2 <- readRDS("data/shRNA_Efficiency_HEPG2.Rds")
+sh_effect_vector_HEPG2 <- qs::qread("data/QS_Files/shRNA_Efficiency_HEPG2.qs")
+
+# Binding Data
+#Charm.object.binding.ES <- readRDS("data/Binding_both.RDS")
+Charm.object.binding.ES <- qs::qread("data/QS_Files/Binding_both.qs")
+#Charm.object.binding.ES_K562 <- readRDS("data/Binding_K562.RDS")
+Charm.object.binding.ES_K562 <- qs::qread("data/QS_Files/Binding_K562.qs")
+#Charm.object.binding.ES_HEPG2 <- readRDS("data/Binding_HEPG2.RDS")
+Charm.object.binding.ES_HEPG2 <- qs::qread("data/QS_Files/Binding_HEPG2.qs")
+#Charm.object.binding.IR <- readRDS("data/Binding_IR_both.RDS")
+Charm.object.binding.IR <- qs::qread("data/QS_Files/Binding_IR_both.qs")
+#Charm.object.binding.IR_K562 <- readRDS("data/Binding_IR_K562.RDS")
+Charm.object.binding.IR_K562 <- qs::qread("data/QS_Files/Binding_IR_K562.qs")
+#Charm.object.binding.IR_HEPG2 <- readRDS("data/Binding_IR_HEPG2.RDS")
+Charm.object.binding.IR_HEPG2 <- qs::qread("data/QS_Files/Binding_IR_HEPG2.qs")
 
 #Similarity stuff
-similar_expression_all <- readRDS("data/RBPs.t_All.RDS")
-similar_expression_K562 <- readRDS("data/RBPs.t_K562.RDS")
-similar_expression_HEPG2 <- readRDS("data/RBPs.t_HEPG2.RDS")
-similar_gsea_all <- readRDS("data/RBPs.gsea_All.RDS")
-similar_gsea_K562 <- readRDS("data/RBPs.gsea_K562.RDS")
-similar_gsea_HEPG2 <- readRDS("data/RBPs.gsea_HEPG2.RDS")
+#similar_expression_all <- readRDS("data/RBPs.t_All.RDS")
+similar_expression_all <- qs::qread("data/QS_Files/RBPs.t_All.qs")
+#similar_expression_K562 <- readRDS("data/RBPs.t_K562.RDS")
+similar_expression_K562 <- qs::qread("data/QS_Files/RBPs.t_K562.qs")
+#similar_expression_HEPG2 <- readRDS("data/RBPs.t_HEPG2.RDS")
+similar_expression_HEPG2 <- qs::qread("data/QS_Files/RBPs.t_HEPG2.qs")
+#similar_gsea_all <- readRDS("data/RBPs.gsea_All.RDS")
+similar_gsea_all <- qs::qread("data/QS_Files/RBPs.gsea_All.qs")
+#similar_gsea_K562 <- readRDS("data/RBPs.gsea_K562.RDS")
+similar_gsea_K562 <- qs::qread("data/QS_Files/RBPs.gsea_K562.qs")
+#similar_gsea_HEPG2 <- readRDS("data/RBPs.gsea_HEPG2.RDS")
+similar_gsea_HEPG2 <- qs::qread("data/QS_Files/RBPs.gsea_HEPG2.qs")
 
 #SearchBarPopulation
-GenesBoth <- readRDS("data/AvailableGenes_both.RDS")
-GenesK562 <- readRDS("data/AvailableGenes_K562.RDS")
-GenesHEPG2 <- readRDS("data/AvailableGenes_HEPG2.RDS")
-EventsBoth <- readRDS("data/AvailableEvents_Both.RDS")
-EventsK562 <- readRDS("data/AvailableEvents_K562.RDS")
-EventsHEPG2 <- readRDS("data/AvailableEvents_HEPG2.RDS")
+#GenesBoth <- readRDS("data/AvailableGenes_both.RDS")
+GenesBoth <- qs::qread("data/QS_Files/AvailableGenes_both.qs")
+#GenesK562 <- readRDS("data/AvailableGenes_K562.RDS")
+GenesK562 <- qs::qread("data/QS_Files/AvailableGenes_K562.qs")
+#GenesHEPG2 <- readRDS("data/AvailableGenes_HEPG2.RDS")
+GenesHEPG2 <- qs::qread("data/QS_Files/AvailableGenes_HEPG2.qs")
+#EventsBoth <- readRDS("data/AvailableEvents_Both.RDS")
+EventsBoth <- qs::qread("data/QS_Files/AvailableEvents_Both.qs")
+#EventsK562 <- readRDS("data/AvailableEvents_K562.RDS")
+EventsK562 <- qs::qread("data/QS_Files/AvailableEvents_K562.qs")
+#EventsHEPG2 <- readRDS("data/AvailableEvents_HEPG2.RDS")
+EventsHEPG2 <- qs::qread("data/QS_Files/AvailableEvents_HEPG2.qs")
+
 
 ui <- fluidPage(
   theme = shinytheme("flatly"),
@@ -596,17 +631,55 @@ ui <- fluidPage(
           column(
             width = 3,
             wellPanel(
-              radioButtons("binding_mode", "Select mode:", choices = c("Explore Mode", "Discovery Mode"), selected = "Explore Mode"),
+              radioButtons("binding_eventtype", "Event Type:",
+                           choices = c("Exon Skipping", "Intron Retention"),
+                           selected = "Exon Skipping"),
+              
+              radioButtons("binding_mode", "Select mode:",
+                           choices = c("Explore Mode", "Discovery Mode"),
+                           selected = "Explore Mode"),
+              
+              # -------------------------
+              # EXPLORE MODE
+              # -------------------------
               conditionalPanel(
                 condition = "input.binding_mode == 'Explore Mode'",
-                selectInput("binding_dataset", "Select option:", choices = c("Both Cells", "K562", "HEPG2", "Similar RBPs")),
+                
+                selectInput("binding_dataset", "Select option:",
+                            choices = c("Both Cells", "K562", "HEPG2", "Similar RBPs")),
+                
                 div(
                   style = "display: flex; align-items: center; margin-top: 15px;",
-                  selectizeInput("binding_search", NULL, choices = NULL, multiple = FALSE, options = list(placeholder = "RBP"), width = "400px"),
-                  actionButton("search_btn", tagList(fa("search"), " Search"), class = "btn btn-primary", style = "margin-left: 10px; border-radius: 20px;"),
-                  actionButton("reset_btn", tagList(fa("redo"), " Reset"), class = "btn btn-secondary", style = "margin-left: 10px; border-radius: 20px;")
+                  selectizeInput("binding_search", NULL,
+                                 choices = NULL, multiple = FALSE,
+                                 options = list(placeholder = "RBP"),
+                                 width = "400px"),
+                  actionButton("search_btn",
+                               tagList(fa("search"), " Search"),
+                               class = "btn btn-primary",
+                               style = "margin-left: 10px; border-radius: 20px;"),
+                  actionButton("reset_btn",
+                               tagList(fa("redo"), " Reset"),
+                               class = "btn btn-secondary",
+                               style = "margin-left: 10px; border-radius: 20px;")
+                ),
+                
+                # Show only when not "Similar RBPs"
+                conditionalPanel(
+                  condition = "input.binding_dataset != 'Similar RBPs'",
+                  
+                  uiOutput("binding_target_ui"),
+                  uiOutput("binding_dpsi_ui"),
+                  
+                  selectInput("binding_metric", "Metric:",
+                              choices = c("FDR", "EffectSize"),
+                              selected = "FDR")
                 )
               ),
+              
+              # -------------------------
+              # DISCOVERY MODE
+              # -------------------------
               conditionalPanel(
                 condition = "input.binding_mode == 'Discovery Mode'",
                 hr(),
@@ -616,7 +689,34 @@ ui <- fluidPage(
               )
             )
           ),
-          column(width = 9, tags$h3("Binding Data Results"), tags$p("Filtered results will appear here."))
+          
+          # =========================================================
+          # RIGHT SIDE: RESULTS + PLOT AREA
+          # =========================================================
+          column(
+            width = 9,
+            
+            tags$h3("Binding Data Results"),
+            
+            div(
+              "⚠ Please press reset after every plot!",
+              style = "border: 2px solid #f0ad4e;
+                  background-color: #fff3cd;
+                  padding: 8px;
+                  border-radius: 6px;
+                  font-weight: bold;
+                  color: #856404;
+                  margin-bottom: 10px;"
+            ),
+            
+            conditionalPanel(
+              condition = "input.search_btn > 0",
+              shinycssloaders::withSpinner(
+                plotOutput("eclipse_plot", height = "700px"),
+                type = 6
+              )
+            )
+          )
         )
       )
     ),
@@ -1799,6 +1899,127 @@ server <- function(input, output, session) {
     output$heatmap_splicing_dpsi <- renderPlot(NULL)  # clear plot
     updateSelectizeInput(session, "splice_event_search", selected = "")  # clear search
   })
+  
+  # =========================
+  # 1. Binding dataset selector
+  # =========================
+  binding_data <- reactive({
+    req(input$binding_eventtype, input$binding_dataset)
+    
+    if (input$binding_eventtype == "Exon Skipping") {
+      if (input$binding_dataset == "Both Cells") return(Charm.object.binding.ES)
+      if (input$binding_dataset == "K562")       return(Charm.object.binding.ES_K562)
+      if (input$binding_dataset == "HEPG2")      return(Charm.object.binding.ES_HEPG2)
+    }
+    
+    if (input$binding_eventtype == "Intron Retention") {
+      if (input$binding_dataset == "Both Cells") return(Charm.object.binding.IR)
+      if (input$binding_dataset == "K562")       return(Charm.object.binding.IR_K562)
+      if (input$binding_dataset == "HEPG2")      return(Charm.object.binding.IR_HEPG2)
+    }
+    
+    NULL
+  })
+  
+  # =========================
+  # 2. RBP selector
+  # =========================
+  observeEvent(binding_data(), {
+    data <- binding_data()
+    if (!is.null(data)) {
+      updateSelectizeInput(
+        session, "binding_search",
+        choices = names(data),
+        server = TRUE
+      )
+    }
+  })
+  
+  # =========================
+  # 3. Target selector
+  # =========================
+  output$binding_target_ui <- renderUI({
+    req(input$binding_search)
+    data <- binding_data()
+    rbp <- input$binding_search
+    
+    selectInput(
+      "binding_target",
+      "Target:",
+      choices = names(data[[rbp]])
+    )
+  })
+  
+  # =========================
+  # 4. dPSI selector (full label, numeric extraction only later)
+  # =========================
+  output$binding_dpsi_ui <- renderUI({
+    req(input$binding_search, input$binding_target)
+    
+    data <- binding_data()
+    rbp <- input$binding_search
+    target <- input$binding_target
+    
+    dpsi_names <- names(data[[rbp]][[target]])  # full names like "0.05 Raw"
+    dpsi_nums  <- suppressWarnings(as.numeric(sub(" .*", "", dpsi_names)))
+    
+    selectInput(
+      "binding_dpsi",
+      "dPSI:",
+      choices  = setNames(dpsi_names, dpsi_names),
+      selected = dpsi_names[which.min(abs(dpsi_nums))]
+    )
+  })
+  
+  # =========================
+  # 5. Metric mapping
+  # =========================
+  binding_metric_name <- reactive({
+    if (input$binding_metric == "FDR")        return("pval")
+    if (input$binding_metric == "EffectSize") return("oddsrat")
+  })
+  
+  # =========================
+  # 6. RUN HEAVY FUNCTION WHEN SEARCH IS PRESSED
+  # =========================
+  results <- eventReactive(input$search_btn, {
+    withProgress(message = "Generating Plot...", value = 0, {
+      
+      incProgress(0.1)
+      req(input$binding_search, input$binding_target, 
+          input$binding_dpsi, input$binding_metric)
+      
+      data <- binding_data()
+      rbp <- input$binding_search
+      target <- input$binding_target
+      dpsi_numeric <- as.numeric(sub(" .*", "", input$binding_dpsi))
+      metric <- input$binding_metric
+      
+      incProgress(0.5)
+      
+      # heavy computation
+      p <- eCLIPSE_full(
+        bindingvalues_nested = binding_data(),
+        rnaBP    = rbp,
+        target   = target,
+        dPSI     = dpsi_numeric,
+        metric   = metric,
+        title    = paste(rbp, target)
+      )
+      
+      incProgress(0.9)
+      p
+    })
+  })
+  
+  # =========================
+  # 7. Render plot ONLY when Search has been clicked
+  # =========================
+  output$eclipse_plot <- renderPlot({
+    req(results())     # ensures spinner appears correctly
+    results()
+  })
+  
 }
 
 

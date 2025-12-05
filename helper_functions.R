@@ -1199,3 +1199,227 @@ plot_event_dpsi_barplot <- function(CharmObj, Event.ID,
   return(p)
 }
 
+eCLIPSE_full <- function(bindingvalues_nested, 
+                         rnaBP, 
+                         target, 
+                         dPSI,
+                         metric = "FDR", 
+                         title = NULL, 
+                         plot = TRUE) {
+  # --- 1. Validate RBP and target
+  if (!rnaBP %in% names(bindingvalues_nested)) 
+    stop(paste("RBP", rnaBP, "not found."))
+  
+  if (!target %in% names(bindingvalues_nested[[rnaBP]]))
+    stop(paste("Target", target, "not found for", rnaBP))
+  
+  # --- 2. Fuzzy numeric matching for dPSI (accept numeric or numeric-like)
+  available_dpsis <- names(bindingvalues_nested[[rnaBP]][[target]])
+  if (is.null(available_dpsis) || length(available_dpsis) == 0)
+    stop(paste("No dPSI entries found for", rnaBP, "-", target))
+  
+  # try numeric extraction from the names (same approach as your ES function)
+  available_nums <- suppressWarnings(as.numeric(sub(" .*", "", available_dpsis)))
+  dpsi_numeric <- as.numeric(dPSI)
+  
+  if (is.na(dpsi_numeric)) 
+    stop("dPSI must be numeric or numeric-like, e.g. '0.05'")
+  
+  diff_vals <- abs(available_nums - dpsi_numeric)
+  if (all(is.na(diff_vals)))
+    stop(paste("No valid numeric dPSIs found for", rnaBP, "-", target))
+  
+  best_idx <- which.min(diff_vals)
+  chosen_dpsi_name <- available_dpsis[best_idx]
+  message("→ Using dPSI = ", chosen_dpsi_name, 
+          " (closest to requested ", dPSI, ")")
+  
+  # --- 3. Extract nested data
+  this_data <- bindingvalues_nested[[rnaBP]][[target]][[chosen_dpsi_name]]
+  if (is.null(this_data)) stop("Selected nested object is NULL.")
+  
+  # --- 4. Extract raw event data (defensive)
+  raw_inc   <- this_data$raw$IncreasedEvents
+  raw_dec   <- this_data$raw$DecreasedEvents
+  raw_maint <- this_data$raw$MaintainedEvents
+  
+  if (is.null(raw_inc) || is.null(raw_dec) || is.null(raw_maint))
+    stop("Missing raw event data (Increased/Decreased/Maintained).")
+  
+  # Raw objects in your ES version expose Pos and Value columns; ensure they exist
+  if (!all(c("Pos", "Value") %in% names(raw_inc))) stop("raw_inc lacks Pos/Value")
+  if (!all(c("Pos", "Value") %in% names(raw_dec))) stop("raw_dec lacks Pos/Value")
+  if (!all(c("Pos", "Value") %in% names(raw_maint))) stop("raw_maint lacks Pos/Value")
+  
+  # --- 5. Extract summary metrics (robust helper)
+  get_value <- function(df) {
+    if (is.null(df) || nrow(df) == 0) return(NA)
+    if ("Value" %in% names(df)) return(df$Value[1])
+    as.numeric(df[1, 1])
+  }
+  
+  inc_target   <- get_value(this_data$raw$IncreasedTargetEvents)
+  inc_total    <- get_value(this_data$raw$TotalIncreasedEvents)
+  maint_target <- get_value(this_data$raw$MaintainedTargetEvents)
+  maint_total  <- get_value(this_data$raw$TotalMaintainedEvents)
+  dec_target   <- get_value(this_data$raw$DecreasedTargetEvents)
+  dec_total    <- get_value(this_data$raw$TotalDecreasedEvents)
+  
+  # --- 6. Extract pval/oddsrat data (defensive)
+  if (is.null(this_data$pval) || is.null(this_data$oddsrat))
+    stop("Missing pval or oddsrat entries in selected object.")
+  
+  pval_inc <- this_data$pval$pvalinc
+  pval_dec <- this_data$pval$pvaldec
+  odds_inc <- this_data$oddsrat$oddsratinc
+  odds_dec <- this_data$oddsrat$oddsratdec
+  
+  # Check these contain Pos/Value as well
+  if (!all(c("Pos","Value") %in% names(pval_inc))) stop("pval_inc missing Pos/Value")
+  if (!all(c("Pos","Value") %in% names(pval_dec))) stop("pval_dec missing Pos/Value")
+  if (!all(c("Pos","Value") %in% names(odds_inc))) stop("odds_inc missing Pos/Value")
+  if (!all(c("Pos","Value") %in% names(odds_dec))) stop("odds_dec missing Pos/Value")
+  
+  # --- 7. Build data frames for plotting (use Pos from raw_inc)
+  dfforvis_raw <- data.frame(
+    Pos = raw_inc$Pos,
+    IncreasedEvents = raw_inc$Value,
+    DecreasedEvents = raw_dec$Value,
+    MaintainedEvents = raw_maint$Value
+  )
+  
+  dfforvis_pval <- data.frame(
+    pos = pval_inc$Pos,
+    pvalinc = pval_inc$Value,
+    pvaldec = pval_dec$Value
+  )
+  
+  dfforvis_oddsratio <- data.frame(
+    pos = odds_inc$Pos,
+    oddsratinc = odds_inc$Value,
+    oddsratdec = odds_dec$Value
+  )
+  
+  # --- 8. Decide x-axis max (robust): prefer max(Pos) from raw_inc or pval
+  pos_max <- NA
+  if (!all(is.na(dfforvis_raw$Pos))) pos_max <- max(dfforvis_raw$Pos, na.rm = TRUE)
+  if (is.na(pos_max) && nrow(dfforvis_pval) > 0) pos_max <- max(dfforvis_pval$pos, na.rm = TRUE)
+  if (is.na(pos_max) && nrow(dfforvis_oddsratio) > 0) pos_max <- max(dfforvis_oddsratio$pos, na.rm = TRUE)
+  if (is.na(pos_max)) stop("Cannot determine position range for x-axis.")
+  
+  # set xlim ticks similar to original code
+  if (pos_max >= 900) {
+    xlim_max <- 1000
+    vlines <- c(0,50,250,450,500,550,750,950,1000)
+  } else if (pos_max >= 400) {
+    xlim_max <- 500
+    vlines <- c(0,50,250,450,500)
+  } else {
+    # fallback: use pos_max rounded up
+    xlim_max <- pos_max
+    vlines <- unique(c(0, round(seq(0, xlim_max, length.out = 5))))
+  }
+  
+  # --- 9. Plot main binding density (same as original)
+  library(ggplot2)
+  library(ggpubr)
+  library(scales)
+  
+  mapplot <- ggplot(dfforvis_raw, aes(x = Pos)) +
+    geom_line(aes(y = IncreasedEvents, color = "IncreasedEvents"), size = 1) +
+    geom_line(aes(y = DecreasedEvents, color = "DecreasedEvents"), size = 1) +
+    geom_line(aes(y = MaintainedEvents, color = "MaintainedEvents"), size = 1) +
+    xlim(0, xlim_max) +
+    labs(title = paste0(rnaBP, " RNA Binding Map - ", title),
+         x = "",
+         y = " Normalised\nDensity\n") +
+    scale_color_manual(values = c(
+      IncreasedEvents = "#de425b", 
+      DecreasedEvents = "#769fca", 
+      MaintainedEvents = "black"
+    )) +
+    theme_bw() +
+    geom_vline(xintercept = vlines, linetype = "dashed") +
+    theme(
+      axis.line = element_line(colour = "black"),
+      panel.grid.minor = element_blank(),
+      panel.border = element_blank(),
+      panel.background = element_blank(),
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      legend.position = "none",
+      text = element_text(size = 15)
+    )
+  
+  # --- 10. Labels plot (summary counts)
+  labels_plot <- ggplot() +
+    annotate("text", x = 1, y = 0,
+             label = paste0("Increased: ", inc_target, " (", inc_total, ")\n"),
+             color = "#de425b", size = 4, fontface = "bold", hjust = -0.75) +
+    annotate("text", x = 1, y = 0,
+             label = paste0("Maintained: ", maint_target, " (", maint_total, ")\n"),
+             color = "black", size = 4, fontface = "bold", hjust = 0.5) +
+    annotate("text", x = 1, y = 0,
+             label = paste0("Decreased: ", dec_target, " (", dec_total, ")\n"),
+             color = "#769fca", size = 4, fontface = "bold", hjust = 1.75) +
+    theme_void() +
+    theme(plot.margin = margin(t = 0, r = 0, b = 0, l = 0))
+  
+  # --- 11. Metric-specific plot
+  if (metric == "EffectSize") {
+    metricplot <- ggplot(dfforvis_oddsratio, aes(x = pos)) +
+      geom_line(aes(y = oddsratinc, color = "Increased"), size = 1) +
+      geom_line(aes(y = oddsratdec, color = "Decreased"), size = 1) +
+      xlim(0, xlim_max) +
+      labs(x = "Position", y = "Chi-Squared\nStatistic\n") +
+      theme_bw() +
+      geom_vline(xintercept = vlines, linetype = "dashed") +
+      scale_color_manual(values = c("Increased" = "#de425b", "Decreased" = "#769fca")) +
+      theme(
+        axis.line = element_line(colour = "black"),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        legend.position = "none",
+        text = element_text(size = 15)
+      ) +
+      scale_y_continuous(labels = scales::label_number(accuracy = 0.01))
+  } else if (metric == "FDR") {
+    metricplot <- ggplot(dfforvis_pval, aes(x = pos)) +
+      geom_line(aes(y = pvalinc, color = "Increased"), size = 1) +
+      geom_line(aes(y = pvaldec, color = "Decreased"), size = 1) +
+      xlim(0, xlim_max) +
+      labs(x = "Position", y = "-log10 (FDR)\n") +
+      theme_bw() +
+      geom_vline(xintercept = vlines, linetype = "dashed") +
+      scale_color_manual(values = c("Increased" = "#de425b", "Decreased" = "#769fca")) +
+      theme(
+        axis.line = element_line(colour = "black"),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        legend.position = "none",
+        text = element_text(size = 15)
+      ) +
+      scale_y_continuous(labels = scales::label_number(accuracy = 0.01))
+  } else {
+    stop("metric must be 'FDR' or 'EffectSize'")
+  }
+  
+  # --- 12. Combine plots
+  completeplot <- ggarrange(
+    mapplot, labels_plot, metricplot,
+    ncol = 1, heights = c(0.4, 0.1, 0.4), align = "v"
+  )
+  
+  if (plot) {
+    return(completeplot)
+  } else {
+    return(list(pval_data = dfforvis_pval, oddsratio_data = dfforvis_oddsratio))
+  }
+}
+
