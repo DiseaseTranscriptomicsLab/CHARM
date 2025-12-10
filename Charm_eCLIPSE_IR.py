@@ -10,7 +10,7 @@ warnings.filterwarnings("ignore")
 
 # === Load Intron file ===
 print("Loading eCLIPSE_Intron_full ...")
-ECLIPSE_INTRON_PATH = os.path.expanduser("~/Projects/CHARM/data/eCLIPSE_Intron_K562.txt")
+ECLIPSE_INTRON_PATH = os.path.expanduser("~/Projects/CHARM/data/eCLIPSE_Intron_HEPG2.txt")
 eCLIPSE_Intron_full = pd.read_csv(ECLIPSE_INTRON_PATH, sep=" ")
 print(f"✅ Loaded {eCLIPSE_Intron_full.shape[0]} rows, {eCLIPSE_Intron_full.shape[1]} columns.")
 
@@ -190,7 +190,7 @@ def eCLIPSE_heatmap_IR(metric, rnamapfile, pvalthreshold, PSIthreshold, ASfile, 
 # =====================================================
 def process_rbp(rbp):
     base_path = os.path.expanduser("~/Projects/StressGranules/AS.WC_Transcriptome/shRNAExp")
-    file_path = os.path.join(base_path, rbp, f"{rbp}_VulcanTable_K562.txt")
+    file_path = os.path.join(base_path, rbp, f"{rbp}_VulcanTable_HEPG2.txt")
 
     if not os.path.exists(file_path):
         print(f"Skipping missing file for {rbp}")
@@ -272,7 +272,7 @@ def process_rbp(rbp):
 
     if all_metrics:
         combined_df = pd.concat(all_metrics, ignore_index=True)
-        outfile = os.path.join(base_path, rbp, f"{rbp}_BindingValues_IR_K562.txt")
+        outfile = os.path.join(base_path, rbp, f"{rbp}_BindingValues_IR_HEPG2.txt")
         combined_df.to_csv(outfile, sep="\t", index=False)
         print(f"✅ Saved {len(combined_df)} rows for {rbp} → {outfile}")
     else:

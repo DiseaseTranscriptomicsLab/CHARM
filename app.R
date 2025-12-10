@@ -1943,31 +1943,58 @@ server <- function(input, output, session) {
     data <- binding_data()
     rbp <- input$binding_search
     
-    selectInput(
+    selectizeInput(
       "binding_target",
-      "Target:",
-      choices = names(data[[rbp]])
+      "Target(s):",
+      choices = c("All", names(data[[rbp]])),
+      multiple = TRUE,
+      options = list(placeholder = "Select one or more targets, or 'All'")
     )
   })
   
   # =========================
-  # 4. dPSI selector (full label, numeric extraction only later)
+  # 4. dPSI selector (corrected)
   # =========================
+  
+  
   output$binding_dpsi_ui <- renderUI({
     req(input$binding_search, input$binding_target)
     
     data <- binding_data()
     rbp <- input$binding_search
-    target <- input$binding_target
+    targets <- input$binding_target
     
-    dpsi_names <- names(data[[rbp]][[target]])  # full names like "0.05 Raw"
-    dpsi_nums  <- suppressWarnings(as.numeric(sub(" .*", "", dpsi_names)))
+    # Cleanly handle "All"
+    if ("All" %in% targets) {
+      targets <- names(data[[rbp]])
+    }
+    
+    # Single-target mode
+    if (length(targets) == 1) {
+      dpsi_names <- names(data[[rbp]][[targets]])
+      dpsi_nums  <- suppressWarnings(as.numeric(sub(" .*", "", dpsi_names)))
+      selected   <- dpsi_names[which.min(abs(dpsi_nums))]
+      
+      return(selectInput(
+        "binding_dpsi",
+        "dPSI:",
+        choices  = setNames(dpsi_names, dpsi_names),
+        selected = selected
+      ))
+    }
+    
+    # Multi-target mode
+    options_multi <- c(
+      "0.05", "0.1",
+      "maximised oddsratinc", "maximised oddsratdec",
+      "maximised pvalinc", "maximised pvaldec"
+    )
     
     selectInput(
       "binding_dpsi",
       "dPSI:",
-      choices  = setNames(dpsi_names, dpsi_names),
-      selected = dpsi_names[which.min(abs(dpsi_nums))]
+      choices = setNames(options_multi, options_multi),
+      selected = "0.05"
     )
   })
   
@@ -1980,46 +2007,112 @@ server <- function(input, output, session) {
   })
   
   # =========================
-  # 6. RUN HEAVY FUNCTION WHEN SEARCH IS PRESSED
+  # 6. RUN HEAVY FUNCTION WHEN SEARCH IS PRESSED (updated with metric fix)
   # =========================
   results <- eventReactive(input$search_btn, {
     withProgress(message = "Generating Plot...", value = 0, {
-      
-      incProgress(0.1)
-      req(input$binding_search, input$binding_target, 
-          input$binding_dpsi, input$binding_metric)
+      incProgress(0.05)
+      req(input$binding_search, input$binding_target, input$binding_dpsi, input$binding_metric)
       
       data <- binding_data()
-      rbp <- input$binding_search
-      target <- input$binding_target
-      dpsi_numeric <- as.numeric(sub(" .*", "", input$binding_dpsi))
+      rbp  <- input$binding_search
+      targets <- input$binding_target
+      
+      # Handle "All"
+      if ("All" %in% targets) targets <- names(data[[rbp]])
+      
       metric <- input$binding_metric
+      if (is.null(metric) || !(metric %in% c("FDR","EffectSize"))) metric <- "FDR"
       
-      incProgress(0.5)
+      # Helper to pick dPSI for a target
+      pick_dpsi <- function(data, rbp, target, choice) {
+        if (choice %in% c("0.05","0.1")) return(as.numeric(choice))
+        mat <- data[[rbp]][[target]]
+        if (is.null(mat)) return(0.05)
+        name_map <- list(
+          "maximised pvalinc" = "pvalinc",
+          "maximised pvaldec" = "pvaldec",
+          "maximised oddsratinc" = "oddsratinc",
+          "maximised oddsratdec" = "oddsratdec"
+        )
+        val_name <- name_map[[tolower(choice)]]
+        if (!is.null(val_name) && !is.null(mat[[val_name]])) {
+          v <- mat[[val_name]]
+          if (is.data.frame(v) && "Value" %in% names(v)) v <- v$Value
+          val <- suppressWarnings(max(as.numeric(v), na.rm = TRUE))
+          if (is.na(val) || is.infinite(val)) val <- 0.05
+          return(val)
+        }
+        return(0.05)
+      }
       
-      # heavy computation
-      p <- eCLIPSE_full(
-        bindingvalues_nested = binding_data(),
-        rnaBP    = rbp,
-        target   = target,
-        dPSI     = dpsi_numeric,
-        metric   = metric,
-        title    = paste(rbp, target)
-      )
+      incProgress(0.2)
       
-      incProgress(0.9)
-      p
+      # Safe wrapper to ensure ggplot or NULL
+      safe_plot <- function(target) {
+        dpsi_value <- pick_dpsi(data, rbp, target, input$binding_dpsi)
+        res <- tryCatch({
+          eCLIPSE_full(
+            bindingvalues_nested = data,
+            rnaBP = rbp,
+            target = target,
+            dPSI = dpsi_value,
+            metric = metric,
+            title = paste(rbp, target)
+          )
+        }, error = function(e) {
+          message("Skipping ", target, ": ", e$message)
+          NULL
+        })
+        if (!inherits(res, "ggplot")) {
+          tryCatch(res <- ggpubr::as_ggplot(res), error = function(e) res <- NULL)
+        }
+        res
+      }
+      
+      incProgress(0.4)
+      
+      # Generate all plots
+      plots_norm <- lapply(targets, safe_plot)
+      names(plots_norm) <- targets
+      plots_norm <- Filter(Negate(is.null), plots_norm)
+      
+      message("Valid plots count: ", length(plots_norm))
+      
+      if (length(plots_norm) == 0) {
+        return(ggplot() + theme_void() + ggtitle("No valid plots"))
+      }
+      
+      # Single plot
+      if (length(plots_norm) == 1) return(plots_norm[[1]])
+      
+      # Multiple plots: combine safely
+      arranged <- tryCatch({
+        ggpubr::ggarrange(plotlist = plots_norm, ncol = 1, nrow = length(plots_norm))
+      }, error = function(e) {
+        message("ggarrange failed: ", e$message)
+        # fallback: convert all to grobs and wrap
+        grobs <- lapply(plots_norm, function(p) tryCatch(ggplot2::ggplotGrob(p), error = function(e) NULL))
+        grobs <- Filter(Negate(is.null), grobs)
+        if (length(grobs) == 0) return(ggplot() + theme_void() + ggtitle("No valid grobs"))
+        gt <- tryCatch(grid::grobTree(grobs = grobs), error = function(e) NULL)
+        if (!is.null(gt)) return(ggpubr::as_ggplot(gt))
+        ggplot() + theme_void() + ggtitle("Unable to combine plots")
+      })
+      
+      incProgress(1)
+      arranged
     })
   })
   
   # =========================
-  # 7. Render plot ONLY when Search has been clicked
+  # 7. Render plot
   # =========================
   output$eclipse_plot <- renderPlot({
-    req(results())     # ensures spinner appears correctly
+    req(results())
     results()
   })
-  
+  print(paste("Final object class:", class(results)))
 }
 
 

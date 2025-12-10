@@ -37,7 +37,7 @@ build_bindingvalues_list <- function(
 
   for (folder in folder_names) {
     folder_path <- fs::path(base_path, folder)
-    matches <- fs::dir_ls(folder_path, regexp = "BindingValues_IR_both\\.txt$", type = "file")
+    matches <- fs::dir_ls(folder_path, regexp = "BindingValues_IR_K562\\.txt$", type = "file")
 
     if (length(matches) == 0) {
       message("No 'BindingValues_both.txt' file found in: ", folder_path)
@@ -141,4 +141,4 @@ CharmObj_bindingvalues <- build_bindingvalues_list()
 # Example usage:
 CharmObj_bindingvalues_nested <- restructure_bindingvalues_full(CharmObj_bindingvalues)
 
-saveRDS(CharmObj_bindingvalues_nested, "~/Projects/CHARM/data/Binding_IR_both.RDS")
+saveRDS(CharmObj_bindingvalues_nested, "~/Projects/CHARM/data/Binding_IR_K562.RDS")

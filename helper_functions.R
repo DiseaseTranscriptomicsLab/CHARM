@@ -1422,4 +1422,135 @@ eCLIPSE_full <- function(bindingvalues_nested,
     return(list(pval_data = dfforvis_pval, oddsratio_data = dfforvis_oddsratio))
   }
 }
-
+eCLIPSE_heatmap_plot <- function(bindingvalues_nested,
+                                 rnaBP,
+                                 target = "All",
+                                 dPSI = 0.05,
+                                 event_type = c("ES", "IR"),
+                                 SG_RBPs = NULL) {
+  library(dplyr)
+  library(reshape2)
+  library(ggplot2)
+  library(ggpubr)
+  
+  event_type <- match.arg(event_type)
+  pos_max <- ifelse(event_type == "ES", 1000, 500)
+  
+  # --- 1. Determine targets
+  all_targets <- names(bindingvalues_nested[[rnaBP]])
+  if ("All" %in% target) target <- all_targets
+  multi_target <- length(target) > 1
+  
+  heatmap_list <- list()
+  
+  # --- 2. Process each target
+  for (tgt in target) {
+    if (!tgt %in% all_targets) {
+      warning(paste("Target", tgt, "not found for", rnaBP, "- skipping"))
+      next
+    }
+    
+    available_dpsis <- names(bindingvalues_nested[[rnaBP]][[tgt]])
+    
+    chosen_dpsi_name <- NULL
+    
+    # --- 3. Determine dPSI to use
+    if (multi_target) {
+      # If numeric 0.05/0.1
+      if (dPSI %in% c(0.05, 0.1)) {
+        diff_vals <- abs(as.numeric(sub(" .*", "", available_dpsis)) - dPSI)
+        chosen_dpsi_name <- available_dpsis[which.min(diff_vals)]
+      } else {
+        # maximized metric
+        max_metric <- switch(as.character(dPSI),
+                             "pvalinc" = "pvalinc",
+                             "pvaldec" = "pvaldec",
+                             "oddsratinc" = "oddsratinc",
+                             "oddsratdec" = "oddsratdec",
+                             NA)
+        if (!is.na(max_metric)) {
+          max_val <- -Inf
+          for (d in available_dpsis) {
+            this_data <- bindingvalues_nested[[rnaBP]][[tgt]][[d]]
+            candidate <- max(this_data[[ifelse(max_metric %in% c("pvalinc","pvaldec"), "pval","oddsrat")]][[max_metric]]$Value, na.rm = TRUE)
+            if (candidate > max_val) {
+              max_val <- candidate
+              chosen_dpsi_name <- d
+            }
+          }
+        }
+      }
+      # fallback
+      if (is.null(chosen_dpsi_name)) {
+        diff_vals <- abs(as.numeric(sub(" .*", "", available_dpsis)) - 0.05)
+        chosen_dpsi_name <- available_dpsis[which.min(diff_vals)]
+      }
+    } else {
+      # Single target, fuzzy numeric matching
+      available_nums <- suppressWarnings(as.numeric(sub(" .*", "", available_dpsis)))
+      diff_vals <- abs(available_nums - as.numeric(dPSI))
+      chosen_dpsi_name <- available_dpsis[which.min(diff_vals)]
+    }
+    
+    this_data <- bindingvalues_nested[[rnaBP]][[tgt]][[chosen_dpsi_name]]
+    
+    # --- 4. Build pval data for heatmap
+    df_pval <- data.frame(pos = this_data$pval$pvalinc$Pos,
+                          pvalinc = this_data$pval$pvalinc$Value,
+                          pvaldec = this_data$pval$pvaldec$Value)
+    heatmap_list[[tgt]] <- df_pval
+  }
+  
+  if (length(heatmap_list) == 0) return(NULL)
+  
+  # --- 5. Build Upregulated (pvalinc) heatmap
+  extracted_columns <- lapply(heatmap_list, function(x) x[, "pvalinc"])
+  new_df <- do.call(rbind, extracted_columns)
+  rownames(new_df) <- names(heatmap_list)
+  melted_df_up <- reshape2::melt(new_df)
+  
+  heatmap_up <- ggplot(data = melted_df_up, aes(x = Var2, y = Var1, fill = value)) +
+    geom_tile(color = "white") +
+    theme_minimal() +
+    labs(x = "", y = "", fill = "FDR") +
+    scale_fill_gradient2(low = "#53A2BE", mid = "#EEEEEE", high = "#BA3B46") +
+    geom_vline(xintercept = seq(0, pos_max, length.out = 10), linetype = "dashed") +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      axis.text.y = element_text(hjust = 0.5, size = 12, family = "Arial MS"),
+      plot.title = element_text(hjust = 0.5, size = 16),
+      plot.subtitle = element_text(hjust = 0.5)
+    ) +
+    scale_y_discrete(labels = function(x) {
+      if (is.null(SG_RBPs)) return(x)
+      sapply(x, function(label) ifelse(label %in% SG_RBPs, bquote(bold(.(label))), label))
+    })
+  
+  # --- 6. Build Downregulated (pvaldec) heatmap
+  extracted_columns <- lapply(heatmap_list, function(x) x[, "pvaldec"])
+  new_df <- do.call(rbind, extracted_columns)
+  rownames(new_df) <- names(heatmap_list)
+  melted_df_down <- reshape2::melt(new_df)
+  
+  heatmap_down <- ggplot(data = melted_df_down, aes(x = Var2, y = Var1, fill = value)) +
+    geom_tile(color = "white") +
+    theme_minimal() +
+    labs(x = "", y = "", fill = "FDR") +
+    scale_fill_gradient2(low = "#53A2BE", mid = "#EEEEEE", high = "#BA3B46") +
+    geom_vline(xintercept = seq(0, pos_max, length.out = 10), linetype = "dashed") +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      axis.text.y = element_blank(),
+      axis.ticks.y = element_blank(),
+      plot.title = element_text(hjust = 0.5, size = 16),
+      legend.position = "none",
+      text = element_text(size = 15, family = "Arial MS")
+    )
+  
+  # --- 7. Combine plots
+  combined_heatmap <- ggarrange(heatmap_down, heatmap_up, ncol = 2,
+                                labels = c("A", ""), font.label = list(size = 25),
+                                widths = c(0.44, 0.56))
+  
+  return(combined_heatmap)
+}
