@@ -1936,52 +1936,6 @@ server <- function(input, output, session) {
   })
   
   
-  # ---------- Safe plot renderers ----------
-  output$heatmap_dec <- renderPlot({
-    res <- tryCatch(results(), error = function(e) {
-      message("results() error in heatmap_dec: ", e$message); NULL
-    })
-    # res may be:
-    # - a single ggplot (single-target case)
-    # - a list with $dec and/or $inc (multi-target heatmap builder)
-    if (is.null(res)) {
-      # nothing to show
-      return(NULL)
-    }
-    
-    # If res is a list and has dec, draw that
-    if (is.list(res) && !is.null(res$dec)) {
-      p <- res$dec
-      if (inherits(p, "ggplot")) print(p) else message("heatmap_dec: object is not ggplot")
-      return(NULL)
-    }
-    
-    # If res is a ggplot and single-target, maybe user expects it here:
-    if (inherits(res, "ggplot")) {
-      print(res)
-      return(NULL)
-    }
-    
-    # fallback: nothing
-    NULL
-  })
-  
-  output$heatmap_inc <- renderPlot({
-    res <- tryCatch(results(), error = function(e) {
-      message("results() error in heatmap_inc: ", e$message); NULL
-    })
-    if (is.null(res)) return(NULL)
-    
-    if (is.list(res) && !is.null(res$inc)) {
-      p <- res$inc
-      if (inherits(p, "ggplot")) print(p) else message("heatmap_inc: object is not ggplot")
-      return(NULL)
-    }
-    
-    # If res is a single ggplot, we've already drawn it in heatmap_dec (single-target case)
-    NULL
-  })
-  
   
   # =========================
   # 2. RBP selector
@@ -2072,6 +2026,48 @@ server <- function(input, output, session) {
   # =========================
   # 6. RUN HEAVY FUNCTION WHEN SEARCH IS PRESSED (updated with metric fix)
   # =========================
+  
+  schematic_exon_skipping <- function() {
+    list(
+      rects = data.frame(
+        xmin = c(0, 450, 950),
+        xmax = c(50, 550, 1000),
+        ymin = -0.8,
+        ymax = -0.2,
+        fill = c("#1B4F72", "#BA3B46", "#1B4F72")
+      ),
+      introns = data.frame(
+        x = c(50, 550),
+        xend = c(450, 950),
+        y = -0.5,
+        yend = -0.5
+      ),
+      arrow = data.frame(
+        x = 50, xend = 950, y = -0.1, yend = -0.1
+      )
+    )
+  }
+  
+  
+  schematic_intron_retention <- function() {
+    list(
+      rects = data.frame(
+        xmin = c(0, 900),
+        xmax = c(100, 1000),
+        ymin = -0.8,
+        ymax = -0.2,
+        fill = c("#1B4F72", "#1B4F72")
+      ),
+      intron_rect = data.frame(
+        xmin = 100,
+        xmax = 900,
+        ymin = -0.7,
+        ymax = -0.3
+      )
+    )
+  }
+  
+  
   # -------------------------------
   # Helper: pick dPSI per target
   # -------------------------------
@@ -2106,48 +2102,7 @@ server <- function(input, output, session) {
   # -------------------------------
   # build_binding_heatmap (refactored)
   # -------------------------------
-  schematic_exon_skipping <- function() {
-    list(
-      rects = data.frame(
-        xmin = c(0, 450, 950),
-        xmax = c(50, 550, 1000),
-        ymin = -0.8,
-        ymax = -0.2,
-        fill = c("#1B4F72", "#BA3B46", "#1B4F72")
-      ),
-      introns = data.frame(
-        x = c(50, 550),
-        xend = c(450, 950),
-        y = -0.5,
-        yend = -0.5
-      ),
-      arrow = data.frame(
-        x = 50, xend = 950, y = -0.1, yend = -0.1
-      )
-    )
-  }
-  
-  
-  schematic_intron_retention <- function() {
-    list(
-      rects = data.frame(
-        xmin = c(0, 450),
-        xmax = c(50, 500),
-        ymin = -0.8,
-        ymax = -0.2,
-        fill = c("#1B4F72", "#1B4F72")
-      ),
-      intron_rect = data.frame(
-        xmin = 50, xmax = 450,
-        ymin = -0.7, ymax = -0.3
-      )
-    )
-  }
-  
-  
-  
-  
-  # Drop-in build_binding_heatmap with the expected signature
+
   build_binding_heatmap <- function(data, rbp, targets, dpsi_choice, metric_key) {
     
     # -----------------------------
@@ -2240,11 +2195,13 @@ server <- function(input, output, session) {
         scale_fill_gradient2(low="#53A2BE", mid="#EEEEEE", high="#BA3B46", limits=lim, oob=scales::squish) +
         labs(x="Genomic position", y="", fill=fill_label, title=title_text) +
         theme_minimal(base_size=14) +
+
         theme(
-          panel.grid = element_blank(),
-          axis.text.x = element_text(size=12, face="bold"),
-          axis.text.y = element_text(size=12, face="bold"),
-          plot.title = element_text(face="bold", size=16)
+          text = element_text(size = 16, face = "bold"),           # bold, larger text globally
+          axis.text.x = element_text(size = 14, face = "bold"),    # x-axis ticks
+          axis.text.y = element_text(size = 14, face = "bold"),    # y-axis ticks
+          axis.title = element_text(size = 16, face = "bold"),     # axis titles if any
+          panel.grid = element_blank()
         )
       
       # Add schematic under heatmap
@@ -2324,7 +2281,9 @@ server <- function(input, output, session) {
           target = targets,
           dPSI = dpsi_value,
           metric = metric,
-          title = paste(rbp, targets)
+          title = paste(rbp, targets),
+          schematic_exon_skipping = schematic_exon_skipping,
+          schematic_intron_retention = schematic_intron_retention
         )
         return(p)
       } else {
@@ -2340,9 +2299,12 @@ server <- function(input, output, session) {
   # =========================
   output$eclipse_plot <- renderPlot({
     req(results())
-    results()
+    p <- results()
+    if (inherits(p, "ggplot") || inherits(p, "ggarrange")) {
+      print(p)
+    }
   })
-  print(paste("Final object class:", class(results)))
+  
 }
 
 
