@@ -13,6 +13,9 @@ library(dplyr)
 library(tidyr)
 library(qs)
 library(ggpubr)
+library(png)
+library(grid)
+
 
 source("helper_functions.R")
 
@@ -322,7 +325,7 @@ ui <- fluidPage(
           # Right content area
           column(
             width = 9,
-            tags$h3("Expression Data Results"),
+            tags$h3("Expression Data  <- "),
 
             # --- Explore Mode (default mode) ---
             conditionalPanel(
@@ -701,21 +704,21 @@ ui <- fluidPage(
             div(
               "⚠ Please press reset after every plot!",
               style = "border: 2px solid #f0ad4e;
-                  background-color: #fff3cd;
-                  padding: 8px;
-                  border-radius: 6px;
-                  font-weight: bold;
-                  color: #856404;
-                  margin-bottom: 10px;"
+        background-color: #fff3cd;
+        padding: 8px;
+        border-radius: 6px;
+        font-weight: bold;
+        color: #856404;
+        margin-bottom: 10px;"
             ),
             
             conditionalPanel(
               condition = "input.search_btn > 0",
-              shinycssloaders::withSpinner(
-                plotOutput("eclipse_plot", height = "700px"),
-                type = 6
-              )
+              
+              plotOutput("eclipse_plot", height = "900px")
+              
             )
+            
           )
         )
       )
@@ -774,6 +777,17 @@ ui <- fluidPage(
 # ---- Server ----
 
 server <- function(input, output, session) {
+  
+  
+  image_to_ggplot <- function(path) {
+    img <- png::readPNG(path)
+    g <- grid::rasterGrob(img, interpolate = TRUE)
+    ggplot() + annotation_custom(g, xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf) +
+      theme_void()
+  }
+  
+  
+  
   result_splice <- reactiveVal(NULL)
 
   # ---- Helper functions to pick correct dataset ----
@@ -1921,6 +1935,54 @@ server <- function(input, output, session) {
     NULL
   })
   
+  
+  # ---------- Safe plot renderers ----------
+  output$heatmap_dec <- renderPlot({
+    res <- tryCatch(results(), error = function(e) {
+      message("results() error in heatmap_dec: ", e$message); NULL
+    })
+    # res may be:
+    # - a single ggplot (single-target case)
+    # - a list with $dec and/or $inc (multi-target heatmap builder)
+    if (is.null(res)) {
+      # nothing to show
+      return(NULL)
+    }
+    
+    # If res is a list and has dec, draw that
+    if (is.list(res) && !is.null(res$dec)) {
+      p <- res$dec
+      if (inherits(p, "ggplot")) print(p) else message("heatmap_dec: object is not ggplot")
+      return(NULL)
+    }
+    
+    # If res is a ggplot and single-target, maybe user expects it here:
+    if (inherits(res, "ggplot")) {
+      print(res)
+      return(NULL)
+    }
+    
+    # fallback: nothing
+    NULL
+  })
+  
+  output$heatmap_inc <- renderPlot({
+    res <- tryCatch(results(), error = function(e) {
+      message("results() error in heatmap_inc: ", e$message); NULL
+    })
+    if (is.null(res)) return(NULL)
+    
+    if (is.list(res) && !is.null(res$inc)) {
+      p <- res$inc
+      if (inherits(p, "ggplot")) print(p) else message("heatmap_inc: object is not ggplot")
+      return(NULL)
+    }
+    
+    # If res is a single ggplot, we've already drawn it in heatmap_dec (single-target case)
+    NULL
+  })
+  
+  
   # =========================
   # 2. RBP selector
   # =========================
@@ -2006,9 +2068,234 @@ server <- function(input, output, session) {
     if (input$binding_metric == "EffectSize") return("oddsrat")
   })
   
+  
   # =========================
   # 6. RUN HEAVY FUNCTION WHEN SEARCH IS PRESSED (updated with metric fix)
   # =========================
+  # -------------------------------
+  # Helper: pick dPSI per target
+  # -------------------------------
+  resolve_dpsi_key <- function(dpsi_names, choice){
+    if (is.null(dpsi_names) || length(dpsi_names) == 0) return(NULL)
+    choice_lc <- tolower(choice)
+    
+    # Numeric options: match names that start with 0.05 or 0.1
+    if (choice %in% c("0.05", "0.1")) {
+      hits <- dpsi_names[grepl(paste0("^", choice, "( |\\()"), dpsi_names)]
+      if (length(hits) > 0) return(hits[1])
+    }
+    
+    # Maximised options
+    if (grepl("maximised", choice_lc)) {
+      # determine direction
+      direction <- ifelse(grepl("inc$", choice_lc), "inc", "dec")
+      hits <- dpsi_names[grepl(direction, tolower(dpsi_names))]
+      if (length(hits) > 0) return(hits[1])
+    }
+    
+    # Fallback order: pick first numeric or first available
+    hits_005 <- dpsi_names[grepl("^0\\.05( |\\()", dpsi_names)]
+    if (length(hits_005) > 0) return(hits_005[1])
+    
+    hits_01  <- dpsi_names[grepl("^0\\.1( |\\()", dpsi_names)]
+    if (length(hits_01) > 0) return(hits_01[1])
+    
+    dpsi_names[1]
+  }
+  
+  # -------------------------------
+  # build_binding_heatmap (refactored)
+  # -------------------------------
+  schematic_exon_skipping <- function() {
+    list(
+      rects = data.frame(
+        xmin = c(0, 450, 950),
+        xmax = c(50, 550, 1000),
+        ymin = -0.8,
+        ymax = -0.2,
+        fill = c("#1B4F72", "#BA3B46", "#1B4F72")
+      ),
+      introns = data.frame(
+        x = c(50, 550),
+        xend = c(450, 950),
+        y = -0.5,
+        yend = -0.5
+      ),
+      arrow = data.frame(
+        x = 50, xend = 950, y = -0.1, yend = -0.1
+      )
+    )
+  }
+  
+  
+  schematic_intron_retention <- function() {
+    list(
+      rects = data.frame(
+        xmin = c(0, 450),
+        xmax = c(50, 500),
+        ymin = -0.8,
+        ymax = -0.2,
+        fill = c("#1B4F72", "#1B4F72")
+      ),
+      intron_rect = data.frame(
+        xmin = 50, xmax = 450,
+        ymin = -0.7, ymax = -0.3
+      )
+    )
+  }
+  
+  
+  
+  
+  # Drop-in build_binding_heatmap with the expected signature
+  build_binding_heatmap <- function(data, rbp, targets, dpsi_choice, metric_key) {
+    
+    # -----------------------------
+    # 1. Helper: pad list to matrix
+    # -----------------------------
+    pad_and_rbind <- function(lst) {
+      if (length(lst) == 0) return(NULL)
+      lengths <- sapply(lst, length)
+      maxlen <- max(lengths)
+      mat <- t(sapply(lst, function(v) {
+        if (is.null(v)) return(rep(NA_real_, maxlen))
+        if (length(v) < maxlen) return(c(v, rep(NA_real_, maxlen - length(v))))
+        v
+      }))
+      rownames(mat) <- names(lst)
+      colnames(mat) <- seq_len(ncol(mat))
+      mat
+    }
+    
+    # -----------------------------
+    # 2. Build numeric vectors
+    # -----------------------------
+    inc_list <- list()
+    dec_list <- list()
+    for (tgt in targets) {
+      if (is.null(data[[rbp]][[tgt]])) next
+      dpsi_names <- names(data[[rbp]][[tgt]])
+      key <- resolve_dpsi_key(dpsi_names, dpsi_choice)
+      if (is.null(key)) next
+      
+      inc_raw <- tryCatch(data[[rbp]][[tgt]][[key]][[metric_key]][[paste0(metric_key, "inc")]], error = function(e) NULL)
+      dec_raw <- tryCatch(data[[rbp]][[tgt]][[key]][[metric_key]][[paste0(metric_key, "dec")]], error = function(e) NULL)
+      
+      inc_vec <- if (is.data.frame(inc_raw) && "Value" %in% names(inc_raw)) suppressWarnings(as.numeric(inc_raw$Value)) else suppressWarnings(as.numeric(inc_raw))
+      dec_vec <- if (is.data.frame(dec_raw) && "Value" %in% names(dec_raw)) suppressWarnings(as.numeric(dec_raw$Value)) else suppressWarnings(as.numeric(dec_raw))
+      
+      if (is.null(inc_vec) || all(is.na(inc_vec))) inc_vec <- NULL
+      if (is.null(dec_vec) || all(is.na(dec_vec))) dec_vec <- NULL
+      
+      if (!is.null(inc_vec)) inc_list[[tgt]] <- inc_vec
+      if (!is.null(dec_vec)) dec_list[[tgt]] <- dec_vec
+    }
+    
+    if (length(inc_list) == 0 && length(dec_list) == 0) {
+      return(ggplot() + theme_void() + ggtitle("No heatmap data"))
+    }
+    
+    inc_mat <- pad_and_rbind(inc_list)
+    dec_mat <- pad_and_rbind(dec_list)
+    
+    # -----------------------------
+    # 3. Determine color limits
+    # -----------------------------
+    all_vals <- c(as.numeric(inc_mat), as.numeric(dec_mat))
+    all_vals <- all_vals[is.finite(all_vals)]
+    lim <- if (length(all_vals) == 0) c(-1,1) else { mx <- max(abs(all_vals)); if(mx==0) c(-1,1) else c(-mx,mx) }
+    
+    fill_label <- if(metric_key=="pval") "FDR" else "Chi-Squared Statistic"
+    
+    # -----------------------------
+    # 4. Determine event type & schematic
+    # -----------------------------
+    etype <- NULL
+    try({
+      etype <- if (exists("input", envir = parent.frame())) {
+        pf_input <- get("input", envir = parent.frame())
+        if (!is.null(pf_input$binding_eventtype)) pf_input$binding_eventtype else NULL
+      } else NULL
+    }, silent = TRUE)
+    if (is.null(etype)) etype <- "Exon Skipping"
+    
+    schem <- if (etype == "Intron Retention") {
+      schematic_intron_retention()
+    } else {
+      schematic_exon_skipping()
+    }
+    
+    # -----------------------------
+    # 5. Plot matrix helper
+    # -----------------------------
+    plot_matrix <- function(mat, title_text, schematic) {
+      if (is.null(mat)) return(NULL)
+      
+      mdf <- reshape2::melt(mat)
+      colnames(mdf) <- c("Target","Position","Value")
+      mdf$Position <- as.numeric(mdf$Position)
+      
+      p <- ggplot(mdf, aes(x=Position, y=Target, fill=Value)) +
+        geom_tile() +
+        scale_fill_gradient2(low="#53A2BE", mid="#EEEEEE", high="#BA3B46", limits=lim, oob=scales::squish) +
+        labs(x="Genomic position", y="", fill=fill_label, title=title_text) +
+        theme_minimal(base_size=14) +
+        theme(
+          panel.grid = element_blank(),
+          axis.text.x = element_text(size=12, face="bold"),
+          axis.text.y = element_text(size=12, face="bold"),
+          plot.title = element_text(face="bold", size=16)
+        )
+      
+      # Add schematic under heatmap
+      if (!is.null(schematic$rects)) {
+        p <- p + geom_rect(data=schematic$rects,
+                           aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax),
+                           fill=schematic$rects$fill, color="black", linewidth=0.3,
+                           inherit.aes=FALSE)
+      }
+      if (!is.null(schematic$intron_rect)) {
+        p <- p + geom_rect(data=schematic$intron_rect,
+                           aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax),
+                           fill="#E5E7E9", color="black", linewidth=0.3,
+                           inherit.aes=FALSE)
+      }
+      if (!is.null(schematic$introns)) {
+        p <- p + geom_segment(data=schematic$introns,
+                              aes(x=x, xend=xend, y=y, yend=yend),
+                              linewidth=0.8, inherit.aes=FALSE)
+      }
+      
+      # NOTE: Arrow removed
+      # if (!is.null(schematic$arrow)) { ... }  <- DELETE THIS SECTION
+      
+      p <- p + scale_y_discrete(expand=expansion(mult=c(0,0.15))) +
+        coord_cartesian(ylim=c(-1, NA), clip="off")
+      
+      return(p)
+    }
+    
+    
+    # -----------------------------
+    # 6. Build plots
+    # -----------------------------
+    heat_inc_plot <- plot_matrix(inc_mat, "Increased Events", schem)
+    heat_dec_plot <- plot_matrix(dec_mat, "Decreased Events", schem)
+    
+    # -----------------------------
+    # 7. Combine side-by-side
+    # -----------------------------
+    if (!is.null(heat_dec_plot) && !is.null(heat_inc_plot)) {
+      return(ggpubr::ggarrange(heat_dec_plot, heat_inc_plot, ncol=2, widths=c(0.5,0.5)))
+    } else if (!is.null(heat_dec_plot)) return(heat_dec_plot)
+    else if (!is.null(heat_inc_plot)) return(heat_inc_plot)
+    
+    ggplot() + theme_void() + ggtitle("No heatmap data")
+  }
+  
+  # -------------------------------
+  # results (refactored)
+  # -------------------------------
   results <- eventReactive(input$search_btn, {
     withProgress(message = "Generating Plot...", value = 0, {
       incProgress(0.05)
@@ -2024,84 +2311,27 @@ server <- function(input, output, session) {
       metric <- input$binding_metric
       if (is.null(metric) || !(metric %in% c("FDR","EffectSize"))) metric <- "FDR"
       
-      # Helper to pick dPSI for a target
-      pick_dpsi <- function(data, rbp, target, choice) {
-        if (choice %in% c("0.05","0.1")) return(as.numeric(choice))
-        mat <- data[[rbp]][[target]]
-        if (is.null(mat)) return(0.05)
-        name_map <- list(
-          "maximised pvalinc" = "pvalinc",
-          "maximised pvaldec" = "pvaldec",
-          "maximised oddsratinc" = "oddsratinc",
-          "maximised oddsratdec" = "oddsratdec"
-        )
-        val_name <- name_map[[tolower(choice)]]
-        if (!is.null(val_name) && !is.null(mat[[val_name]])) {
-          v <- mat[[val_name]]
-          if (is.data.frame(v) && "Value" %in% names(v)) v <- v$Value
-          val <- suppressWarnings(max(as.numeric(v), na.rm = TRUE))
-          if (is.na(val) || is.infinite(val)) val <- 0.05
-          return(val)
-        }
-        return(0.05)
-      }
-      
       incProgress(0.2)
       
-      # Safe wrapper to ensure ggplot or NULL
-      safe_plot <- function(target) {
-        dpsi_value <- pick_dpsi(data, rbp, target, input$binding_dpsi)
-        res <- tryCatch({
-          eCLIPSE_full(
-            bindingvalues_nested = data,
-            rnaBP = rbp,
-            target = target,
-            dPSI = dpsi_value,
-            metric = metric,
-            title = paste(rbp, target)
-          )
-        }, error = function(e) {
-          message("Skipping ", target, ": ", e$message)
-          NULL
-        })
-        if (!inherits(res, "ggplot")) {
-          tryCatch(res <- ggpubr::as_ggplot(res), error = function(e) res <- NULL)
-        }
-        res
+      if(length(targets) == 1){
+        # Single target: regular eCLIPSE plot
+        dpsi_names <- names(data[[rbp]][[targets]])
+        dpsi_key <- resolve_dpsi_key(dpsi_names, input$binding_dpsi)
+        dpsi_value <- suppressWarnings(as.numeric(sub(" .*", "", dpsi_key)))
+        p <- eCLIPSE_full(
+          bindingvalues_nested = data,
+          rnaBP = rbp,
+          target = targets,
+          dPSI = dpsi_value,
+          metric = metric,
+          title = paste(rbp, targets)
+        )
+        return(p)
+      } else {
+        # Multiple targets: heatmap
+        return(build_binding_heatmap(data, rbp, targets, input$binding_dpsi, binding_metric_name()))
       }
-      
-      incProgress(0.4)
-      
-      # Generate all plots
-      plots_norm <- lapply(targets, safe_plot)
-      names(plots_norm) <- targets
-      plots_norm <- Filter(Negate(is.null), plots_norm)
-      
-      message("Valid plots count: ", length(plots_norm))
-      
-      if (length(plots_norm) == 0) {
-        return(ggplot() + theme_void() + ggtitle("No valid plots"))
-      }
-      
-      # Single plot
-      if (length(plots_norm) == 1) return(plots_norm[[1]])
-      
-      # Multiple plots: combine safely
-      arranged <- tryCatch({
-        ggpubr::ggarrange(plotlist = plots_norm, ncol = 1, nrow = length(plots_norm))
-      }, error = function(e) {
-        message("ggarrange failed: ", e$message)
-        # fallback: convert all to grobs and wrap
-        grobs <- lapply(plots_norm, function(p) tryCatch(ggplot2::ggplotGrob(p), error = function(e) NULL))
-        grobs <- Filter(Negate(is.null), grobs)
-        if (length(grobs) == 0) return(ggplot() + theme_void() + ggtitle("No valid grobs"))
-        gt <- tryCatch(grid::grobTree(grobs = grobs), error = function(e) NULL)
-        if (!is.null(gt)) return(ggpubr::as_ggplot(gt))
-        ggplot() + theme_void() + ggtitle("Unable to combine plots")
-      })
-      
       incProgress(1)
-      arranged
     })
   })
   
