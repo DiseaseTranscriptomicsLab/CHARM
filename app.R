@@ -2052,15 +2052,15 @@ server <- function(input, output, session) {
   schematic_intron_retention <- function() {
     list(
       rects = data.frame(
-        xmin = c(0, 900),
-        xmax = c(100, 1000),
+        xmin = c(0, 450),
+        xmax = c(50, 500),
         ymin = -0.8,
         ymax = -0.2,
         fill = c("#1B4F72", "#1B4F72")
       ),
       intron_rect = data.frame(
-        xmin = 100,
-        xmax = 900,
+        xmin = 50,
+        xmax = 450,
         ymin = -0.7,
         ymax = -0.3
       )
