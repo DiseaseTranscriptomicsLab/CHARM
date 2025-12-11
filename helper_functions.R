@@ -1330,38 +1330,35 @@ eCLIPSE_full <- function(bindingvalues_nested, rnaBP, target, dPSI,
     dec_color <- "#769fca"   # ES decreased
     maint_color <- "black"   # ES maintained
   }
+  # --- Set unified x-axis limits and expansion for alignment
+  x_axis_min <- 0
+  x_axis_max <- xlim_max
+  x_axis_expand <- 0.02  # 2% padding on left and right
   
-  # --- 10. Schematic plot (above map)
+  # --- Schematic plot
   schem_plot <- ggplot() +
-    geom_rect(
-      data = schem$rects,
-      aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, fill = fill),
-      color = "black", linewidth = 0.35, inherit.aes = FALSE
-    ) +
-    # IR intron block (if present)
-    { if (!is.null(schem$intron_rect)) 
+    geom_rect(data = schem$rects,
+              aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, fill = fill),
+              color = "black", linewidth = 0.35, inherit.aes = FALSE) +
+    { if (!is.null(schem$intron_rect))
       geom_rect(data = schem$intron_rect,
                 aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
                 fill = "#E5E7E9", color = "black", linewidth = 0.35, inherit.aes = FALSE)
       else NULL } +
-    # ES intron lines (if present)
     { if (!is.null(schem$introns))
       geom_segment(data = schem$introns,
                    aes(x = x, xend = xend, y = y, yend = yend),
                    linewidth = 0.8, inherit.aes = FALSE)
       else NULL } +
-    # axis scales: ensure ticks show and avoid clipping; use schem_xlim_max so exon not clipped
     scale_x_continuous(
-      limits = c(schem_xlim_min - 5, schem_xlim_max + 10),
-      breaks = seq(0, schem_xlim_max, length.out = 5),
-      expand = c(0, 0)
+      limits = c(x_axis_min, x_axis_max),
+      expand = expansion(mult = c(x_axis_expand, x_axis_expand))
     ) +
     scale_y_continuous(
       limits = c(-1.1, 0.25),
-      breaks = c(-1, -0.5, 0),
-      expand = c(0, 0)
+      expand = c(0,0)
     ) +
-    scale_fill_identity() +   # use exact hex codes defined in schem$rects$fill
+    scale_fill_identity() +
     theme_bw(base_size = 18) +
     theme(
       text = element_text(size = 18, face = "bold"),
@@ -1438,6 +1435,20 @@ eCLIPSE_full <- function(bindingvalues_nested, rnaBP, target, dPSI,
             legend.position = "none",
             text = element_text(size = 15, face = "bold"))
   }
+  
+  
+  # --- Mapplot and metricplot: use the same limits and expansion
+  mapplot <- mapplot +
+    scale_x_continuous(
+      limits = c(x_axis_min, x_axis_max),
+      expand = expansion(mult = c(x_axis_expand, x_axis_expand))
+    )
+  
+  metricplot <- metricplot +
+    scale_x_continuous(
+      limits = c(x_axis_min, x_axis_max),
+      expand = expansion(mult = c(x_axis_expand, x_axis_expand))
+    )
   
   # --- 14. Combine vertically using cowplot (preserves sizes)
   library(cowplot)
