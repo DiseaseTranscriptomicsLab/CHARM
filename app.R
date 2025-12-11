@@ -712,12 +712,7 @@ ui <- fluidPage(
         margin-bottom: 10px;"
             ),
             
-            conditionalPanel(
-              condition = "input.search_btn > 0",
-              
-              plotOutput("eclipse_plot", height = "900px")
-              
-            )
+            uiOutput("binding_plot_ui")
             
           )
         )
@@ -2102,8 +2097,7 @@ server <- function(input, output, session) {
   # -------------------------------
   # build_binding_heatmap (refactored)
   # -------------------------------
-
-  build_binding_heatmap <- function(data, rbp, targets, dpsi_choice, metric_key) {
+  build_binding_heatmap <- function(data, rbp, targets, dpsi_choice, metric) {
     
     # -----------------------------
     # 1. Helper: pad list to matrix
@@ -2127,23 +2121,27 @@ server <- function(input, output, session) {
     # -----------------------------
     inc_list <- list()
     dec_list <- list()
+    
     for (tgt in targets) {
       if (is.null(data[[rbp]][[tgt]])) next
       dpsi_names <- names(data[[rbp]][[tgt]])
       key <- resolve_dpsi_key(dpsi_names, dpsi_choice)
       if (is.null(key)) next
       
-      inc_raw <- tryCatch(data[[rbp]][[tgt]][[key]][[metric_key]][[paste0(metric_key, "inc")]], error = function(e) NULL)
-      dec_raw <- tryCatch(data[[rbp]][[tgt]][[key]][[metric_key]][[paste0(metric_key, "dec")]], error = function(e) NULL)
+      # Select correct metric
+      if (metric == "FDR") {
+        inc_raw <- tryCatch(data[[rbp]][[tgt]][[key]]$pval$pvalinc, error = function(e) NULL)
+        dec_raw <- tryCatch(data[[rbp]][[tgt]][[key]]$pval$pvaldec, error = function(e) NULL)
+      } else {
+        inc_raw <- tryCatch(data[[rbp]][[tgt]][[key]]$oddsrat$oddsratinc, error = function(e) NULL)
+        dec_raw <- tryCatch(data[[rbp]][[tgt]][[key]]$oddsrat$oddsratdec, error = function(e) NULL)
+      }
       
-      inc_vec <- if (is.data.frame(inc_raw) && "Value" %in% names(inc_raw)) suppressWarnings(as.numeric(inc_raw$Value)) else suppressWarnings(as.numeric(inc_raw))
-      dec_vec <- if (is.data.frame(dec_raw) && "Value" %in% names(dec_raw)) suppressWarnings(as.numeric(dec_raw$Value)) else suppressWarnings(as.numeric(dec_raw))
+      inc_vec <- if (is.data.frame(inc_raw) && "Value" %in% names(inc_raw)) as.numeric(inc_raw$Value) else suppressWarnings(as.numeric(inc_raw))
+      dec_vec <- if (is.data.frame(dec_raw) && "Value" %in% names(dec_raw)) as.numeric(dec_raw$Value) else suppressWarnings(as.numeric(dec_raw))
       
-      if (is.null(inc_vec) || all(is.na(inc_vec))) inc_vec <- NULL
-      if (is.null(dec_vec) || all(is.na(dec_vec))) dec_vec <- NULL
-      
-      if (!is.null(inc_vec)) inc_list[[tgt]] <- inc_vec
-      if (!is.null(dec_vec)) dec_list[[tgt]] <- dec_vec
+      if (!is.null(inc_vec) && !all(is.na(inc_vec))) inc_list[[tgt]] <- inc_vec
+      if (!is.null(dec_vec) && !all(is.na(dec_vec))) dec_list[[tgt]] <- dec_vec
     }
     
     if (length(inc_list) == 0 && length(dec_list) == 0) {
@@ -2160,21 +2158,21 @@ server <- function(input, output, session) {
     all_vals <- all_vals[is.finite(all_vals)]
     lim <- if (length(all_vals) == 0) c(-1,1) else { mx <- max(abs(all_vals)); if(mx==0) c(-1,1) else c(-mx,mx) }
     
-    fill_label <- if(metric_key=="pval") "FDR" else "Chi-Squared Statistic"
+    fill_label <- if(metric=="FDR") "FDR" else "Chi-Squared\nStatistic"
     
     # -----------------------------
     # 4. Determine event type & schematic
     # -----------------------------
     etype <- NULL
     try({
-      etype <- if (exists("input", envir = parent.frame())) {
+      if (exists("input", envir = parent.frame())) {
         pf_input <- get("input", envir = parent.frame())
-        if (!is.null(pf_input$binding_eventtype)) pf_input$binding_eventtype else NULL
-      } else NULL
+        if (!is.null(pf_input$binding_eventtype)) etype <- pf_input$binding_eventtype
+      }
     }, silent = TRUE)
     if (is.null(etype)) etype <- "Exon Skipping"
     
-    schem <- if (etype == "Intron Retention") {
+    schem <- if (grepl("Intron Retention", etype, ignore.case = TRUE)) {
       schematic_intron_retention()
     } else {
       schematic_exon_skipping()
@@ -2195,12 +2193,11 @@ server <- function(input, output, session) {
         scale_fill_gradient2(low="#53A2BE", mid="#EEEEEE", high="#BA3B46", limits=lim, oob=scales::squish) +
         labs(x="Genomic position", y="", fill=fill_label, title=title_text) +
         theme_minimal(base_size=14) +
-
         theme(
-          text = element_text(size = 16, face = "bold"),           # bold, larger text globally
-          axis.text.x = element_text(size = 14, face = "bold"),    # x-axis ticks
-          axis.text.y = element_text(size = 14, face = "bold"),    # y-axis ticks
-          axis.title = element_text(size = 16, face = "bold"),     # axis titles if any
+          text = element_text(size = 16, face = "bold"),
+          axis.text.x = element_text(size = 14, face = "bold"),
+          axis.text.y = element_text(size = 14, face = "bold"),
+          axis.title = element_text(size = 16, face = "bold"),
           panel.grid = element_blank()
         )
       
@@ -2223,15 +2220,11 @@ server <- function(input, output, session) {
                               linewidth=0.8, inherit.aes=FALSE)
       }
       
-      # NOTE: Arrow removed
-      # if (!is.null(schematic$arrow)) { ... }  <- DELETE THIS SECTION
-      
       p <- p + scale_y_discrete(expand=expansion(mult=c(0,0.15))) +
         coord_cartesian(ylim=c(-1, NA), clip="off")
       
       return(p)
     }
-    
     
     # -----------------------------
     # 6. Build plots
@@ -2250,8 +2243,9 @@ server <- function(input, output, session) {
     ggplot() + theme_void() + ggtitle("No heatmap data")
   }
   
+  
   # -------------------------------
-  # results (refactored)
+  # results reactive
   # -------------------------------
   results <- eventReactive(input$search_btn, {
     withProgress(message = "Generating Plot...", value = 0, {
@@ -2288,15 +2282,15 @@ server <- function(input, output, session) {
         return(p)
       } else {
         # Multiple targets: heatmap
-        return(build_binding_heatmap(data, rbp, targets, input$binding_dpsi, binding_metric_name()))
+        return(build_binding_heatmap(data, rbp, targets, input$binding_dpsi, metric))
       }
       incProgress(1)
     })
   })
   
-  # =========================
-  # 7. Render plot
-  # =========================
+  # -------------------------------
+  # Render plot
+  # -------------------------------
   output$eclipse_plot <- renderPlot({
     req(results())
     p <- results()
@@ -2304,6 +2298,27 @@ server <- function(input, output, session) {
       print(p)
     }
   })
+  
+  # Track plot visibility
+  show_plot <- reactiveVal(FALSE)
+  
+  # When search button is pressed, show plot
+  observeEvent(input$search_btn, {
+    show_plot(TRUE)
+  })
+  
+  # When reset button is pressed, hide plot
+  observeEvent(input$reset_btn, {
+    show_plot(FALSE)
+  })
+  output$binding_plot_ui <- renderUI({
+    if (show_plot()) {
+      plotOutput("eclipse_plot", height = "900px")
+    } else {
+      NULL
+    }
+  })
+  
   
 }
 
