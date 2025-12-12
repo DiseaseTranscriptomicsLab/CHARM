@@ -1976,8 +1976,10 @@ server <- function(input, output, session) {
     targets <- input$binding_target
     
     # Cleanly handle "All"
-    if ("All" %in% targets) {
+    hide_labels <- FALSE
+    if ("All" %in% input$binding_target) {
       targets <- names(data[[rbp]])
+      hide_labels <- TRUE
     }
     
     # Single-target mode
@@ -2097,7 +2099,7 @@ server <- function(input, output, session) {
   # -------------------------------
   # build_binding_heatmap (refactored)
   # -------------------------------
-  build_binding_heatmap <- function(data, rbp, targets, dpsi_choice, metric) {
+  build_binding_heatmap <- function(data, rbp, targets, dpsi_choice, metric, hide_row_labels = FALSE) {
     
     # -----------------------------
     # 1. Helper: pad list to matrix
@@ -2190,16 +2192,16 @@ server <- function(input, output, session) {
       
       p <- ggplot(mdf, aes(x=Position, y=Target, fill=Value)) +
         geom_tile() +
-        scale_fill_gradient2(low="#53A2BE", mid="#EEEEEE", high="#BA3B46", limits=lim, oob=scales::squish) +
+        scale_fill_gradient2(low="#A6B1E1", mid="#EEEEEE", high="#B07156", limits=lim, oob=scales::squish) +
         labs(x="Genomic position", y="", fill=fill_label, title=title_text) +
         theme_minimal(base_size=14) +
         theme(
           text = element_text(size = 16, face = "bold"),
           axis.text.x = element_text(size = 14, face = "bold"),
-          axis.text.y = element_text(size = 14, face = "bold"),
+          axis.text.y = if (hide_row_labels) element_blank() else element_text(size = 14, face = "bold"),
           axis.title = element_text(size = 16, face = "bold"),
           panel.grid = element_blank()
-        )
+        )+ geom_vline(xintercept = c(50,250,450,500,550,750,950), linetype="dashed")
       
       # Add schematic under heatmap
       if (!is.null(schematic$rects)) {
@@ -2256,15 +2258,21 @@ server <- function(input, output, session) {
       rbp  <- input$binding_search
       targets <- input$binding_target
       
+      # NEW: define hide_labels
+      hide_labels <- FALSE
+      
       # Handle "All"
-      if ("All" %in% targets) targets <- names(data[[rbp]])
+      if ("All" %in% targets) {
+        targets <- names(data[[rbp]])
+        hide_labels <- TRUE      # NEW
+      }
       
       metric <- input$binding_metric
       if (is.null(metric) || !(metric %in% c("FDR","EffectSize"))) metric <- "FDR"
       
       incProgress(0.2)
       
-      if(length(targets) == 1){
+      if (length(targets) == 1) {
         # Single target: regular eCLIPSE plot
         dpsi_names <- names(data[[rbp]][[targets]])
         dpsi_key <- resolve_dpsi_key(dpsi_names, input$binding_dpsi)
@@ -2282,11 +2290,20 @@ server <- function(input, output, session) {
         return(p)
       } else {
         # Multiple targets: heatmap
-        return(build_binding_heatmap(data, rbp, targets, input$binding_dpsi, metric))
+        return(build_binding_heatmap(
+          data,
+          rbp,
+          targets,
+          input$binding_dpsi,
+          metric,
+          hide_row_labels = hide_labels   # FIXED
+        ))
       }
+      
       incProgress(1)
     })
   })
+  
   
   # -------------------------------
   # Render plot

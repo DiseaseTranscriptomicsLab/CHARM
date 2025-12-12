@@ -1359,7 +1359,7 @@ eCLIPSE_full <- function(bindingvalues_nested, rnaBP, target, dPSI,
       expand = c(0,0)
     ) +
     scale_fill_identity() +
-    theme_bw(base_size = 18) +
+    theme_void(base_size = 18) +
     theme(
       text = element_text(size = 18, face = "bold"),
       axis.title = element_blank(),
@@ -1368,7 +1368,7 @@ eCLIPSE_full <- function(bindingvalues_nested, rnaBP, target, dPSI,
       panel.grid = element_blank(),
       plot.margin = margin(t = 10, r = 10, b = 10, l = 10),
       legend.position = "none"
-    )
+    ) + geom_vline(xintercept = c(50,250,450,500,550,750,950), linetype="dashed")
   
   # --- 11. Map plot (use schematic colors)
   mapplot <- ggplot(dfforvis_raw, aes(x = Pos)) +
@@ -1387,7 +1387,7 @@ eCLIPSE_full <- function(bindingvalues_nested, rnaBP, target, dPSI,
       axis.ticks.x = element_blank(),
       legend.position = "none",
       text = element_text(size = 15, face = "bold")
-    )
+    )+ geom_vline(xintercept = c(50,250,450,500,550,750,950), linetype="dashed")
   
   # --- 12. Labels plot (summary counts) - bold
   labels_plot <- ggplot() +
@@ -1410,7 +1410,7 @@ eCLIPSE_full <- function(bindingvalues_nested, rnaBP, target, dPSI,
       geom_line(aes(y = oddsratdec), color = dec_color, size = 1) +
       xlim(0, xlim_max) +
       labs(x = "Position", y = "Chi-Squared\nStatistic\n") +
-      theme_bw() +
+      theme_bw() + geom_vline(xintercept = c(50,250,450,500,550,750,950), linetype="dashed")+
       theme(axis.line = element_line(colour = "black"),
             panel.grid.minor = element_blank(),
             panel.border = element_blank(),
@@ -1425,7 +1425,7 @@ eCLIPSE_full <- function(bindingvalues_nested, rnaBP, target, dPSI,
       geom_line(aes(y = pvaldec), color = dec_color, size = 1) +
       xlim(0, xlim_max) +
       labs(x = "Position", y = "-log10 (FDR)\n") +
-      theme_bw() +
+      theme_bw() +  geom_vline(xintercept = c(50,250,450,500,550,750,950), linetype="dashed")+
       theme(axis.line = element_line(colour = "black"),
             panel.grid.minor = element_blank(),
             panel.border = element_blank(),
