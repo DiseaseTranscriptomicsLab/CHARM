@@ -1977,11 +1977,10 @@ server <- function(input, output, session) {
     
     # Cleanly handle "All"
     hide_labels <- FALSE
-    if ("All" %in% input$binding_target) {
-      targets <- names(data[[rbp]])
-      hide_labels <- TRUE
-    }
     
+    if ("All" %in% targets) {
+      targets <- names(data[[rbp]])
+    }
     # Single-target mode
     if (length(targets) == 1) {
       dpsi_names <- names(data[[rbp]][[targets]])
@@ -2041,7 +2040,7 @@ server <- function(input, output, session) {
       ),
       arrow = data.frame(
         x = 50, xend = 950, y = -0.1, yend = -0.1
-      )
+      ),max_x = 1000 
     )
   }
   
@@ -2060,7 +2059,7 @@ server <- function(input, output, session) {
         xmax = 450,
         ymin = -0.7,
         ymax = -0.3
-      )
+      ),max_x = 500
     )
   }
   
@@ -2114,7 +2113,9 @@ server <- function(input, output, session) {
         v
       }))
       rownames(mat) <- names(lst)
-      colnames(mat) <- seq_len(ncol(mat))
+      
+      # Drop rows that are entirely NA
+      mat <- mat[rowSums(!is.na(mat)) > 0, , drop = FALSE]
       mat
     }
     
@@ -2130,7 +2131,6 @@ server <- function(input, output, session) {
       key <- resolve_dpsi_key(dpsi_names, dpsi_choice)
       if (is.null(key)) next
       
-      # Select correct metric
       if (metric == "FDR") {
         inc_raw <- tryCatch(data[[rbp]][[tgt]][[key]]$pval$pvalinc, error = function(e) NULL)
         dec_raw <- tryCatch(data[[rbp]][[tgt]][[key]]$pval$pvaldec, error = function(e) NULL)
@@ -2190,6 +2190,23 @@ server <- function(input, output, session) {
       colnames(mdf) <- c("Target","Position","Value")
       mdf$Position <- as.numeric(mdf$Position)
       
+      # Preserve matrix row order for y-axis
+      mdf$Target <- factor(mdf$Target, levels = rownames(mat))
+      
+      max_pos <- max(mdf$Position, na.rm = TRUE)
+      n_rows <- nrow(mat)
+      
+      # Dashed vertical lines depending on event type
+      vlines_raw <- if (grepl("Intron Retention", etype, ignore.case = TRUE)) {
+        c(50, 250, 450)
+      } else {
+        c(50, 250, 450, 500, 550, 750, 950)
+      }
+      vlines_scaled <- vlines_raw * (max_pos / schematic$max_x)
+      
+      # Use geom_segment to restrict vertical lines to actual rows
+      vline_df <- data.frame(x = vlines_scaled)
+      
       p <- ggplot(mdf, aes(x=Position, y=Target, fill=Value)) +
         geom_tile() +
         scale_fill_gradient2(low="#A6B1E1", mid="#EEEEEE", high="#B07156", limits=lim, oob=scales::squish) +
@@ -2198,32 +2215,44 @@ server <- function(input, output, session) {
         theme(
           text = element_text(size = 16, face = "bold"),
           axis.text.x = element_text(size = 14, face = "bold"),
-          axis.text.y = if (hide_row_labels) element_blank() else element_text(size = 14, face = "bold"),
+          axis.text.y = if(hide_row_labels) element_blank() else element_text(size = 14, face = "bold"),
           axis.title = element_text(size = 16, face = "bold"),
           panel.grid = element_blank()
-        )+ geom_vline(xintercept = c(50,250,450,500,550,750,950), linetype="dashed")
+        ) +
+        geom_segment(data=vline_df,
+                     aes(x=x, xend=x, y=1, yend=n_rows),
+                     linetype="dashed", color="black", linewidth=0.4,
+                     inherit.aes=FALSE) +
+        scale_y_discrete(expand = expansion(mult=c(0, 0)))+
+        coord_cartesian(clip="off")
       
       # Add schematic under heatmap
       if (!is.null(schematic$rects)) {
-        p <- p + geom_rect(data=schematic$rects,
+        rects <- schematic$rects
+        rects$xmin <- rects$xmin * (max_pos / schematic$max_x)
+        rects$xmax <- rects$xmax * (max_pos / schematic$max_x)
+        p <- p + geom_rect(data=rects,
                            aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax),
-                           fill=schematic$rects$fill, color="black", linewidth=0.3,
+                           fill=rects$fill, color="black", linewidth=0.3,
                            inherit.aes=FALSE)
       }
       if (!is.null(schematic$intron_rect)) {
-        p <- p + geom_rect(data=schematic$intron_rect,
+        ir <- schematic$intron_rect
+        ir$xmin <- ir$xmin * (max_pos / schematic$max_x)
+        ir$xmax <- ir$xmax * (max_pos / schematic$max_x)
+        p <- p + geom_rect(data=ir,
                            aes(xmin=xmin, xmax=xmax, ymin=ymin, ymax=ymax),
                            fill="#E5E7E9", color="black", linewidth=0.3,
                            inherit.aes=FALSE)
       }
       if (!is.null(schematic$introns)) {
-        p <- p + geom_segment(data=schematic$introns,
+        intr <- schematic$introns
+        intr$x   <- intr$x   * (max_pos / schematic$max_x)
+        intr$xend <- intr$xend * (max_pos / schematic$max_x)
+        p <- p + geom_segment(data=intr,
                               aes(x=x, xend=xend, y=y, yend=yend),
                               linewidth=0.8, inherit.aes=FALSE)
       }
-      
-      p <- p + scale_y_discrete(expand=expansion(mult=c(0,0.15))) +
-        coord_cartesian(ylim=c(-1, NA), clip="off")
       
       return(p)
     }
@@ -2261,10 +2290,8 @@ server <- function(input, output, session) {
       # NEW: define hide_labels
       hide_labels <- FALSE
       
-      # Handle "All"
       if ("All" %in% targets) {
         targets <- names(data[[rbp]])
-        hide_labels <- TRUE      # NEW
       }
       
       metric <- input$binding_metric
@@ -2329,11 +2356,23 @@ server <- function(input, output, session) {
     show_plot(FALSE)
   })
   output$binding_plot_ui <- renderUI({
-    if (show_plot()) {
-      plotOutput("eclipse_plot", height = "900px")
+    req(show_plot())
+    
+    # Determine target count
+    targets <- input$binding_target
+    data <- binding_data()
+    rbp <- input$binding_search
+    
+    if ("All" %in% targets) {
+      n_targets <- length(names(data[[rbp]]))
     } else {
-      NULL
+      n_targets <- length(targets)
     }
+    
+    # Compute dynamic height
+    height_px <- min(900 + (n_targets - 1) * 10, 2000)
+    
+    plotOutput("eclipse_plot", height = paste0(height_px, "px"))
   })
   
   
