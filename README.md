@@ -1,4 +1,4 @@
-# CHARM
+# CHARM <a href="https://diseasetranscriptomicslab.github.io/CHARM/"><img src="Charm_logo.png" align="right" height="139"/></a>
 
 **Comprehensive Hub for Alternative Regulatory Mapping (CHARM)**  
 
