@@ -1,10 +1,10 @@
-# CHARM
+# CHARM <a href="https://diseasetranscriptomicslab.github.io/CHARM/"><img src="Charm_logo.png" align="right" height="139"/></a>
 
 **Comprehensive Hub for Alternative Regulatory Mapping (CHARM)**  
 
 CHARM is an R Shiny web application for exploring the regulatory roles of RNA-binding proteins (RBPs) in **gene expression, splicing regulation, and direct RNA binding**.  
 
-The app integrates data from the **ENCODE project** (Luo et al., 2020), including eCLIP and RNA-seq datasets from RBP knockdown/knockout experiments in **HEPG2 (liver cancer)** and **K562 (leukemia)** cell lines.  
+The app integrates data from the **ENCODE project** (Luo et al., 2020), including eCLIP and RNA-seq datasets from RBP knockdown/knockout experiments in **HEPG2 (liver cancer)** and **K562 (leukaemia)** cell lines.  
 
 CHARM serves as both a **repository** of this curated data and a **discovery tool**:  
 - Explore how 168 RBPs from ENCODE affect expression, splicing, and binding.  
