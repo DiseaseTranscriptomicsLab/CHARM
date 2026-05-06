@@ -39,7 +39,9 @@ library(colorspace)
 library(readxl)
 library(fs)
 library(betAS)
-
+library(Matrix)
+library(pheatmap)
+library(Rtsne)
 set.seed(1906)
 ```
 
@@ -700,7 +702,7 @@ CharmObj_bindingvalues_nested <- restructure_bindingvalues_full(CharmObj_binding
 CharmObj_bindingvalues <- readRDS("~/Projects/CHARM/data/Binding_both.RDS")
 ```
 
-# D. Single RBP Map
+# D. RBP Map Basis
 
 ```{r}
 eCLIPSE_full <- function(bindingvalues_nested, 
@@ -892,6 +894,2679 @@ plot1 <- eCLIPSE_full(
   title = "G3BP1"
 )
 plot1
+```
+
+# E. RBP Similarity
+
+## File Preparation Part 1 
+
+First, I will prepare the files by maintaining only the psi that maximise odds ratio.
+
+```{r fig.height=20, fig.width=20}
+Charm.object.binding.ES <- qs::qread("../data/QS_Files/Binding_both.qs")
+
+filter_binding_dpsi <- function(binding_obj) {
+
+  keep_pattern <- "(maximised oddsratinc|maximised oddsratdec)"
+
+  out <- binding_obj
+
+  for (rbp in names(out)) {
+    for (tgt in names(out[[rbp]])) {
+
+      dpsi_names <- names(out[[rbp]][[tgt]])
+      if (is.null(dpsi_names)) next
+
+      keep <- dpsi_names[
+        grepl(keep_pattern, dpsi_names, ignore.case = TRUE) |
+        grepl("(^|[^0-9])0\\.05([^0-9]|$)", dpsi_names) |
+        grepl("(^|[^0-9])0\\.10([^0-9]|$)", dpsi_names)
+      ]
+
+      if (length(keep) == 0) {
+        out[[rbp]][[tgt]] <- NULL
+      } else {
+        out[[rbp]][[tgt]] <- out[[rbp]][[tgt]][keep]
+      }
+    }
+
+    if (length(out[[rbp]]) == 0) {
+      out[[rbp]] <- NULL
+    }
+  }
+
+  out
+}
+filter_binding_keep_oddsrat <- function(binding_obj) {
+
+  out <- binding_obj
+
+  for (rbp in names(out)) {
+    for (tgt in names(out[[rbp]])) {
+      for (dpsi in names(out[[rbp]][[tgt]])) {
+
+        dpsi_block <- out[[rbp]][[tgt]][[dpsi]]
+
+        # If oddsrat does not exist, drop this dPSI
+        if (!is.list(dpsi_block) || !"oddsrat" %in% names(dpsi_block)) {
+          out[[rbp]][[tgt]][[dpsi]] <- NULL
+          next
+        }
+
+        # Safely extract raw event counts (may be NULL)
+        inc_events <- NULL
+        dec_events <- NULL
+
+        if ("raw" %in% names(dpsi_block)) {
+          raw_block <- dpsi_block[["raw"]]
+
+          if (is.list(raw_block)) {
+            inc_events <- raw_block[["IncreasedTargetEvents"]]
+            dec_events <- raw_block[["DecreasedTargetEvents"]]
+          }
+        }
+
+        # Replace dPSI block with trimmed content
+        out[[rbp]][[tgt]][[dpsi]] <- list(
+          oddsrat = dpsi_block[["oddsrat"]],
+          IncreasedTargetEvents = inc_events,
+          DecreasedTargetEvents = dec_events
+        )
+      }
+
+      # Drop empty targets
+      if (length(out[[rbp]][[tgt]]) == 0) {
+        out[[rbp]][[tgt]] <- NULL
+      }
+    }
+
+    # Drop empty RBPs
+    if (length(out[[rbp]]) == 0) {
+      out[[rbp]] <- NULL
+    }
+  }
+
+  out
+}
+
+Charm.binding.ES.filtered <- filter_binding_dpsi(Charm.object.binding.ES)
+Charm.binding.ES.filtered <- filter_binding_keep_oddsrat(Charm.binding.ES.filtered)
+#rm(Charm.object.binding.ES)
+```
+
+Great, now I will calculate how much signal each pair of RBP and Target has, at selected dPSIs.
+
+```{r}
+summarise_oddsrat_abs_sum <- function(binding_obj) {
+
+  out <- list()
+
+  for (rbp in names(binding_obj)) {
+    out[[rbp]] <- list()
+
+    for (tgt in names(binding_obj[[rbp]])) {
+      out[[rbp]][[tgt]] <- list()
+
+      for (dpsi in names(binding_obj[[rbp]][[tgt]])) {
+
+        dpsi_block <- binding_obj[[rbp]][[tgt]][[dpsi]]
+        if (!is.list(dpsi_block)) next
+
+        oddsrat_block <- dpsi_block[["oddsrat"]]
+        if (is.null(oddsrat_block)) next
+
+        # --- extract event counts safely ---
+        inc_tbl <- dpsi_block[["IncreasedTargetEvents"]]
+        dec_tbl <- dpsi_block[["DecreasedTargetEvents"]]
+
+        n_inc <- if (is.data.frame(inc_tbl) && "Value" %in% colnames(inc_tbl))
+          inc_tbl$Value[1] else 0
+
+        n_dec <- if (is.data.frame(dec_tbl) && "Value" %in% colnames(dec_tbl))
+          dec_tbl$Value[1] else 0
+
+        dpsi_out <- list()
+
+        # -------------------------
+        # Decreased
+        # -------------------------
+        df_dec <- oddsrat_block[["oddsratdec"]]
+        if (is.data.frame(df_dec) && n_dec > 0) {
+          dpsi_out[["oddsratdec"]] <-
+            sum(abs(df_dec$Value), na.rm = TRUE) * (n_dec^(1/2))
+        }
+
+        # -------------------------
+        # Increased
+        # -------------------------
+        df_inc <- oddsrat_block[["oddsratinc"]]
+        if (is.data.frame(df_inc) && n_inc > 0) {
+          dpsi_out[["oddsratinc"]] <-
+            sum(abs(df_inc$Value), na.rm = TRUE) * (n_inc^(1/2))
+        }
+
+        if (length(dpsi_out) > 0) {
+          out[[rbp]][[tgt]][[dpsi]] <- dpsi_out
+        }
+      }
+
+      if (length(out[[rbp]][[tgt]]) == 0)
+        out[[rbp]][[tgt]] <- NULL
+    }
+
+    if (length(out[[rbp]]) == 0)
+      out[[rbp]] <- NULL
+  }
+
+  out
+}
+
+
+Charm.binding.oddsrat.sum <- summarise_oddsrat_abs_sum(Charm.binding.ES.filtered)
+
+extract_oddsrat_values <- function(oddsrat_obj) {
+
+  inc_vals <- numeric()
+  dec_vals <- numeric()
+
+  for (rbp in names(oddsrat_obj)) {
+    for (tgt in names(oddsrat_obj[[rbp]])) {
+      for (dpsi in names(oddsrat_obj[[rbp]][[tgt]])) {
+
+        block <- oddsrat_obj[[rbp]][[tgt]][[dpsi]]
+
+        if (!is.null(block$oddsratinc)) {
+          inc_vals <- c(inc_vals, block$oddsratinc)
+        }
+        if (!is.null(block$oddsratdec)) {
+          dec_vals <- c(dec_vals, block$oddsratdec)
+        }
+      }
+    }
+  }
+
+  list(
+    oddsratinc = inc_vals,
+    oddsratdec = dec_vals
+  )
+}
+
+plot_oddsrat_densities <- function(oddsrat_obj,
+                                   inc_color = "red",
+                                   dec_color = "blue",
+                                   bw = "nrd0") {
+
+  vals <- extract_oddsrat_values(oddsrat_obj)
+
+  if (length(vals$oddsratinc) < 2 || length(vals$oddsratdec) < 2) {
+    stop("Not enough values to compute densities.")
+  }
+
+  dens_inc <- density(log10(vals$oddsratinc), bw = bw)
+  dens_dec <- density(log10(vals$oddsratdec), bw = bw)
+
+  # ---- Increased ----
+  plot(
+    dens_inc,
+    col = inc_color,
+    lwd = 3,
+    main = "Distribution of |Odds Ratio| – Increased Events",
+    xlab = "log10|Odds Ratio| Integral",
+    ylab = "Density"
+  )+abline(v=4.5, col="black")
+
+  # ---- Decreased ----
+  plot(
+    dens_dec,
+    col = dec_color,
+    lwd = 3,
+    main = "Distribution of |Odds Ratio| – Decreased Events",
+    xlab = "log10|Odds Ratio| Integral",
+    ylab = "Density"
+  )
+}
+
+plot_oddsrat_densities(Charm.binding.oddsrat.sum)
+
+
+```
+
+ Counting the before and after:
+ 
+```{r}
+filter_and_select_top_oddsrat <- function(oddsrat_obj,
+                                          log10_threshold = 6) {
+
+  filtered <- list()
+  n_inc <- 0L
+  n_dec <- 0L
+
+  for (rbp in names(oddsrat_obj)) {
+    for (tgt in names(oddsrat_obj[[rbp]])) {
+
+      best_inc <- NULL
+      best_inc_dpsi <- NULL
+
+      best_dec <- NULL
+      best_dec_dpsi <- NULL
+
+      for (dpsi in names(oddsrat_obj[[rbp]][[tgt]])) {
+
+        block <- oddsrat_obj[[rbp]][[tgt]][[dpsi]]
+
+        ## oddsratinc
+        if (!is.null(block$oddsratinc) &&
+            is.finite(block$oddsratinc) &&
+            log10(block$oddsratinc) > log10_threshold) {
+
+          if (is.null(best_inc) || block$oddsratinc > best_inc) {
+            best_inc <- block$oddsratinc
+            best_inc_dpsi <- dpsi
+          }
+        }
+
+        ## oddsratdec
+        if (!is.null(block$oddsratdec) &&
+            is.finite(block$oddsratdec) &&
+            log10(block$oddsratdec) > log10_threshold) {
+
+          if (is.null(best_dec) || block$oddsratdec > best_dec) {
+            best_dec <- block$oddsratdec
+            best_dec_dpsi <- dpsi
+          }
+        }
+      }
+
+      ## Store results (at most 1 inc + 1 dec)
+      if (!is.null(best_inc) || !is.null(best_dec)) {
+
+        filtered[[rbp]][[tgt]] <- list()
+
+        if (!is.null(best_inc)) {
+          filtered[[rbp]][[tgt]][[best_inc_dpsi]]$oddsratinc <- best_inc
+          n_inc <- n_inc + 1L
+        }
+
+        if (!is.null(best_dec)) {
+          filtered[[rbp]][[tgt]][[best_dec_dpsi]]$oddsratdec <- best_dec
+          n_dec <- n_dec + 1L
+        }
+      }
+    }
+  }
+
+  list(
+    counts = c(
+      oddsratinc = n_inc,
+      oddsratdec = n_dec
+    ),
+    filtered_object = filtered
+  )
+}
+
+res <- filter_and_select_top_oddsrat(
+  Charm.binding.oddsrat.sum,
+  log10_threshold = -20
+)
+
+res$counts
+#res$filtered_object
+
+
+
+```
+
+```{r}
+filtered_object <- res[["filtered_object"]]
+
+all_targets <- unlist(
+  lapply(filtered_object, names),
+  use.names = FALSE
+)
+
+unique_targets <- (unique(all_targets))
+
+length(unique(all_targets))
+
+filtered_object <- res$filtered_object
+
+filtered_object <- lapply(
+  filtered_object,
+  function(rbp_block) {
+    rbp_block[names(rbp_block) %in% unique_targets]
+  }
+)
+
+
+```
+
+```{r}
+filtered_object <- res[["filtered_object"]]
+flatten_oddsrat <- function(filtered_object,
+                            direction = c("oddsratinc", "oddsratdec")) {
+
+  direction <- match.arg(direction)
+  out <- list()
+  k <- 1L
+
+  for (rbp in names(filtered_object)) {
+    for (tgt in names(filtered_object[[rbp]])) {
+      for (dpsi in names(filtered_object[[rbp]][[tgt]])) {
+
+        vec <- filtered_object[[rbp]][[tgt]][[dpsi]][[direction]]
+
+        if (is.null(vec) || length(vec) == 0) next
+        if (!is.numeric(vec)) next
+
+        out[[k]] <- data.table(
+          RBP    = rbp,
+          Target = tgt,
+          dPSI   = dpsi,
+          Value  = vec
+        )
+        k <- k + 1L
+      }
+    }
+  }
+
+  rbindlist(out, use.names = TRUE)
+}
+
+oddsratinc_df <- flatten_oddsrat(
+  filtered_object,
+  direction = "oddsratinc"
+)
+
+oddsratdec_df <- flatten_oddsrat(
+  filtered_object,
+  direction = "oddsratdec"
+)
+
+```
+
+
+```{r fig.height=20, fig.width=20}
+library(data.table)
+library(pheatmap)
+
+setnames(
+  oddsratinc_df,
+  old = "Value",
+  new = "oddsratinc"
+)
+
+setnames(
+  oddsratdec_df,
+  old = "Value",
+  new = "oddsratdec"
+)
+
+rbp_target_heatmap_raw <- function(
+  df,
+  value_col,
+  agg_fun = c("mean", "median"),
+  clustering_method = "ward.D2",
+  clustering_distance = "euclidean",
+  show_rownames = TRUE,
+  show_colnames = TRUE,
+  main = "RBP × Target heatmap (raw values)"
+) {
+
+  agg_fun <- match.arg(agg_fun)
+  dt <- as.data.table(df)
+
+  stopifnot(all(c("RBP", "Target", value_col) %in% colnames(dt)))
+
+  # -------------------------------------------------
+  # Aggregate ONLY if needed (no transformation)
+  # -------------------------------------------------
+  agg <- dt[
+    ,
+    .(
+      value = switch(
+        agg_fun,
+        mean   = mean(get(value_col), na.rm = TRUE),
+        median = median(get(value_col), na.rm = TRUE)
+      )
+    ),
+    by = .(RBP, Target)
+  ]
+
+  # -------------------------------------------------
+  # Build matrix
+  # -------------------------------------------------
+  rbps    <- sort(unique(agg$RBP))
+  targets <- sort(unique(agg$Target))
+
+  S <- matrix(
+    NA_real_,
+    nrow = length(rbps),
+    ncol = length(targets),
+    dimnames = list(rbps, targets)
+  )
+
+  i <- match(agg$RBP, rbps)
+  j <- match(agg$Target, targets)
+
+  S[cbind(i, j)] <- agg$value
+
+  # -------------------------------------------------
+  # Plot
+  # -------------------------------------------------
+  pheatmap(
+    log10(S),
+    clustering_method = clustering_method,
+    clustering_distance_rows = clustering_distance,
+    clustering_distance_cols = clustering_distance,
+    color = colorRampPalette(c("navy", "white", "firebrick"))(100),
+    show_rownames = show_rownames,
+    show_colnames = show_colnames,
+    border_color = NA,
+    main = main
+  )
+
+  # S = your matrix/dataframe (rows = RBPs, cols = targets)
+
+max_values <- apply(S, 2, max, na.rm = TRUE)       # maximum per column
+max_rows   <- apply(S, 2, function(col) {
+  rownames(S)[which.max(col)]
+})
+
+# Combine into a dataframe
+max_per_column <- data.frame(
+  Target = colnames(S),
+  MaxValue = max_values,
+  MaxRBP = max_rows
+)
+
+print(max_per_column)
+
+  
+  invisible(S)
+}
+
+#oddsratinc_df_alter <- 
+
+rbp_target_heatmap_raw(
+  oddsratinc_df,
+  value_col = "oddsratinc",
+  main = "RBP × Target – Oddsratinc (raw)"
+)
+
+rbp_target_heatmap_raw(
+  oddsratdec_df,
+  value_col = "oddsratdec",
+  main = "RBP × Target – Oddsratdec (raw)"
+)
+
+```
+
+```{r fig.height=20, fig.width=20}
+library(data.table)
+library(pheatmap)
+
+rbp_target_heatmap_raw <- function(
+  df,
+  value_col,
+  agg_fun = c("mean", "median"),
+  clustering_method = "ward.D2",
+  clustering_distance = "euclidean",
+  show_rownames = TRUE,
+  show_colnames = TRUE,
+  main = "RBP × Target heatmap (raw values)"
+) {
+
+  agg_fun <- match.arg(agg_fun)
+  dt <- as.data.table(df)
+
+  stopifnot(all(c("RBP", "Target", value_col) %in% colnames(dt)))
+
+  # -------------------------------------------------
+  # Aggregate ONLY if needed (no transformation)
+  # -------------------------------------------------
+  agg <- dt[
+    ,
+    .(
+      value = switch(
+        agg_fun,
+        mean   = mean(get(value_col), na.rm = TRUE),
+        median = median(get(value_col), na.rm = TRUE)
+      )
+    ),
+    by = .(RBP, Target)
+  ]
+
+  # -------------------------------------------------
+  # Build matrix
+  # -------------------------------------------------
+  rbps    <- sort(unique(agg$RBP))
+  targets <- sort(unique(agg$Target))
+
+  S <- matrix(
+    NA_real_,
+    nrow = length(rbps),
+    ncol = length(targets),
+    dimnames = list(rbps, targets)
+  )
+
+  i <- match(agg$RBP, rbps)
+  j <- match(agg$Target, targets)
+
+  S[cbind(i, j)] <- agg$value
+
+  # -------------------------------------------------
+  # Plot
+  # -------------------------------------------------
+S_log <- log10(S + 1)  # add 1 to avoid log(0)
+S_z <- scale(S_log, center = TRUE, scale = TRUE)
+
+# Keep as a matrix for pheatmap
+S_z <- as.matrix(S_z)
+
+  
+pheatmap(
+  S_z,
+  cluster_rows = TRUE,   # cluster RBPs
+  cluster_cols = TRUE,  # keep targets in the original order
+  clustering_method = "ward.D2",
+  color = colorRampPalette(c("navy", "white", "firebrick"))(100),
+  show_rownames = TRUE,
+  show_colnames = TRUE,
+  border_color = NA,
+  main = main
+)
+
+  # S = your matrix/dataframe (rows = RBPs, cols = targets)
+
+max_values <- apply(S, 2, max, na.rm = TRUE)       # maximum per column
+max_rows   <- apply(S, 2, function(col) {
+  rownames(S)[which.max(col)]
+})
+
+# Combine into a dataframe
+max_per_column <- data.frame(
+  Target = colnames(S),
+  MaxValue = max_values,
+  MaxRBP = max_rows
+)
+
+print(max_per_column)
+
+  
+  invisible(S)
+}
+
+#oddsratinc_df_alter <- 
+
+rbp_target_heatmap_raw(
+  oddsratinc_df,
+  value_col = "oddsratinc",
+  main = "RBP × Target – log10Oddsratinc (Target zScore)"
+)
+
+rbp_target_heatmap_raw(
+  oddsratdec_df,
+  value_col = "oddsratdec",
+  main = "RBP × Target – log10Oddsratdec (Target zScore)"
+)
+
+```
+
+```{r fig.height=20, fig.width=20}
+rbp_target_pca <- function(
+  df,
+  value_col,
+  agg_fun = c("mean", "median"),
+  log_transform = TRUE,
+  zscore_columns = TRUE,
+  min_non_na = 2,
+  main = "PCA – RBPs (Targets as genes)"
+) {
+
+  agg_fun <- match.arg(agg_fun)
+  dt <- as.data.table(df)
+
+  stopifnot(all(c("RBP", "Target", value_col) %in% colnames(dt)))
+
+  # -------------------------------------------------
+  # Aggregate values per RBP–Target
+  # -------------------------------------------------
+  agg <- dt[
+    ,
+    .(
+      value = switch(
+        agg_fun,
+        mean   = mean(get(value_col), na.rm = TRUE),
+        median = median(get(value_col), na.rm = TRUE)
+      )
+    ),
+    by = .(RBP, Target)
+  ]
+
+  # -------------------------------------------------
+  # Build matrix: rows = RBPs, cols = Targets
+  # -------------------------------------------------
+  S <- dcast(agg, RBP ~ Target, value.var = "value")
+
+  rbp_names <- S$RBP
+  S$RBP <- NULL
+  S <- as.matrix(S)
+  rownames(S) <- rbp_names
+
+  # Replace NAs with 0 (or choose another strategy if desired)
+  S[is.na(S)] <- 0
+
+  # -------------------------------------------------
+  # Transformations
+  # -------------------------------------------------
+  if (log_transform) {
+    S <- log10(S + 1)
+  }
+
+  if (zscore_columns) {
+    S <- scale(S, center = TRUE, scale = TRUE)
+  }
+
+  S <- as.matrix(S)
+
+  # -------------------------------------------------
+  # Remove zero-variance Targets
+  # -------------------------------------------------
+  keep_cols <- apply(S, 2, function(x)
+    sum(is.finite(x)) >= min_non_na && sd(x, na.rm = TRUE) > 0
+  )
+
+  S <- S[, keep_cols, drop = FALSE]
+
+  # -------------------------------------------------
+  # PCA (RBPs are observations)
+  # -------------------------------------------------
+  pca_res <- prcomp(S, center = FALSE, scale. = FALSE)
+
+  var_explained <- (pca_res$sdev^2) / sum(pca_res$sdev^2)
+
+  pca_df <- data.frame(
+    RBP = rownames(S),
+    PC1 = pca_res$x[, 1],
+    PC2 = pca_res$x[, 2]
+  )
+
+  # -------------------------------------------------
+  # Plot
+  # -------------------------------------------------
+  p <- ggplot(pca_df, aes(PC1, PC2)) +
+    geom_point(size = 4, alpha = 0.8) +
+    geom_text_repel(aes(label = RBP), size = 3) +
+    theme_minimal(base_size = 14) +
+    labs(
+      title = main,
+      x = paste0("PC1 (", round(var_explained[1] * 100, 1), "%)"),
+      y = paste0("PC2 (", round(var_explained[2] * 100, 1), "%)")
+    )
+
+  print(p)
+
+  invisible(list(
+    matrix = S,
+    pca = pca_res,
+    variance = var_explained,
+    plot = p
+  ))
+}
+
+rbp_target_pca(
+  oddsratinc_df,
+  value_col = "oddsratinc",
+  main = "PCA – RBPs (Oddsratinc)"
+)
+
+rbp_target_pca(
+  oddsratdec_df,
+  value_col = "oddsratdec",
+  main = "PCA – RBPs (Oddsratdec)"
+)
+
+```
+
+
+## Filtering
+ 
+```{r}
+filter_original_binding_by_oddsrat <- function(original_binding,
+                                               filtered_object) {
+
+  out <- list()
+
+  for (rbp in names(filtered_object)) {
+    if (!rbp %in% names(original_binding)) next
+
+    out[[rbp]] <- list()
+
+    for (tgt in names(filtered_object[[rbp]])) {
+      if (!tgt %in% names(original_binding[[rbp]])) next
+
+      out[[rbp]][[tgt]] <- list()
+
+      for (dpsi in names(filtered_object[[rbp]][[tgt]])) {
+        if (!dpsi %in% names(original_binding[[rbp]][[tgt]])) next
+
+        oddsrat_block <- original_binding[[rbp]][[tgt]][[dpsi]][["oddsrat"]]
+        if (is.null(oddsrat_block)) next
+
+        keep_dirs <- filtered_object[[rbp]][[tgt]][[dpsi]]
+        new_oddsrat <- list()
+
+        for (dir in names(keep_dirs)) {
+          if (dir %in% names(oddsrat_block)) {
+            new_oddsrat[[dir]] <- oddsrat_block[[dir]]
+          }
+        }
+
+        if (length(new_oddsrat) > 0) {
+          out[[rbp]][[tgt]][[dpsi]] <- list(
+            oddsrat = new_oddsrat
+          )
+        }
+      }
+
+      if (length(out[[rbp]][[tgt]]) == 0) {
+        out[[rbp]][[tgt]] <- NULL
+      }
+    }
+
+    if (length(out[[rbp]]) == 0) {
+      out[[rbp]] <- NULL
+    }
+  }
+
+  out
+}
+
+Charm.object.binding.filtered <- filter_original_binding_by_oddsrat(
+  original_binding = Charm.object.binding.ES,
+  filtered_object  = res$filtered_object
+)
+
+
+filter_original_binding_by_oddsrat <- function(original_binding,
+                                               filtered_object) {
+
+  out <- list()
+
+  for (rbp in names(filtered_object)) {
+    if (!rbp %in% names(original_binding)) next
+
+    out[[rbp]] <- list()
+
+    for (tgt in names(filtered_object[[rbp]])) {
+      if (!tgt %in% names(original_binding[[rbp]])) next
+
+      out[[rbp]][[tgt]] <- list()
+
+      for (dpsi in names(filtered_object[[rbp]][[tgt]])) {
+        if (!dpsi %in% names(original_binding[[rbp]][[tgt]])) next
+
+        block <- original_binding[[rbp]][[tgt]][[dpsi]]
+
+        oddsrat_block <- block[["oddsrat"]]
+        raw_block     <- block[["raw"]]
+
+        if (is.null(oddsrat_block) || is.null(raw_block)) next
+
+        # -------------------------------------------------
+        # Extract event scalars correctly
+        # -------------------------------------------------
+        inc_events <- raw_block[["IncreasedTargetEvents"]][["Value"]]
+        dec_events <- raw_block[["DecreasedTargetEvents"]][["Value"]]
+
+        keep_dirs <- filtered_object[[rbp]][[tgt]][[dpsi]]
+        new_oddsrat <- list()
+
+        for (dir in names(keep_dirs)) {
+
+          if (!dir %in% names(oddsrat_block)) next
+
+          df <- oddsrat_block[[dir]]
+          if (!is.data.frame(df) || !"Value" %in% colnames(df)) next
+
+          df_new <- df
+
+          # -------------------------------------------------
+          # Multiply correctly
+          # -------------------------------------------------
+          if (dir == "oddsratinc" && !is.null(inc_events)) {
+            df_new$Value <- df_new$Value * inc_events
+          }
+
+          if (dir == "oddsratdec" && !is.null(dec_events)) {
+            df_new$Value <- df_new$Value * dec_events
+          }
+
+          new_oddsrat[[dir]] <- df_new
+        }
+
+        if (length(new_oddsrat) > 0) {
+          out[[rbp]][[tgt]][[dpsi]] <- list(
+            oddsrat = new_oddsrat
+          )
+        }
+      }
+
+      if (length(out[[rbp]][[tgt]]) == 0) {
+        out[[rbp]][[tgt]] <- NULL
+      }
+    }
+
+    if (length(out[[rbp]]) == 0) {
+      out[[rbp]] <- NULL
+    }
+  }
+
+  out
+}
+
+Charm.object.binding.filtered <- filter_original_binding_by_oddsrat(
+  original_binding = Charm.object.binding.ES,
+  filtered_object  = res$filtered_object
+)
+
+
+saveRDS(Charm.object.binding.filtered, "../intermediary_files/Charm.binding.filtered.both_new_full.Rds")
+```
+ 
+ 
+## Creating python format
+
+```{r}
+oddsrat_list_to_dataframe <- function(filtered_obj,
+                                      n_pos = 1000,
+                                      prefix = "pos_") {
+
+  rows <- vector("list", 50000)
+  idx <- 1L
+
+  for (rbp in names(filtered_obj)) {
+    for (tgt in names(filtered_obj[[rbp]])) {
+      for (dpsi in names(filtered_obj[[rbp]][[tgt]])) {
+
+        block <- filtered_obj[[rbp]][[tgt]][[dpsi]]
+
+        ## Safety
+        if (is.null(block$oddsrat))
+          next
+
+        ## ---------- oddsratinc ----------
+        if (!is.null(block$oddsrat$oddsratinc)) {
+
+          v <- block$oddsrat$oddsratinc$Value
+
+          if (length(v) != n_pos)
+            stop(paste("Unexpected length for oddsratinc:",
+                       rbp, tgt, dpsi))
+
+          rows[[idx]] <- c(
+            RBP = rbp,
+            Target = tgt,
+            dPSI = dpsi,
+            Direction = "oddsratinc",
+            setNames(as.list(v), paste0(prefix, seq_len(n_pos)))
+          )
+
+          idx <- idx + 1L
+        }
+
+        ## ---------- oddsratdec ----------
+        if (!is.null(block$oddsrat$oddsratdec)) {
+
+          v <- block$oddsrat$oddsratdec$Value
+
+          if (length(v) != n_pos)
+            stop(paste("Unexpected length for oddsratdec:",
+                       rbp, tgt, dpsi))
+
+          rows[[idx]] <- c(
+            RBP = rbp,
+            Target = tgt,
+            dPSI = dpsi,
+            Direction = "oddsratdec",
+            setNames(as.list(v), paste0(prefix, seq_len(n_pos)))
+          )
+
+          idx <- idx + 1L
+        }
+      }
+    }
+  }
+
+  if (idx == 1L)
+    stop("No oddsrat entries found — check structure again")
+
+  df <- as.data.frame(
+    do.call(rbind, rows[seq_len(idx - 1)]),
+    stringsAsFactors = FALSE
+  )
+
+  ## Convert positional columns back to numeric
+  pos_cols <- grep(paste0("^", prefix), colnames(df))
+  df[, pos_cols] <- lapply(df[, pos_cols], as.numeric)
+
+  df
+}
+oddsrat_df <- oddsrat_list_to_dataframe(
+  Charm.object.binding.filtered,
+  n_pos = 1000   # or 500 for IR
+)
+
+data.table::fwrite(
+  oddsrat_df,
+  "../intermediary_files/Charm.binding.filtered.both_new_full.csv",
+  sep = "\t"
+)
+
+```
+
+
+## Python Section 
+
+For computational intensive processes, python was used. A copy of the script is present in the charm folder.
+
+### Wassertein Loading
+
+```{r}
+Oddsratinc_was <- fread("../intermediary_files/Wasserstein_oddsratinc.csv")
+Oddsratinc_spe <- fread("../intermediary_files/Spearman_oddsratinc.csv")
+Oddsratinc_pea <- fread("../intermediary_files/Pearson_oddsratinc.csv")
+
+x <- Oddsratinc_was[[ncol(Oddsratinc_was)]]
+y <- Oddsratinc_spe[[ncol(Oddsratinc_spe)]]
+z <- Oddsratinc_pea[[ncol(Oddsratinc_pea)]]
+
+plot_df <- data.frame(
+  Wasserstein = x,
+  Spearman    = y,
+  Pearson = z
+)
+
+plot_df$Spearman_01 <- (plot_df$Spearman + 1) / 2
+plot_df$Pearson_01 <- (plot_df$Pearson + 1) / 2
+
+
+plot_df$Metric <- plot_df$Wasserstein/plot_df$Pearson
+
+ggplot(plot_df, aes(x = (Pearson))) +
+  geom_density(
+    linewidth = 1,
+    fill = "darkgreen",
+    alpha = 0.4
+  ) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Density of (Pearson)",
+    x = "(Pearson)",
+    y = "Density"
+  )
+
+```
+
+## Convertion into "distance"
+
+```{r}
+dt <- copy(Oddsratinc)  # or Oddsratdec
+
+# Create RBP×Target identifiers
+dt[, Pair1 := paste(RBP1, Target1, sep = "|")]
+dt[, Pair2 := paste(RBP2, Target2, sep = "|")]
+
+# Aggregate over dPSI (keep strongest similarity)
+dt_pair <- dt[
+  ,
+  .(Distance = min(Wasserstein, na.rm = TRUE)),
+  by = .(Pair1, Pair2)
+]
+
+pairs <- unique(c(dt_pair$Pair1, dt_pair$Pair2))
+n <- length(pairs)
+pair_index <- setNames(seq_len(n), pairs)
+
+i <- pair_index[dt_pair$Pair1]
+j <- pair_index[dt_pair$Pair2]
+x <- dt_pair$Distance
+
+D <- matrix(NA_real_, n, n)
+D[cbind(i, j)] <- x
+D[cbind(j, i)] <- x
+diag(D) <- 0
+max_dist <- max(D, na.rm = TRUE)
+D[is.na(D)] <- max_dist
+
+object.size(D) / 1024^3
+
+
+```
+## OddsRatinc
+
+### MDS
+
+```{r}
+mds_coords <- cmdscale(
+  D,
+  k = 2,
+  eig = TRUE
+)
+
+mds_df <- data.frame(
+  MDS1 = mds_coords$points[,1],
+  MDS2 = mds_coords$points[,2]
+)
+
+sum(mds_coords$eig[1:2]) / sum(abs(mds_coords$eig))
+
+mds_df$RBP <- Oddsratinc$RBP1
+
+
+rbp_mds <- as.data.table(mds_df)[
+  ,
+  .(
+    MDS1 = mean(MDS1),
+    MDS2 = mean(MDS2),
+    n_pairs = .N
+  ),
+  by = RBP
+]
+
+
+```
+
+
+```{r fig.height=20, fig.width=20}
+rbp_mds <- readRDS("/mnt/scratch/home/alexandre/Projects/CHARM/intermediary_files/MDS_both_oddsratinc.rds")
+ggplot(rbp_mds, aes((MDS1), (MDS2))) +
+  geom_point(aes(size = n_pairs), alpha = 0.7) +
+  geom_text(aes(label = RBP), size = 3, vjust = -1) +
+  theme_minimal()
+```
+
+### Heatmap
+
+```{r fig.height=20, fig.width=20}
+# Load pairwise distances (already aggregated per Pair1-Pair2)
+dt_pair <- fread(
+  "/mnt/scratch/home/alexandre/Projects/CHARM/intermediary_files/Wasserstein_oddsratinc.csv"
+)
+
+sim_vec <- dt_pair$Wasserstein
+
+sim_vec <- as.data.frame(sim_vec)
+
+ggplot(sim_vec, aes(x=sim_vec)) + geom_density() + theme_bw() + ylab("Events") + xlab("Similarity") +
+  theme(axis.line = element_line(colour = "black"),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank()) 
+# Create pair identifiers
+dt_pair[, Pair1 := paste(RBP1, Target1, sep = "|")]
+dt_pair[, Pair2 := paste(RBP2, Target2, sep = "|")]
+
+# Extract RBPs
+dt_pair[, RBP_A := RBP1]
+dt_pair[, RBP_B := RBP2]
+
+# Convert similarity → distance if needed
+max_sim <- max(dt_pair$Wasserstein, na.rm = TRUE)
+dt_pair[, Distance := max_sim - Wasserstein]
+
+# Aggregate to RBP × RBP
+rbp_dist <- dt_pair[
+  ,
+  .(Distance = mean(Distance, na.rm = TRUE)),
+  by = .(RBP_A, RBP_B)
+]
+
+rbps <- sort(unique(c(rbp_dist$RBP_A, rbp_dist$RBP_B)))
+n <- length(rbps)
+rbp_index <- setNames(seq_len(n), rbps)
+
+D_rbp <- matrix(NA_real_, n, n, dimnames = list(rbps, rbps))
+
+i <- rbp_index[rbp_dist$RBP_A]
+j <- rbp_index[rbp_dist$RBP_B]
+
+D_rbp[cbind(i, j)] <- rbp_dist$Distance
+D_rbp[cbind(j, i)] <- rbp_dist$Distance
+diag(D_rbp) <- 0
+
+# Missing = maximally distant
+max_dist <- max(D_rbp, na.rm = TRUE)
+D_rbp[is.na(D_rbp)] <- max_dist
+
+# Convert to dist object
+rbp_dist_obj <- as.dist(D_rbp)
+
+# Hierarchical clustering
+hc <- hclust(rbp_dist_obj, method = "average")  # average = UPGMA
+
+pheatmap(
+  D_rbp,
+  clustering_distance_rows = rbp_dist_obj,
+  clustering_distance_cols = rbp_dist_obj,
+  clustering_method = "ward.D2",
+  show_rownames = T,
+  show_colnames = T,
+  color = colorRampPalette(c("navy", "white", "firebrick"))(100)
+)
+
+S_rbp <- max(D_rbp) - D_rbp
+
+pheatmap(
+  S_rbp,
+  clustering_distance_rows = as.dist(D_rbp),
+  clustering_distance_cols = as.dist(D_rbp),
+  clustering_method = "ward.D2",
+  color = colorRampPalette(c("white", "orange", "red"))(100)
+)
+
+D_scaled <- t(scale(t(D_rbp)))
+
+pheatmap(
+  D_scaled,
+  clustering_distance_rows = as.dist(D_rbp),
+  clustering_distance_cols = as.dist(D_rbp),
+  clustering_method = "ward.D2",
+  show_rownames = FALSE,
+  show_colnames = FALSE
+)
+
+```
+
+## OddsRatdec
+
+```{r fig.height=20, fig.width=20}
+rbp_mds <- readRDS("/mnt/scratch/home/alexandre/Projects/CHARM/intermediary_files/MDS_both_oddsratdec.rds")
+ggplot(rbp_mds, aes((MDS1), (MDS2))) +
+  geom_point(aes(size = n_pairs), alpha = 0.7) +
+  geom_text(aes(label = RBP), size = 3, vjust = -1) +
+  theme_minimal()
+```
+
+
+### Heatmap
+
+```{r fig.height=20, fig.width=20}
+# Load pairwise distances (already aggregated per Pair1-Pair2)
+dt_pair <- fread(
+  "/mnt/scratch/home/alexandre/Projects/CHARM/intermediary_files/Wasserstein_oddsratdec.csv"
+)
+
+# Create pair identifiers
+dt_pair[, Pair1 := paste(RBP1, Target1, sep = "|")]
+dt_pair[, Pair2 := paste(RBP2, Target2, sep = "|")]
+
+# Extract RBPs
+dt_pair[, RBP_A := RBP1]
+dt_pair[, RBP_B := RBP2]
+
+# Convert similarity → distance if needed
+max_sim <- max(dt_pair$Wasserstein, na.rm = TRUE)
+dt_pair[, Distance := max_sim - Wasserstein]
+
+# Aggregate to RBP × RBP
+rbp_dist <- dt_pair[
+  ,
+  .(Distance = mean(Distance, na.rm = TRUE)),
+  by = .(RBP_A, RBP_B)
+]
+
+rbps <- sort(unique(c(rbp_dist$RBP_A, rbp_dist$RBP_B)))
+n <- length(rbps)
+rbp_index <- setNames(seq_len(n), rbps)
+
+D_rbp <- matrix(NA_real_, n, n, dimnames = list(rbps, rbps))
+
+i <- rbp_index[rbp_dist$RBP_A]
+j <- rbp_index[rbp_dist$RBP_B]
+
+D_rbp[cbind(i, j)] <- rbp_dist$Distance
+D_rbp[cbind(j, i)] <- rbp_dist$Distance
+diag(D_rbp) <- 0
+
+# Missing = maximally distant
+max_dist <- max(D_rbp, na.rm = TRUE)
+D_rbp[is.na(D_rbp)] <- max_dist
+
+# Convert to dist object
+rbp_dist_obj <- as.dist(D_rbp)
+
+# Hierarchical clustering
+hc <- hclust(rbp_dist_obj, method = "average")  # average = UPGMA
+
+pheatmap(
+  D_rbp,
+  clustering_distance_rows = rbp_dist_obj,
+  clustering_distance_cols = rbp_dist_obj,
+  clustering_method = "ward.D2",
+  show_rownames = T,
+  show_colnames = T,
+  color = colorRampPalette(c("navy", "white", "firebrick"))(100)
+)
+
+S_rbp <- max(D_rbp) - D_rbp
+
+pheatmap(
+  S_rbp,
+  clustering_distance_rows = as.dist(D_rbp),
+  clustering_distance_cols = as.dist(D_rbp),
+  clustering_method = "ward.D2",
+  color = colorRampPalette(c("white", "orange", "red"))(100)
+)
+
+D_scaled <- t(scale(t(D_rbp)))
+
+pheatmap(
+  D_scaled,
+  clustering_distance_rows = as.dist(D_rbp),
+  clustering_distance_cols = as.dist(D_rbp),
+  clustering_method = "ward.D2",
+  show_rownames = FALSE,
+  show_colnames = FALSE
+)
+
+```
+
+## BOTH
+
+```{r fig.height=20, fig.width=20}
+rbp_mds <- readRDS("/mnt/scratch/home/alexandre/Projects/CHARM/intermediary_files/MDS_joint_oddsratinc_dec.rds")
+ggplot(rbp_mds, aes((MDS1), (MDS2))) +
+  geom_point(aes(size = n_pairs), alpha = 0.7) +
+  geom_text(aes(label = RBP), size = 3, vjust = -1) +
+  theme_minimal()
+```
+
+# F. Alternative Method (shRNA)
+
+## Increased
+
+```{r}
+
+dt <- fread(
+  "/mnt/scratch/home/alexandre/Projects/CHARM/intermediary_files/FullSimilarity_oddsratinc.csv"
+)
+
+dt <- unique(dt)
+
+# Force RBP1 < RBP2 ordering
+dt[, `:=`(
+  RBP_low  = pmin(RBP1, RBP2),
+  RBP_high = pmax(RBP1, RBP2)
+)]
+
+dt[, Target_low  := ifelse(RBP1 < RBP2, Target1, Target2)]
+dt[, Target_high := ifelse(RBP1 < RBP2, Target2, Target1)]
+
+result <- dt[
+  ,
+  .(
+    Cosine = mean(Cosine, na.rm = TRUE),
+    n_rows = uniqueN(c(Target1, Target2))  # counts unique targets across both RBPs
+  ),
+  by = .(RBP1 = RBP_low, RBP2 = RBP_high)
+]
+
+
+```
+### Heatmap
+
+```{r fig.height=20, fig.width=20}
+dt <- copy(result)
+
+rbps <- sort(unique(c(dt$RBP1, dt$RBP2)))
+n <- length(rbps)
+
+rbp_index <- setNames(seq_len(n), rbps)
+
+S <- matrix(NA_real_, n, n,
+            dimnames = list(rbps, rbps))
+
+i <- rbp_index[dt$RBP1]
+j <- rbp_index[dt$RBP2]
+
+S[cbind(i, j)] <- dt$Cosine
+S[cbind(j, i)] <- dt$Cosine
+#diag(S) <- 1
+
+S[is.na(S)] <- 0
+
+D <- 1 - S
+
+pheatmap(
+  S,
+  clustering_method = "ward.D2",
+  color = colorRampPalette(c("navy", "white", "firebrick"))(100),
+  show_rownames = TRUE,
+  show_colnames = TRUE,
+  border_color = NA,
+  main = "shRNA Similarity – Increased Events"
+)
+
+
+
+```
+
+### MDS
+
+```{r fig.height=20, fig.width=20}
+
+pair_df <- result
+
+rbp_stats <- rbind(
+  pair_df[, .(RBP = RBP1, n_pairs = n_rows)],
+  pair_df[, .(RBP = RBP2, n_pairs = n_rows)]
+)[
+  ,
+  .(n_pairs = sum(n_pairs)),
+  by = RBP
+]
+
+mds <- cmdscale(D, k = 2, eig = TRUE)
+
+mds_df <- data.frame(
+  RBP  = rownames(D),
+  MDS1 = mds$points[, 1],
+  MDS2 = mds$points[, 2],
+  stringsAsFactors = FALSE
+)
+
+mds_df <- merge(
+  mds_df,
+  rbp_stats,
+  by = "RBP",
+  all.x = TRUE
+)
+
+mds_df$n_pairs[is.na(mds_df$n_pairs)] <- 0
+
+ggplot(mds_df, aes(MDS1, MDS2)) +
+  geom_point(aes(size = n_pairs), alpha = 0.75) +
+  geom_text_repel(
+    aes(label = RBP),
+    size = 3,
+    max.overlaps = 30
+  ) +
+  scale_size_continuous(range = c(2, 10)) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "shRNA Similarity – Increased Events",
+    size = "Shared eCLIP\ncomparisons"
+  )
+```
+
+### TSne
+
+```{r fig.height=20, fig.width=20}
+
+
+# -----------------------------------------
+# Choose valid perplexity
+# -----------------------------------------
+n <- nrow(D)
+perp <- min(30, floor((n - 1) / 3))
+
+# -----------------------------------------
+# Run t-SNE using distance matrix
+# -----------------------------------------
+tsne <- Rtsne(
+  as.dist(D),        # use distance matrix
+  is_distance = TRUE,
+  perplexity = perp,
+  theta = 0.5,       # speed/accuracy tradeoff
+  dims = 2,
+  verbose = TRUE
+)
+
+tsne_df <- data.frame(
+  RBP  = rownames(D),
+  tSNE1 = tsne$Y[, 1],
+  tSNE2 = tsne$Y[, 2],
+  stringsAsFactors = FALSE
+)
+
+# -----------------------------------------
+# Merge with n_pairs (same as before)
+# -----------------------------------------
+tsne_df <- merge(
+  tsne_df,
+  rbp_stats,
+  by = "RBP",
+  all.x = TRUE
+)
+
+tsne_df$n_pairs[is.na(tsne_df$n_pairs)] <- 0
+
+# -----------------------------------------
+# Plot
+# -----------------------------------------
+ggplot(tsne_df, aes(tSNE1, tSNE2)) +
+  geom_point(aes(size = n_pairs), alpha = 0.75) +
+  geom_text_repel(
+    aes(label = RBP),
+    size = 3,
+    max.overlaps = 30
+  ) +
+  scale_size_continuous(range = c(2, 10)) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "t-SNE – shRNA Similarity (Increased Events)",
+    size = "Shared eCLIP\ncomparisons"
+  )
+```
+
+
+### NRows
+
+```{r fig.height=20, fig.width=20}
+# result has: RBP1, RBP2, Wasserstein, n_rows
+
+pair_df <- copy(result)
+
+rbps <- sort(unique(c(pair_df$RBP1, pair_df$RBP2)))
+n <- length(rbps)
+
+rbp_index <- setNames(seq_len(n), rbps)
+
+Nmat <- matrix(
+  0,
+  nrow = n,
+  ncol = n,
+  dimnames = list(rbps, rbps)
+)
+
+i <- rbp_index[pair_df$RBP1]
+j <- rbp_index[pair_df$RBP2]
+
+Nmat[cbind(i, j)] <- pair_df$n_rows
+Nmat[cbind(j, i)] <- pair_df$n_rows   # symmetric
+
+pheatmap(
+  Nmat,
+  clustering_method = "ward.D2",
+  clustering_distance_rows = "euclidean",
+  clustering_distance_cols = "euclidean",
+  color = colorRampPalette(c("navy", "white", "firebrick"))(100),
+  show_rownames = TRUE,
+  show_colnames = TRUE,
+  border_color = NA,
+  main = "shRNA #Pairs – Increased Events"
+)
+
+```
+
+
+## Decreased
+
+```{r}
+
+dt <- fread(
+  "/mnt/scratch/home/alexandre/Projects/CHARM/intermediary_files/FullSimilarity_oddsratdec.csv"
+)
+
+dt <- unique(dt)
+
+# Force RBP1 < RBP2 ordering
+dt[, `:=`(
+  RBP_low  = pmin(RBP1, RBP2),
+  RBP_high = pmax(RBP1, RBP2)
+)]
+
+dt[, Target_low  := ifelse(RBP1 < RBP2, Target1, Target2)]
+dt[, Target_high := ifelse(RBP1 < RBP2, Target2, Target1)]
+
+result <- dt[
+  ,
+  .(
+    Cosine = mean(Cosine, na.rm = TRUE),
+    n_rows = uniqueN(c(Target1, Target2))  # counts unique targets across both RBPs
+  ),
+  by = .(RBP1 = RBP_low, RBP2 = RBP_high)
+]
+
+
+```
+### Heatmap
+
+```{r fig.height=20, fig.width=20}
+dt <- copy(result)
+
+rbps <- sort(unique(c(dt$RBP1, dt$RBP2)))
+n <- length(rbps)
+
+rbp_index <- setNames(seq_len(n), rbps)
+
+S <- matrix(NA_real_, n, n,
+            dimnames = list(rbps, rbps))
+
+i <- rbp_index[dt$RBP1]
+j <- rbp_index[dt$RBP2]
+
+S[cbind(i, j)] <- dt$Cosine
+S[cbind(j, i)] <- dt$Cosine
+#diag(S) <- 1
+
+S[is.na(S)] <- 0
+
+D <- 1 - S
+
+pheatmap(
+  S,
+  clustering_method = "ward.D2",
+  color = colorRampPalette(c("navy", "white", "firebrick"))(100),
+  show_rownames = TRUE,
+  show_colnames = TRUE,
+  border_color = NA,
+  main = "shRNA Similarity – Decreased Events"
+)
+
+
+
+```
+
+### MDS
+
+```{r fig.height=20, fig.width=20}
+
+pair_df <- result
+
+rbp_stats <- rbind(
+  pair_df[, .(RBP = RBP1, n_pairs = n_rows)],
+  pair_df[, .(RBP = RBP2, n_pairs = n_rows)]
+)[
+  ,
+  .(n_pairs = sum(n_pairs)),
+  by = RBP
+]
+
+mds <- cmdscale(D, k = 2, eig = TRUE)
+
+mds_df <- data.frame(
+  RBP  = rownames(D),
+  MDS1 = mds$points[, 1],
+  MDS2 = mds$points[, 2],
+  stringsAsFactors = FALSE
+)
+
+mds_df <- merge(
+  mds_df,
+  rbp_stats,
+  by = "RBP",
+  all.x = TRUE
+)
+
+mds_df$n_pairs[is.na(mds_df$n_pairs)] <- 0
+
+ggplot(mds_df, aes(MDS1, MDS2)) +
+  geom_point(aes(size = n_pairs), alpha = 0.75) +
+  geom_text_repel(
+    aes(label = RBP),
+    size = 3,
+    max.overlaps = 30
+  ) +
+  scale_size_continuous(range = c(2, 10)) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "shRNA Similarity – Decreased Events",
+    size = "Shared eCLIP\ncomparisons"
+  )
+```
+
+
+### TSne
+
+```{r fig.height=20, fig.width=20}
+
+
+# -----------------------------------------
+# Choose valid perplexity
+# -----------------------------------------
+n <- nrow(D)
+perp <- min(30, floor((n - 1) / 3))
+
+# -----------------------------------------
+# Run t-SNE using distance matrix
+# -----------------------------------------
+tsne <- Rtsne(
+  as.dist(D),        # use distance matrix
+  is_distance = TRUE,
+  perplexity = perp,
+  theta = 0.5,       # speed/accuracy tradeoff
+  dims = 2,
+  verbose = TRUE
+)
+
+tsne_df <- data.frame(
+  RBP  = rownames(D),
+  tSNE1 = tsne$Y[, 1],
+  tSNE2 = tsne$Y[, 2],
+  stringsAsFactors = FALSE
+)
+
+# -----------------------------------------
+# Merge with n_pairs (same as before)
+# -----------------------------------------
+tsne_df <- merge(
+  tsne_df,
+  rbp_stats,
+  by = "RBP",
+  all.x = TRUE
+)
+
+tsne_df$n_pairs[is.na(tsne_df$n_pairs)] <- 0
+
+# -----------------------------------------
+# Plot
+# -----------------------------------------
+ggplot(tsne_df, aes(tSNE1, tSNE2)) +
+  geom_point(aes(size = n_pairs), alpha = 0.75) +
+  geom_text_repel(
+    aes(label = RBP),
+    size = 3,
+    max.overlaps = 30
+  ) +
+  scale_size_continuous(range = c(2, 10)) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "t-SNE – shRNA Similarity (Decreased Events)",
+    size = "Shared eCLIP\ncomparisons"
+  )
+```
+
+### NRows
+
+```{r fig.height=20, fig.width=20}
+# result has: RBP1, RBP2, Wasserstein, n_rows
+
+pair_df <- copy(result)
+
+rbps <- sort(unique(c(pair_df$RBP1, pair_df$RBP2)))
+n <- length(rbps)
+
+rbp_index <- setNames(seq_len(n), rbps)
+
+Nmat <- matrix(
+  0,
+  nrow = n,
+  ncol = n,
+  dimnames = list(rbps, rbps)
+)
+
+i <- rbp_index[pair_df$RBP1]
+j <- rbp_index[pair_df$RBP2]
+
+Nmat[cbind(i, j)] <- pair_df$n_rows
+Nmat[cbind(j, i)] <- pair_df$n_rows   # symmetric
+
+pheatmap(
+  Nmat,
+  clustering_method = "ward.D2",
+  clustering_distance_rows = "euclidean",
+  clustering_distance_cols = "euclidean",
+  color = colorRampPalette(c("navy", "white", "firebrick"))(100),
+  show_rownames = TRUE,
+  show_colnames = TRUE,
+  border_color = NA,
+  main = "shRNA #Pairs – Decreased Events"
+)
+
+```
+
+## Both
+
+```{r}
+dt1 <- fread(
+  "/mnt/scratch/home/alexandre/Projects/CHARM/intermediary_files/FullSimilarity_oddsratinc.csv"
+)
+
+dt2 <- fread(
+  "/mnt/scratch/home/alexandre/Projects/CHARM/intermediary_files/FullSimilarity_oddsratdec.csv"
+)
+
+dt <- rbind(dt1, dt2)
+#dt <- unique(dt)
+
+# Force RBP1 < RBP2 ordering
+dt[, `:=`(
+  RBP_low  = pmin(RBP1, RBP2),
+  RBP_high = pmax(RBP1, RBP2)
+)]
+
+dt[, Target_low  := ifelse(RBP1 < RBP2, Target1, Target2)]
+dt[, Target_high := ifelse(RBP1 < RBP2, Target2, Target1)]
+
+result <- dt[
+  ,
+  .(
+    Cosine = mean(Cosine, na.rm = TRUE),
+    n_rows = uniqueN(c(Target1, Target2))  # counts unique targets across both RBPs
+  ),
+  by = .(RBP1 = RBP_low, RBP2 = RBP_high)
+]
+
+
+```
+### Heatmap
+
+```{r fig.height=20, fig.width=20}
+dt <- copy(result)
+
+rbps <- sort(unique(c(dt$RBP1, dt$RBP2)))
+n <- length(rbps)
+
+rbp_index <- setNames(seq_len(n), rbps)
+
+S <- matrix(NA_real_, n, n,
+            dimnames = list(rbps, rbps))
+
+i <- rbp_index[dt$RBP1]
+j <- rbp_index[dt$RBP2]
+
+S[cbind(i, j)] <- dt$Cosine
+S[cbind(j, i)] <- dt$Cosine
+#diag(S) <- 1
+
+S[is.na(S)] <- 0
+
+D <- 1 - S
+
+pheatmap(
+  S,
+  clustering_method = "ward.D2",
+  color = colorRampPalette(c("navy", "white", "firebrick"))(100),
+  show_rownames = TRUE,
+  show_colnames = TRUE,
+  border_color = NA,
+  main = "shRNA Similarity – Both Events"
+)
+
+
+
+```
+
+### MDS
+
+```{r fig.height=20, fig.width=20}
+
+pair_df <- result
+
+rbp_stats <- rbind(
+  pair_df[, .(RBP = RBP1, n_pairs = n_rows)],
+  pair_df[, .(RBP = RBP2, n_pairs = n_rows)]
+)[
+  ,
+  .(n_pairs = sum(n_pairs)),
+  by = RBP
+]
+
+mds <- cmdscale(D, k = 2, eig = TRUE)
+
+mds_df <- data.frame(
+  RBP  = rownames(D),
+  MDS1 = mds$points[, 1],
+  MDS2 = mds$points[, 2],
+  stringsAsFactors = FALSE
+)
+
+mds_df <- merge(
+  mds_df,
+  rbp_stats,
+  by = "RBP",
+  all.x = TRUE
+)
+
+mds_df$n_pairs[is.na(mds_df$n_pairs)] <- 0
+
+ggplot(mds_df, aes(MDS1, MDS2)) +
+  geom_point(aes(size = n_pairs), alpha = 0.75) +
+  geom_text_repel(
+    aes(label = RBP),
+    size = 3,
+    max.overlaps = 30
+  ) +
+  scale_size_continuous(range = c(2, 10)) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "shRNA Similarity – Both Events",
+    size = "Shared eCLIP\ncomparisons"
+  )
+```
+
+### TSne
+
+```{r fig.height=20, fig.width=20}
+
+
+# -----------------------------------------
+# Choose valid perplexity
+# -----------------------------------------
+n <- nrow(D)
+perp <- min(30, floor((n - 1) / 3))
+
+# -----------------------------------------
+# Run t-SNE using distance matrix
+# -----------------------------------------
+tsne <- Rtsne(
+  as.dist(D),        # use distance matrix
+  is_distance = TRUE,
+  perplexity = perp,
+  theta = 0.5,       # speed/accuracy tradeoff
+  dims = 2,
+  verbose = TRUE
+)
+
+tsne_df <- data.frame(
+  RBP  = rownames(D),
+  tSNE1 = tsne$Y[, 1],
+  tSNE2 = tsne$Y[, 2],
+  stringsAsFactors = FALSE
+)
+
+# -----------------------------------------
+# Merge with n_pairs (same as before)
+# -----------------------------------------
+tsne_df <- merge(
+  tsne_df,
+  rbp_stats,
+  by = "RBP",
+  all.x = TRUE
+)
+
+tsne_df$n_pairs[is.na(tsne_df$n_pairs)] <- 0
+
+# -----------------------------------------
+# Plot
+# -----------------------------------------
+ggplot(tsne_df, aes(tSNE1, tSNE2)) +
+  geom_point(aes(size = n_pairs), alpha = 0.75) +
+  geom_text_repel(
+    aes(label = RBP),
+    size = 3,
+    max.overlaps = 30
+  ) +
+  scale_size_continuous(range = c(2, 10)) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "t-SNE – shRNA Similarity (Both Events)",
+    size = "Shared eCLIP\ncomparisons"
+  )
+```
+
+### NRows
+
+```{r fig.height=20, fig.width=20}
+# result has: RBP1, RBP2, Wasserstein, n_rows
+
+pair_df <- copy(result)
+
+rbps <- sort(unique(c(pair_df$RBP1, pair_df$RBP2)))
+n <- length(rbps)
+
+rbp_index <- setNames(seq_len(n), rbps)
+
+Nmat <- matrix(
+  0,
+  nrow = n,
+  ncol = n,
+  dimnames = list(rbps, rbps)
+)
+
+i <- rbp_index[pair_df$RBP1]
+j <- rbp_index[pair_df$RBP2]
+
+Nmat[cbind(i, j)] <- pair_df$n_rows
+Nmat[cbind(j, i)] <- pair_df$n_rows   # symmetric
+
+pheatmap(
+  Nmat,
+  clustering_method = "ward.D2",
+  clustering_distance_rows = "euclidean",
+  clustering_distance_cols = "euclidean",
+  color = colorRampPalette(c("navy", "white", "firebrick"))(100),
+  show_rownames = TRUE,
+  show_colnames = TRUE,
+  border_color = NA,
+  main = "shRNA #Pairs – Both Events"
+)
+
+```
+
+# G. Alternative Method (eCLIP)
+
+## Increased
+
+```{r}
+library(data.table)
+
+dt <- fread(
+  "/mnt/scratch/home/alexandre/Projects/CHARM/intermediary_files/FullSimilarity_oddsratinc.csv"
+)
+
+dt <- unique(dt)
+
+# -----------------------------------------------------
+# Force Target1 < Target2 ordering
+# -----------------------------------------------------
+dt[, `:=`(
+  Target_low  = pmin(Target1, Target2),
+  Target_high = pmax(Target1, Target2)
+)]
+
+dt[, RBP_low  := ifelse(Target1 < Target2, RBP1, RBP2)]
+dt[, RBP_high := ifelse(Target1 < Target2, RBP2, RBP1)]
+
+# -----------------------------------------------------
+# Aggregate per Target pair
+# -----------------------------------------------------
+result <- dt[
+  ,
+  .(
+    Cosine = mean(Cosine, na.rm = TRUE),
+    n_rows = uniqueN(c(RBP_low, RBP_high))
+  ),
+  by = .(Target1 = Target_low, Target2 = Target_high)
+]
+
+```
+
+### Heatmap
+
+```{r fig.height=20, fig.width=20}
+dt <- copy(result)
+
+targets <- sort(unique(c(dt$Target1, dt$Target2)))
+n <- length(targets)
+
+target_index <- setNames(seq_len(n), targets)
+
+S <- matrix(
+  NA_real_,
+  n, n,
+  dimnames = list(targets, targets)
+)
+
+i <- target_index[dt$Target1]
+j <- target_index[dt$Target2]
+
+S[cbind(i, j)] <- dt$Cosine
+S[cbind(j, i)] <- dt$Cosine
+
+S[is.na(S)] <- 0
+D <- 1 - S
+
+pheatmap(
+  S,
+  clustering_method = "ward.D2",
+  color = colorRampPalette(c("navy", "white", "firebrick"))(100),
+  show_rownames = TRUE,
+  show_colnames = TRUE,
+  border_color = NA,
+  main = "Target Similarity – Increased Events"
+)
+
+```
+
+### MDS
+
+```{r fig.height=20, fig.width=20}
+pair_df <- copy(result)
+
+target_stats <- rbind(
+  pair_df[, .(Target = Target1, n_pairs = n_rows)],
+  pair_df[, .(Target = Target2, n_pairs = n_rows)]
+)[
+  ,
+  .(n_pairs = sum(n_pairs)),
+  by = Target
+]
+
+mds <- cmdscale(D, k = 2, eig = TRUE)
+
+mds_df <- data.frame(
+  Target = rownames(D),
+  MDS1 = mds$points[, 1],
+  MDS2 = mds$points[, 2],
+  stringsAsFactors = FALSE
+)
+
+mds_df <- merge(
+  mds_df,
+  target_stats,
+  by = "Target",
+  all.x = TRUE
+)
+
+mds_df$n_pairs[is.na(mds_df$n_pairs)] <- 0
+
+ggplot(mds_df, aes(MDS1, MDS2)) +
+  geom_point(aes(size = n_pairs), alpha = 0.75) +
+  geom_text_repel(
+    aes(label = Target),
+    size = 3,
+    max.overlaps = 30
+  ) +
+  scale_size_continuous(range = c(2, 10)) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Target Similarity – Increased Events",
+    size = "Shared RBP\ncomparisons"
+  )
+
+```
+
+### TSne
+
+```{r fig.height=20, fig.width=20}
+
+
+# -----------------------------------------
+# Choose valid perplexity
+# -----------------------------------------
+n <- nrow(D)
+perp <- min(30, floor((n - 1) / 3))
+
+# -----------------------------------------
+# Run t-SNE using distance matrix
+# -----------------------------------------
+tsne <- Rtsne(
+  as.dist(D),        # use distance matrix
+  is_distance = TRUE,
+  perplexity = perp,
+  theta = 0.5,       # speed/accuracy tradeoff
+  dims = 2,
+  verbose = TRUE
+)
+
+tsne_df <- data.frame(
+  RBP  = rownames(D),
+  tSNE1 = tsne$Y[, 1],
+  tSNE2 = tsne$Y[, 2],
+  stringsAsFactors = FALSE
+)
+
+# -----------------------------------------
+# Merge with n_pairs (same as before)
+# -----------------------------------------
+tsne_df <- merge(
+  tsne_df,
+  rbp_stats,
+  by = "RBP",
+  all.x = TRUE
+)
+
+tsne_df$n_pairs[is.na(tsne_df$n_pairs)] <- 0
+
+# -----------------------------------------
+# Plot
+# -----------------------------------------
+ggplot(tsne_df, aes(tSNE1, tSNE2)) +
+  geom_point(aes(size = n_pairs), alpha = 0.75) +
+  geom_text_repel(
+    aes(label = RBP),
+    size = 3,
+    max.overlaps = 30
+  ) +
+  scale_size_continuous(range = c(2, 10)) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "t-SNE – Target Similarity (Increased Events)",
+    size = "Shared eCLIP\ncomparisons"
+  )
+```
+
+### NRows
+
+```{r fig.height=20, fig.width=20}
+pair_df <- copy(result)
+
+targets <- sort(unique(c(pair_df$Target1, pair_df$Target2)))
+n <- length(targets)
+
+target_index <- setNames(seq_len(n), targets)
+
+Nmat <- matrix(
+  0,
+  n, n,
+  dimnames = list(targets, targets)
+)
+
+i <- target_index[pair_df$Target1]
+j <- target_index[pair_df$Target2]
+
+Nmat[cbind(i, j)] <- pair_df$n_rows
+Nmat[cbind(j, i)] <- pair_df$n_rows
+
+pheatmap(
+  (Nmat),
+  clustering_method = "ward.D2",
+  clustering_distance_rows = "euclidean",
+  clustering_distance_cols = "euclidean",
+  color = colorRampPalette(c("navy", "white", "firebrick"))(100),
+  show_rownames = TRUE,
+  show_colnames = TRUE,
+  border_color = NA,
+  main = "eCLIP #Pairs – Increased Events"
+)
+
+```
+
+
+## Decreased
+
+```{r}
+library(data.table)
+
+dt <- fread(
+  "/mnt/scratch/home/alexandre/Projects/CHARM/intermediary_files/FullSimilarity_oddsratdec.csv"
+)
+
+dt <- unique(dt)
+
+# -----------------------------------------------------
+# Force Target1 < Target2 ordering
+# -----------------------------------------------------
+dt[, `:=`(
+  Target_low  = pmin(Target1, Target2),
+  Target_high = pmax(Target1, Target2)
+)]
+
+dt[, RBP_low  := ifelse(Target1 < Target2, RBP1, RBP2)]
+dt[, RBP_high := ifelse(Target1 < Target2, RBP2, RBP1)]
+
+# -----------------------------------------------------
+# Aggregate per Target pair
+# -----------------------------------------------------
+result <- dt[
+  ,
+  .(
+    Cosine = mean(Cosine, na.rm = TRUE),
+    n_rows = uniqueN(c(RBP_low, RBP_high))
+  ),
+  by = .(Target1 = Target_low, Target2 = Target_high)
+]
+```
+
+### Heatmap
+
+```{r fig.height=20, fig.width=20}
+dt <- copy(result)
+
+targets <- sort(unique(c(dt$Target1, dt$Target2)))
+n <- length(targets)
+
+target_index <- setNames(seq_len(n), targets)
+
+S <- matrix(
+  NA_real_,
+  n, n,
+  dimnames = list(targets, targets)
+)
+
+i <- target_index[dt$Target1]
+j <- target_index[dt$Target2]
+
+S[cbind(i, j)] <- dt$Cosine
+S[cbind(j, i)] <- dt$Cosine
+
+S[is.na(S)] <- 0
+D <- 1 - S
+
+pheatmap(
+  S,
+  clustering_method = "ward.D2",
+  color = colorRampPalette(c("navy", "white", "firebrick"))(100),
+  show_rownames = TRUE,
+  show_colnames = TRUE,
+  border_color = NA,
+  main = "Target Similarity – Decreased Events"
+)
+
+```
+
+### MDS
+
+```{r fig.height=20, fig.width=20}
+pair_df <- copy(result)
+
+target_stats <- rbind(
+  pair_df[, .(Target = Target1, n_pairs = n_rows)],
+  pair_df[, .(Target = Target2, n_pairs = n_rows)]
+)[
+  ,
+  .(n_pairs = sum(n_pairs)),
+  by = Target
+]
+
+mds <- cmdscale(D, k = 2, eig = TRUE)
+
+mds_df <- data.frame(
+  Target = rownames(D),
+  MDS1 = mds$points[, 1],
+  MDS2 = mds$points[, 2],
+  stringsAsFactors = FALSE
+)
+
+mds_df <- merge(
+  mds_df,
+  target_stats,
+  by = "Target",
+  all.x = TRUE
+)
+
+mds_df$n_pairs[is.na(mds_df$n_pairs)] <- 0
+
+ggplot(mds_df, aes(MDS1, MDS2)) +
+  geom_point(aes(size = n_pairs), alpha = 0.75) +
+  geom_text_repel(
+    aes(label = Target),
+    size = 3,
+    max.overlaps = 30
+  ) +
+  scale_size_continuous(range = c(2, 10)) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Target Similarity – Decreased Events",
+    size = "Shared RBP\ncomparisons"
+  )
+
+```
+
+
+### TSne
+
+```{r fig.height=20, fig.width=20}
+
+
+# -----------------------------------------
+# Choose valid perplexity
+# -----------------------------------------
+n <- nrow(D)
+perp <- min(30, floor((n - 1) / 3))
+
+# -----------------------------------------
+# Run t-SNE using distance matrix
+# -----------------------------------------
+tsne <- Rtsne(
+  as.dist(D),        # use distance matrix
+  is_distance = TRUE,
+  perplexity = perp,
+  theta = 0.5,       # speed/accuracy tradeoff
+  dims = 2,
+  verbose = TRUE
+)
+
+tsne_df <- data.frame(
+  RBP  = rownames(D),
+  tSNE1 = tsne$Y[, 1],
+  tSNE2 = tsne$Y[, 2],
+  stringsAsFactors = FALSE
+)
+
+# -----------------------------------------
+# Merge with n_pairs (same as before)
+# -----------------------------------------
+tsne_df <- merge(
+  tsne_df,
+  rbp_stats,
+  by = "RBP",
+  all.x = TRUE
+)
+
+tsne_df$n_pairs[is.na(tsne_df$n_pairs)] <- 0
+
+# -----------------------------------------
+# Plot
+# -----------------------------------------
+ggplot(tsne_df, aes(tSNE1, tSNE2)) +
+  geom_point(aes(size = n_pairs), alpha = 0.75) +
+  geom_text_repel(
+    aes(label = RBP),
+    size = 3,
+    max.overlaps = 30
+  ) +
+  scale_size_continuous(range = c(2, 10)) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "t-SNE – Target Similarity (Decreased Events)",
+    size = "Shared eCLIP\ncomparisons"
+  )
+```
+
+### NRows
+
+```{r fig.height=20, fig.width=20}
+pair_df <- copy(result)
+
+targets <- sort(unique(c(pair_df$Target1, pair_df$Target2)))
+n <- length(targets)
+
+target_index <- setNames(seq_len(n), targets)
+
+Nmat <- matrix(
+  0,
+  n, n,
+  dimnames = list(targets, targets)
+)
+
+i <- target_index[pair_df$Target1]
+j <- target_index[pair_df$Target2]
+
+Nmat[cbind(i, j)] <- pair_df$n_rows
+Nmat[cbind(j, i)] <- pair_df$n_rows
+
+pheatmap(
+  (Nmat),
+  clustering_method = "ward.D2",
+  clustering_distance_rows = "euclidean",
+  clustering_distance_cols = "euclidean",
+  color = colorRampPalette(c("navy", "white", "firebrick"))(100),
+  show_rownames = TRUE,
+  show_colnames = TRUE,
+  border_color = NA,
+  main = "eCLIP #Pairs – Decreased Events"
+)
+
+```
+
+## Both
+
+```{r}
+library(data.table)
+
+dt1 <- fread(
+  "/mnt/scratch/home/alexandre/Projects/CHARM/intermediary_files/FullSimilarity_oddsratinc.csv"
+)
+
+dt2 <- fread(
+  "/mnt/scratch/home/alexandre/Projects/CHARM/intermediary_files/FullSimilarity_oddsratdec.csv"
+)
+
+dt <- rbind(dt1, dt2)
+#dt <- unique(dt)
+# -----------------------------------------------------
+# Force Target1 < Target2 ordering
+# -----------------------------------------------------
+dt[, `:=`(
+  Target_low  = pmin(Target1, Target2),
+  Target_high = pmax(Target1, Target2)
+)]
+
+dt[, RBP_low  := ifelse(Target1 < Target2, RBP1, RBP2)]
+dt[, RBP_high := ifelse(Target1 < Target2, RBP2, RBP1)]
+
+# -----------------------------------------------------
+# Aggregate per Target pair
+# -----------------------------------------------------
+result <- dt[
+  ,
+  .(
+    Cosine = mean(Cosine, na.rm = TRUE),
+    n_rows = uniqueN(c(RBP_low, RBP_high))
+  ),
+  by = .(Target1 = Target_low, Target2 = Target_high)
+]
+
+```
+
+### Heatmap
+
+```{r fig.height=20, fig.width=20}
+dt <- copy(result)
+
+targets <- sort(unique(c(dt$Target1, dt$Target2)))
+n <- length(targets)
+
+target_index <- setNames(seq_len(n), targets)
+
+S <- matrix(
+  NA_real_,
+  n, n,
+  dimnames = list(targets, targets)
+)
+
+i <- target_index[dt$Target1]
+j <- target_index[dt$Target2]
+
+S[cbind(i, j)] <- dt$Cosine
+S[cbind(j, i)] <- dt$Cosine
+
+S[is.na(S)] <- 0
+D <- 1 - S
+
+pheatmap(
+  S,
+  clustering_method = "ward.D2",
+  color = colorRampPalette(c("navy", "white", "firebrick"))(100),
+  show_rownames = TRUE,
+  show_colnames = TRUE,
+  border_color = NA,
+  main = "Target Similarity – Both Events"
+)
+
+```
+
+### MDS
+
+```{r fig.height=20, fig.width=20}
+pair_df <- copy(result)
+
+target_stats <- rbind(
+  pair_df[, .(Target = Target1, n_pairs = n_rows)],
+  pair_df[, .(Target = Target2, n_pairs = n_rows)]
+)[
+  ,
+  .(n_pairs = sum(n_pairs)),
+  by = Target
+]
+
+mds <- cmdscale(D, k = 2, eig = TRUE)
+
+mds_df <- data.frame(
+  Target = rownames(D),
+  MDS1 = mds$points[, 1],
+  MDS2 = mds$points[, 2],
+  stringsAsFactors = FALSE
+)
+
+mds_df <- merge(
+  mds_df,
+  target_stats,
+  by = "Target",
+  all.x = TRUE
+)
+
+mds_df$n_pairs[is.na(mds_df$n_pairs)] <- 0
+
+ggplot(mds_df, aes(MDS1, MDS2)) +
+  geom_point(aes(size = n_pairs), alpha = 0.75) +
+  geom_text_repel(
+    aes(label = Target),
+    size = 3,
+    max.overlaps = 30
+  ) +
+  scale_size_continuous(range = c(2, 10)) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Target Similarity – Both Events",
+    size = "Shared RBP\ncomparisons"
+  )
+
+```
+
+
+### TSne
+
+```{r fig.height=20, fig.width=20}
+
+
+# -----------------------------------------
+# Choose valid perplexity
+# -----------------------------------------
+n <- nrow(D)
+perp <- min(30, floor((n - 1) / 3))
+
+# -----------------------------------------
+# Run t-SNE using distance matrix
+# -----------------------------------------
+tsne <- Rtsne(
+  as.dist(D),        # use distance matrix
+  is_distance = TRUE,
+  perplexity = perp,
+  theta = 0.5,       # speed/accuracy tradeoff
+  dims = 2,
+  verbose = TRUE
+)
+
+tsne_df <- data.frame(
+  RBP  = rownames(D),
+  tSNE1 = tsne$Y[, 1],
+  tSNE2 = tsne$Y[, 2],
+  stringsAsFactors = FALSE
+)
+
+# -----------------------------------------
+# Merge with n_pairs (same as before)
+# -----------------------------------------
+tsne_df <- merge(
+  tsne_df,
+  rbp_stats,
+  by = "RBP",
+  all.x = TRUE
+)
+
+tsne_df$n_pairs[is.na(tsne_df$n_pairs)] <- 0
+
+# -----------------------------------------
+# Plot
+# -----------------------------------------
+ggplot(tsne_df, aes(tSNE1, tSNE2)) +
+  geom_point(aes(size = n_pairs), alpha = 0.75) +
+  geom_text_repel(
+    aes(label = RBP),
+    size = 3,
+    max.overlaps = 30
+  ) +
+  scale_size_continuous(range = c(2, 10)) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "t-SNE – Target Similarity (Both Events)",
+    size = "Shared eCLIP\ncomparisons"
+  )
+```
+
+### NRows
+
+```{r fig.height=20, fig.width=20}
+pair_df <- copy(result)
+
+targets <- sort(unique(c(pair_df$Target1, pair_df$Target2)))
+n <- length(targets)
+
+target_index <- setNames(seq_len(n), targets)
+
+Nmat <- matrix(
+  0,
+  n, n,
+  dimnames = list(targets, targets)
+)
+
+i <- target_index[pair_df$Target1]
+j <- target_index[pair_df$Target2]
+
+Nmat[cbind(i, j)] <- pair_df$n_rows
+Nmat[cbind(j, i)] <- pair_df$n_rows
+
+pheatmap(
+  (Nmat),
+  clustering_method = "ward.D2",
+  clustering_distance_rows = "euclidean",
+  clustering_distance_cols = "euclidean",
+  color = colorRampPalette(c("navy", "white", "firebrick"))(100),
+  show_rownames = TRUE,
+  show_colnames = TRUE,
+  border_color = NA,
+  main = "eCLIP #Pairs – Both Events"
+)
+
+```
+
+# H. Yet another method
+
+```{r fig.height=200, fig.width=50}
+strong_df <- fread("~/Projects/CHARM/intermediary_files/Charm.binding.filtered.both_new.csv")
+strong_df_inc <- subset(strong_df, Direction == "oddsratinc")
+strong_df_dec <- subset(strong_df, Direction == "oddsratdec")
+
+library(dplyr)
+
+df <- strong_df_inc
+
+# create row labels
+df <- df %>%
+  mutate(RowLabel = paste(RBP, Target, sep = "_"))
+
+# select only pos columns
+pos_cols <- grep("^pos_", names(df), value = TRUE)
+
+# matrix for heatmap
+mat <- df %>%
+  select(all_of(pos_cols)) %>%
+  as.matrix()
+
+# assign rownames
+rownames(mat) <- df$RowLabel
+
+# library(factoextra)
+# fviz_nbclust(mat, kmeans, method = "silhouette")
+# 
+
+library(ComplexHeatmap)
+library(circlize)
+library(grid)
+
+vlines <- c(50,250,450,500,550,750,950)
+
+ht <- Heatmap(
+  mat,
+  name = "value",
+  show_column_names = FALSE,
+  cluster_columns = FALSE,
+  clustering_method_rows = "ward.D2",
+  col = colorRamp2(
+    c(min(mat, na.rm=TRUE), 0, max(mat, na.rm=TRUE)),
+    c("blue","white","red")
+  )
+)
+
+draw(ht)
+
+decorate_heatmap_body("value", {
+  for (x in vlines) {
+    grid.lines(
+      x = unit(c(x-0.5, x-0.5)/ncol(mat), "npc"),
+      y = unit(c(0,1), "npc"),
+      gp = gpar(col="black", lwd=1)
+    )
+  }
+})
+
+
+```
+
+```{r}
+dt <- fread(
+  "/mnt/scratch/home/alexandre/Projects/CHARM/intermediary_files/FullSimilarity_oddsratinc.csv"
+)
+
+dt$Pair1 <- paste0(dt$RBP1, "_", dt$Target1)
+dt$Pair2 <- paste0(dt$RBP2, "_", dt$Target2)
+
+write_csv(dt, "/mnt/scratch/home/alexandre/Projects/CHARM/intermediary_files/FullSimilarity_oddsratinc.csv")
 ```
 
 

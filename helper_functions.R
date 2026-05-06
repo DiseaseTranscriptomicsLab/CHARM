@@ -1460,3 +1460,268 @@ eCLIPSE_full <- function(bindingvalues_nested, rnaBP, target, dPSI,
   if (plot) return(completeplot) else return(list(pval_data = dfforvis_pval, oddsratio_data = dfforvis_oddsratio))
 }
 
+
+eCLIPSE_raw_user <- function(rnamapfile,
+                             ASfile,
+                             rnaBP,
+                             event_type   = "Exon Skipping",
+                             PSIthreshold = 0.05,
+                             metric       = "FDR",
+                             plot         = TRUE,
+                             title        = NULL) {
+  
+  is_IR   <- grepl("Intron Retention", event_type, ignore.case = TRUE)
+  prefix  <- if (is_IR) "HsaINT" else "HsaEX"
+  n_pos   <- if (is_IR) 500L else 1000L
+  drop_cols <- if (is_IR) c(n_pos + 1L, n_pos + 2L) else c(n_pos + 1L, n_pos + 2L)
+  vlines  <- if (is_IR) c(0, 50, 250, 450, 500) else c(0, 50, 250, 450, 500, 550, 750, 950, 1000)
+  
+  ASfile <- ASfile[grepl(prefix, ASfile$Event.ID), , drop = FALSE]
+  
+  if (nrow(ASfile) == 0) {
+    warning(paste0("No ", prefix, " events found in uploaded file."))
+    return(ggplot() +
+             annotate("text", x = 0.5, y = 0.5,
+                      label = paste0("No ", prefix, " events found in the uploaded file."),
+                      size = 6) +
+             theme_void())
+  }
+  
+  ASfile_filt_increased  <- subset(ASfile,  dPSI >  PSIthreshold)
+  ASfile_filt_decreased  <- subset(ASfile,  dPSI < -PSIthreshold)
+  ASfile_filt_maintained <- subset(ASfile, !(dPSI >  PSIthreshold) & !(dPSI < -PSIthreshold))
+  
+  rnamapfile_inc  <- subset(rnamapfile, EVENTS %in% ASfile_filt_increased$Event.ID)
+  rnamapfile_maint <- subset(rnamapfile, EVENTS %in% ASfile_filt_maintained$Event.ID)
+  rnamapfile_dec  <- subset(rnamapfile, EVENTS %in% ASfile_filt_decreased$Event.ID)
+  
+  rbp_inc   <- subset(rnamapfile_inc,   RBP == rnaBP)
+  nrbp_inc  <- subset(rnamapfile_inc,   RBP != rnaBP)
+  nrbp_inc  <- nrbp_inc[!duplicated(nrbp_inc$EVENTS), ]
+  nrbp_inc <- as.data.frame(lapply(seq_along(nrbp_inc), function(i) {
+    col <- nrbp_inc[[i]]
+    if (is.numeric(col)) { col[!is.na(col) & col == 1] <- 0 }
+    col
+  }), stringsAsFactors = FALSE)
+  colnames(nrbp_inc) <- colnames(rnamapfile_inc)
+  
+  rbp_maint  <- subset(rnamapfile_maint,  RBP == rnaBP)
+  nrbp_maint <- subset(rnamapfile_maint,  RBP != rnaBP)
+  nrbp_maint <- nrbp_maint[!duplicated(nrbp_maint$EVENTS), ]
+  nrbp_maint <- as.data.frame(lapply(seq_along(nrbp_maint), function(i) {
+    col <- nrbp_maint[[i]]
+    if (is.numeric(col)) { col[!is.na(col) & col == 1] <- 0 }
+    col
+  }), stringsAsFactors = FALSE)
+  colnames(nrbp_maint) <- colnames(rnamapfile_maint)
+  
+  rbp_dec   <- subset(rnamapfile_dec,   RBP == rnaBP)
+  nrbp_dec  <- subset(rnamapfile_dec,   RBP != rnaBP)
+  nrbp_dec  <- nrbp_dec[!duplicated(nrbp_dec$EVENTS), ]
+  nrbp_dec <- as.data.frame(lapply(seq_along(nrbp_dec), function(i) {
+    col <- nrbp_dec[[i]]
+    if (is.numeric(col)) { col[!is.na(col) & col == 1] <- 0 }
+    col
+  }), stringsAsFactors = FALSE)
+  colnames(nrbp_dec) <- colnames(rnamapfile_dec)
+  
+  rnamapfile_inc   <- rbind(rbp_inc,   nrbp_inc)
+  rnamapfile_dec   <- rbind(rbp_dec,   nrbp_dec)
+  rnamapfile_maint <- rbind(rbp_maint, nrbp_maint)
+  
+  if (nrow(rnamapfile_inc)   < 10 ||
+      nrow(rnamapfile_maint) < 10 ||
+      nrow(rnamapfile_dec)   < 10) {
+    msg <- paste0(rnaBP, " does not have enough events for this event type.")
+    message(msg)
+    return(ggplot() +
+             annotate("text", x = 0.5, y = 0.5, label = msg, size = 5) +
+             theme_void())
+  }
+  
+  mat_to_colsums <- function(mat, drop = NULL) {
+    # Select numeric columns by type - robust regardless of RBP/EVENTS column position
+    num_idx <- which(vapply(mat, is.numeric, logical(1)))
+    if (length(num_idx) == 0) {
+      return(list(comp = rep(0, n_pos), incomp = rep(0L, n_pos)))
+    }
+    mat <- as.matrix(mat[, ..num_idx, drop = FALSE])
+    nr  <- nrow(mat)
+    if (is.null(nr) || nr == 0) {
+      return(list(comp = rep(0, ncol(mat)), incomp = rep(0L, ncol(mat))))
+    }
+    mat_num <- matrix(suppressWarnings(as.numeric(mat)), nrow = nr, ncol = ncol(mat))
+    list(
+      comp   = colSums(mat_num, na.rm = TRUE),
+      incomp = colSums(!is.na(mat_num))
+    )
+  }
+  
+  cs_inc   <- mat_to_colsums(rnamapfile_inc,   drop_cols)
+  cs_dec   <- mat_to_colsums(rnamapfile_dec,   drop_cols)
+  cs_maint <- mat_to_colsums(rnamapfile_maint, drop_cols)
+  
+  dfforvis <- data.frame(
+    Name             = seq_len(n_pos),
+    IncreasedEvents  = as.numeric(cs_inc$comp   + 1),
+    DecreasedEvents  = as.numeric(cs_dec$comp   + 1),
+    MaintainedEvents = as.numeric(cs_maint$comp + 1)
+  )
+  
+  pval_inc     <- numeric(n_pos)
+  pval_dec     <- numeric(n_pos)
+  oddsratio_inc <- numeric(n_pos)
+  oddsratio_dec <- numeric(n_pos)
+  
+  for (i in seq_len(n_pos)) {
+    
+    inc_fish     <- dfforvis[i, 2]
+    inc_fish_rev <- cs_inc$incomp[i]   - dfforvis[i, 2]
+    inc_vs       <- dfforvis[i, 4]
+    inc_vs_rev   <- cs_maint$incomp[i] - dfforvis[i, 4]
+    
+    dec_fish     <- dfforvis[i, 3]
+    dec_fish_rev <- cs_dec$incomp[i]   - dfforvis[i, 3]
+    dec_vs       <- dfforvis[i, 4]
+    dec_vs_rev   <- cs_maint$incomp[i] - dfforvis[i, 4]
+    
+    inc_mat <- matrix(c(inc_fish, inc_fish_rev, inc_vs, inc_vs_rev), nrow = 2)
+    dec_mat <- matrix(c(dec_fish, dec_fish_rev, dec_vs, dec_vs_rev), nrow = 2)
+    
+    inc_p    <- chisq.test(inc_mat)$p.value
+    inc_odds <- chisq.test(inc_mat)$statistic
+    dec_p    <- chisq.test(dec_mat)$p.value
+    dec_odds <- chisq.test(dec_mat)$statistic
+    
+    inc_p <- -log10(p.adjust(inc_p, method = "BH", n = n_pos))
+    dec_p <- -log10(p.adjust(dec_p, method = "BH", n = n_pos))
+    
+    # Sign flip: negative = RBP binding depleted relative to maintained
+    # IR uses combined increased+maintained as denominator (original IR logic)
+    if (is_IR) {
+      if ((inc_fish / cs_inc$incomp[i]) <=
+          (inc_vs / (cs_dec$incomp[i] + cs_maint$incomp[i]))) {
+        inc_p    <- inc_p    * -1
+        inc_odds <- inc_odds * -1
+      }
+      if ((dec_fish / cs_dec$incomp[i]) <=
+          (dec_vs / (cs_inc$incomp[i] + cs_maint$incomp[i]))) {
+        dec_p    <- dec_p    * -1
+        dec_odds <- dec_odds * -1
+      }
+    } else {
+      if ((inc_fish / cs_inc$incomp[i]) <= (inc_vs / cs_maint$incomp[i])) {
+        inc_p    <- inc_p    * -1
+        inc_odds <- inc_odds * -1
+      }
+      if ((dec_fish / cs_dec$incomp[i]) <= (dec_vs / cs_maint$incomp[i])) {
+        dec_p    <- dec_p    * -1
+        dec_odds <- dec_odds * -1
+      }
+    }
+    
+    pval_inc[i]      <- inc_p
+    pval_dec[i]      <- dec_p
+    oddsratio_inc[i] <- inc_odds
+    oddsratio_dec[i] <- dec_odds
+  }
+  
+  dfforvis_pval     <- data.frame(pos = seq_len(n_pos), pvalinc = pval_inc,      pvaldec = pval_dec)
+  dfforvis_oddsratio <- data.frame(pos = seq_len(n_pos), oddsratinc = oddsratio_inc, oddsratdec = oddsratio_dec)
+  
+  dfforvis$IncreasedEvents  <- dfforvis$IncreasedEvents  / cs_inc$incomp
+  dfforvis$DecreasedEvents  <- dfforvis$DecreasedEvents  / cs_dec$incomp
+  dfforvis$MaintainedEvents <- dfforvis$MaintainedEvents / cs_maint$incomp
+  
+  if (!plot) {
+    return(list(pval_data = dfforvis_pval, oddsratio_data = dfforvis_oddsratio))
+  }
+  
+  n_inc_rbp   <- length(unique(rbp_inc$EVENTS))
+  n_inc_total <- nrow(ASfile_filt_increased)
+  n_maint_rbp <- length(unique(rbp_maint$EVENTS))
+  n_maint_total <- nrow(ASfile_filt_maintained)
+  n_dec_rbp   <- length(unique(rbp_dec$EVENTS))
+  n_dec_total <- nrow(ASfile_filt_decreased)
+  
+  inc_color   <- "#de425b"
+  dec_color   <- "#769fca"
+  maint_color <- "black"
+  plot_title  <- if (!is.null(title)) paste0(rnaBP, " RNA Binding Map — ", title) else
+    paste0(rnaBP, " RNA Binding Map (", if (is_IR) "Intron Retention" else "Exon Skipping", ")")
+  
+  mapplot <- ggplot(dfforvis, aes(x = Name)) +
+    geom_line(aes(y = IncreasedEvents),  color = inc_color,   linewidth = 1) +
+    geom_line(aes(y = DecreasedEvents),  color = dec_color,   linewidth = 1) +
+    geom_line(aes(y = MaintainedEvents), color = maint_color, linewidth = 1) +
+    xlim(0, n_pos) +
+    labs(title = plot_title, x = "", y = "Normalised\nDensity\n") +
+    theme_bw() +
+    geom_vline(xintercept = vlines, linetype = "dashed") +
+    theme(
+      axis.line          = element_line(colour = "black"),
+      panel.grid.minor   = element_blank(),
+      panel.border       = element_blank(),
+      panel.background   = element_blank(),
+      axis.text.x        = element_blank(),
+      axis.ticks.x       = element_blank(),
+      legend.position    = "none",
+      text               = element_text(size = 15, face = "bold")
+    )
+  
+  labels_plot <- ggplot() +
+    annotate("text", x = 1, y = 0,
+             label = paste0("Increased: ",  n_inc_rbp,   " (", n_inc_total,   ")\n"),
+             color = inc_color,   size = 4.5, fontface = "bold", hjust = -0.75) +
+    annotate("text", x = 1, y = 0,
+             label = paste0("Maintained: ", n_maint_rbp, " (", n_maint_total, ")\n"),
+             color = maint_color, size = 4.5, fontface = "bold", hjust =  0.5) +
+    annotate("text", x = 1, y = 0,
+             label = paste0("Decreased: ",  n_dec_rbp,   " (", n_dec_total,   ")\n"),
+             color = dec_color,   size = 4.5, fontface = "bold", hjust =  1.75) +
+    theme_void() +
+    theme(plot.margin = margin(0, 0, 0, 0))
+  
+  if (metric == "EffectSize") {
+    metricplot <- ggplot(dfforvis_oddsratio, aes(x = pos)) +
+      geom_line(aes(y = oddsratinc), color = inc_color, linewidth = 1) +
+      geom_line(aes(y = oddsratdec), color = dec_color, linewidth = 1) +
+      xlim(0, n_pos) +
+      labs(x = "Position", y = "Chi-Squared\nStatistic\n") +
+      theme_bw() +
+      geom_vline(xintercept = vlines, linetype = "dashed") +
+      scale_y_continuous(labels = scales::label_number(accuracy = 0.01)) +
+      theme(
+        axis.line        = element_line(colour = "black"),
+        panel.grid.minor = element_blank(),
+        panel.border     = element_blank(),
+        panel.background = element_blank(),
+        axis.text.x      = element_blank(),
+        axis.ticks.x     = element_blank(),
+        legend.position  = "none",
+        text             = element_text(size = 15, face = "bold")
+      )
+  } else {
+    metricplot <- ggplot(dfforvis_pval, aes(x = pos)) +
+      geom_line(aes(y = pvalinc), color = inc_color, linewidth = 1) +
+      geom_line(aes(y = pvaldec), color = dec_color, linewidth = 1) +
+      xlim(0, n_pos) +
+      labs(x = "Position", y = "-log10 (FDR)\n") +
+      theme_bw() +
+      geom_vline(xintercept = vlines, linetype = "dashed") +
+      scale_y_continuous(labels = scales::label_number(accuracy = 0.01)) +
+      theme(
+        axis.line        = element_line(colour = "black"),
+        panel.grid.minor = element_blank(),
+        panel.border     = element_blank(),
+        panel.background = element_blank(),
+        axis.text.x      = element_blank(),
+        axis.ticks.x     = element_blank(),
+        legend.position  = "none",
+        text             = element_text(size = 15, face = "bold")
+      )
+  }
+  
+  ggpubr::ggarrange(mapplot, labels_plot, metricplot,
+                    ncol = 1, heights = c(0.4, 0.1, 0.4), align = "v")
+}
