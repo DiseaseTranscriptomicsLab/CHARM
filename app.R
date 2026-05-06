@@ -683,6 +683,11 @@ ui <- fluidPage(
                 conditionalPanel(
                   condition = "input.binding_dataset != 'Similar RBPs'",
                   
+                  hr(),
+                  tags$h5("eCLIPSE Binding Map"),
+                  tags$p("Investigate where a chosen RBP binds relative to splicing events regulated by the shRNA knockdown above. Select one target for a full binding map, or multiple targets for a heatmap overview.",
+                         style = "font-size: 12px; color: #666; margin-top: -5px;"),
+                  
                   uiOutput("binding_target_ui"),
                   uiOutput("binding_dpsi_ui"),
                   
@@ -734,6 +739,20 @@ ui <- fluidPage(
         font-weight: bold;
         color: #856404;
         margin-bottom: 10px;"
+            ),
+            
+            div(
+              tagList(
+                fa("clock", fill = "#555", height = "0.9em"),
+                " Selecting many targets (or \"All\") may take a moment — larger selections require computing binding profiles for each target."
+              ),
+              style = "border: 1px solid #c8cbcf;
+        background-color: #f8f9fa;
+        padding: 7px 10px;
+        border-radius: 6px;
+        font-size: 12px;
+        color: #555;
+        margin-bottom: 12px;"
             ),
             
             # Explore Mode plot

@@ -1725,3 +1725,184 @@ eCLIPSE_raw_user <- function(rnamapfile,
   ggpubr::ggarrange(mapplot, labels_plot, metricplot,
                     ncol = 1, heights = c(0.4, 0.1, 0.4), align = "v")
 }
+
+# ============================================================
+# build_binding_heatmap_user
+# Multi-target heatmap for Binding Discovery Mode.
+# Runs eCLIPSE_raw_user(plot=FALSE) for each target (RBP)
+# and assembles the result vectors into a heatmap using the
+# same visual style as build_binding_heatmap.
+# ============================================================
+build_binding_heatmap_user <- function(rnamapfile,
+                                       ASfile,
+                                       targets,
+                                       event_type   = "Exon Skipping",
+                                       PSIthreshold = 0.05,
+                                       metric       = "FDR",
+                                       hide_row_labels = FALSE) {
+
+  # 1. Collect per-target vectors from eCLIPSE_raw_user(plot=FALSE)
+  inc_list <- list()
+  dec_list <- list()
+
+  for (tgt in targets) {
+    res <- tryCatch(
+      eCLIPSE_raw_user(
+        rnamapfile   = rnamapfile,
+        ASfile       = ASfile,
+        rnaBP        = tgt,
+        event_type   = event_type,
+        PSIthreshold = PSIthreshold,
+        metric       = metric,
+        plot         = FALSE
+      ),
+      error = function(e) NULL
+    )
+
+    if (is.null(res)) next
+
+    if (metric == "EffectSize") {
+      inc_vec <- res$oddsratio_data$oddsratinc
+      dec_vec <- res$oddsratio_data$oddsratdec
+    } else {
+      inc_vec <- res$pval_data$pvalinc
+      dec_vec <- res$pval_data$pvaldec
+    }
+
+    if (!is.null(inc_vec) && !all(is.na(inc_vec))) inc_list[[tgt]] <- inc_vec
+    if (!is.null(dec_vec) && !all(is.na(dec_vec))) dec_list[[tgt]] <- dec_vec
+  }
+
+  if (length(inc_list) == 0 && length(dec_list) == 0) {
+    return(ggplot() + theme_void() + ggtitle("No heatmap data"))
+  }
+
+  # 2. Pad to equal-length matrix
+  pad_and_rbind <- function(lst) {
+    if (length(lst) == 0) return(NULL)
+    maxlen <- max(sapply(lst, length))
+    mat <- t(sapply(lst, function(v) {
+      if (length(v) < maxlen) c(v, rep(NA_real_, maxlen - length(v))) else v
+    }))
+    rownames(mat) <- names(lst)
+    mat <- mat[rowSums(!is.na(mat)) > 0, , drop = FALSE]
+    mat
+  }
+
+  inc_mat <- pad_and_rbind(inc_list)
+  dec_mat <- pad_and_rbind(dec_list)
+
+  # 3. Colour limits (symmetric)
+  all_vals <- c(as.numeric(inc_mat), as.numeric(dec_mat))
+  all_vals <- all_vals[is.finite(all_vals)]
+  lim <- if (length(all_vals) == 0) c(-1, 1) else {
+    mx <- max(abs(all_vals)); if (mx == 0) c(-1, 1) else c(-mx, mx)
+  }
+  fill_label <- if (metric == "FDR") "-log10 FDR" else "Chi-Squared\nStatistic"
+
+  # 4. Determine schematic
+  is_IR <- grepl("Intron Retention", event_type, ignore.case = TRUE)
+  if (is_IR) {
+    schem <- list(
+      rects = data.frame(
+        xmin = c(0, 450), xmax = c(50, 500),
+        ymin = -0.8, ymax = -0.2,
+        fill = c("#1B4F72", "#1B4F72")
+      ),
+      intron_rect = data.frame(xmin = 50, xmax = 450, ymin = -0.7, ymax = -0.3),
+      introns = NULL, max_x = 500
+    )
+    vlines_raw <- c(50, 250, 450)
+  } else {
+    schem <- list(
+      rects = data.frame(
+        xmin = c(0, 450, 950), xmax = c(50, 550, 1000),
+        ymin = -0.8, ymax = -0.2,
+        fill = c("#1B4F72", "#BA3B46", "#1B4F72")
+      ),
+      introns = data.frame(
+        x = c(50, 550), xend = c(450, 950), y = -0.5, yend = -0.5
+      ),
+      intron_rect = NULL, max_x = 1000
+    )
+    vlines_raw <- c(50, 250, 450, 500, 550, 750, 950)
+  }
+
+  # 5. Helper to draw one matrix as a heatmap tile
+  plot_matrix <- function(mat, title_text) {
+    if (is.null(mat)) return(NULL)
+
+    mdf <- reshape2::melt(mat)
+    colnames(mdf) <- c("Target", "Position", "Value")
+    mdf$Position <- as.numeric(mdf$Position)
+    mdf$Target   <- factor(mdf$Target, levels = rownames(mat))
+
+    max_pos    <- max(mdf$Position, na.rm = TRUE)
+    n_rows     <- nrow(mat)
+    vlines_sc  <- vlines_raw * (max_pos / schem$max_x)
+    vline_df   <- data.frame(x = vlines_sc)
+
+    p <- ggplot(mdf, aes(x = Position, y = Target, fill = Value)) +
+      geom_tile() +
+      scale_fill_gradient2(
+        low = "#A6B1E1", mid = "#EEEEEE", high = "#B07156",
+        limits = lim, oob = scales::squish
+      ) +
+      labs(x = "Genomic position", y = "", fill = fill_label, title = title_text) +
+      theme_minimal(base_size = 14) +
+      theme(
+        text        = element_text(size = 16, face = "bold"),
+        axis.text.x = element_text(size = 14, face = "bold"),
+        axis.text.y = if (hide_row_labels) element_blank()
+                      else element_text(size = 14, face = "bold"),
+        axis.title  = element_text(size = 16, face = "bold"),
+        panel.grid  = element_blank()
+      ) +
+      geom_segment(data = vline_df,
+                   aes(x = x, xend = x, y = 1, yend = n_rows),
+                   linetype = "dashed", color = "black", linewidth = 0.4,
+                   inherit.aes = FALSE) +
+      scale_y_discrete(expand = expansion(mult = c(0, 0))) +
+      coord_cartesian(clip = "off")
+
+    # Schematic rectangles
+    if (!is.null(schem$rects)) {
+      rects <- schem$rects
+      rects$xmin <- rects$xmin * (max_pos / schem$max_x)
+      rects$xmax <- rects$xmax * (max_pos / schem$max_x)
+      p <- p + geom_rect(data = rects,
+                         aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+                         fill = rects$fill, color = "black", linewidth = 0.3,
+                         inherit.aes = FALSE)
+    }
+    if (!is.null(schem$intron_rect)) {
+      ir <- schem$intron_rect
+      ir$xmin <- ir$xmin * (max_pos / schem$max_x)
+      ir$xmax <- ir$xmax * (max_pos / schem$max_x)
+      p <- p + geom_rect(data = ir,
+                         aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+                         fill = "#E5E7E9", color = "black", linewidth = 0.3,
+                         inherit.aes = FALSE)
+    }
+    if (!is.null(schem$introns)) {
+      intr <- schem$introns
+      intr$x    <- intr$x    * (max_pos / schem$max_x)
+      intr$xend <- intr$xend * (max_pos / schem$max_x)
+      p <- p + geom_segment(data = intr,
+                             aes(x = x, xend = xend, y = y, yend = yend),
+                             linewidth = 0.8, inherit.aes = FALSE)
+    }
+    p
+  }
+
+  # 6. Build and combine plots
+  heat_inc <- plot_matrix(inc_mat, "Increased Events")
+  heat_dec <- plot_matrix(dec_mat, "Decreased Events")
+
+  if (!is.null(heat_dec) && !is.null(heat_inc)) {
+    return(ggpubr::ggarrange(heat_dec, heat_inc, ncol = 2, widths = c(0.5, 0.5)))
+  } else if (!is.null(heat_dec)) return(heat_dec)
+  else if (!is.null(heat_inc)) return(heat_inc)
+
+  ggplot() + theme_void() + ggtitle("No heatmap data")
+}
