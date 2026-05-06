@@ -1588,10 +1588,12 @@ eCLIPSE_raw_user <- function(rnamapfile,
     inc_mat <- matrix(c(inc_fish, inc_fish_rev, inc_vs, inc_vs_rev), nrow = 2)
     dec_mat <- matrix(c(dec_fish, dec_fish_rev, dec_vs, dec_vs_rev), nrow = 2)
     
-    inc_p    <- chisq.test(inc_mat)$p.value
-    inc_odds <- chisq.test(inc_mat)$statistic
-    dec_p    <- chisq.test(dec_mat)$p.value
-    dec_odds <- chisq.test(dec_mat)$statistic
+    inc_res  <- suppressWarnings(chisq.test(inc_mat))
+    dec_res  <- suppressWarnings(chisq.test(dec_mat))
+    inc_p    <- inc_res$p.value
+    inc_odds <- inc_res$statistic
+    dec_p    <- dec_res$p.value
+    dec_odds <- dec_res$statistic
     
     inc_p <- -log10(p.adjust(inc_p, method = "BH", n = n_pos))
     dec_p <- -log10(p.adjust(dec_p, method = "BH", n = n_pos))

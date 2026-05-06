@@ -1555,9 +1555,8 @@ server <- function(input, output, session) {
     tagList(
       hr(),
       tags$h5("eCLIPSE Binding Map"),
-      tags$p("Visualise where the RBP binds relative to splicing events in your uploaded data.",
+      tags$p("Visualise where an RBP (or multiple RBPs) binds relative to splicing events in your uploaded data. Select one target for a full binding map, or multiple targets for a heatmap overview.",
              style = "font-size: 12px; color: #666; margin-top: -5px;"),
-      uiOutput("binding_disc_rbp_ui"),
       uiOutput("binding_disc_target_ui"),
       selectInput(
         "binding_disc_psi_thresh",
@@ -1589,52 +1588,34 @@ server <- function(input, output, session) {
     )
   })
 
-  # RBP selector — choices depend on event type radio at top of panel
-  output$binding_disc_rbp_ui <- renderUI({
-    req(upload_ok_binding(), input$binding_eventtype)
-    rbp_choices <- if (grepl("Intron Retention", input$binding_eventtype, ignore.case = TRUE)) {
-      names(Charm.object.binding.IR)
-    } else {
-      names(Charm.object.binding.ES)
-    }
-    selectizeInput(
-      "binding_disc_rbp",
-      "RBP:",
-      choices = sort(rbp_choices),
-      options = list(placeholder = "Select an RBP")
-    )
-  })
-
-  # Target selector — updates when RBP changes
+  # Target (RBP whose binding profile to visualise) — Discovery Mode only needs this
   output$binding_disc_target_ui <- renderUI({
-    req(upload_ok_binding(), input$binding_disc_rbp, input$binding_eventtype)
-    bd <- if (grepl("Intron Retention", input$binding_eventtype, ignore.case = TRUE)) {
-      Charm.object.binding.IR
+    req(upload_ok_binding(), input$binding_eventtype)
+    target_choices <- if (grepl("Intron Retention", input$binding_eventtype, ignore.case = TRUE)) {
+      sort(names(Charm.object.binding.IR))
     } else {
-      Charm.object.binding.ES
+      sort(names(Charm.object.binding.ES))
     }
-    rbp <- input$binding_disc_rbp
-    req(rbp %in% names(bd))
     selectizeInput(
       "binding_disc_target",
-      "Target(s):",
-      choices  = c("All", names(bd[[rbp]])),
+      "Target(s) — RBP binding profile to visualise:",
+      choices  = c("All", target_choices),
       multiple = TRUE,
-      options  = list(placeholder = "Select one or more targets, or 'All'")
+      options  = list(placeholder = "Select one or more targets, or \'All\'")
     )
   })
 
+  
   # ---- Binding Discovery Mode: plot button ----
   observeEvent(input$binding_disc_plot_btn, {
     req(upload_ok_binding(), user_binding_df(),
-        input$binding_disc_rbp, input$binding_disc_target,
+        input$binding_disc_target,
         input$binding_eventtype)
 
-    event_type  <- input$binding_eventtype
-    psi_thresh  <- as.numeric(input$binding_disc_psi_thresh)
-    metric      <- input$binding_disc_metric
-    rbp_sel     <- input$binding_disc_rbp
-    targets_sel <- input$binding_disc_target
+    event_type   <- input$binding_eventtype
+    psi_thresh   <- as.numeric(input$binding_disc_psi_thresh)
+    metric       <- input$binding_disc_metric
+    targets_sel  <- input$binding_disc_target
 
     rnamapfile <- if (grepl("Intron Retention", event_type, ignore.case = TRUE)) {
       eCLIPSE_Intron_full
@@ -1642,30 +1623,65 @@ server <- function(input, output, session) {
       eCLIPSE_BigExon_full
     }
 
-    output$binding_discovery_plot_ui <- renderUI({
-      shinycssloaders::withSpinner(
-        plotOutput("binding_disc_plot", height = "600px"),
-        type = 6
-      )
-    })
+    # Resolve "All" to every available target
+    all_rbps <- if (grepl("Intron Retention", event_type, ignore.case = TRUE)) {
+      names(Charm.object.binding.IR)
+    } else {
+      names(Charm.object.binding.ES)
+    }
+    if ("All" %in% targets_sel) targets_sel <- all_rbps
 
-    output$binding_disc_plot <- renderPlot({
-      withProgress(message = "Generating eCLIPSE binding map...", value = 0.1, {
-        eCLIPSE_raw_user(
-          rnamapfile   = rnamapfile,
-          ASfile       = user_binding_df(),
-          rnaBP        = rbp_sel,
-          event_type   = event_type,
-          PSIthreshold = psi_thresh,
-          metric       = metric,
-          plot         = TRUE,
-          title        = paste(rbp_sel, if ("All" %in% targets_sel) "All Targets"
-                               else paste(targets_sel, collapse = ", "))
+    n_targets <- length(targets_sel)
+
+    if (n_targets == 1) {
+      # Single target: full eCLIPSE line-plot
+      output$binding_discovery_plot_ui <- renderUI({
+        shinycssloaders::withSpinner(
+          plotOutput("binding_disc_plot", height = "600px"),
+          type = 6
         )
       })
-    })
-  })
 
+      output$binding_disc_plot <- renderPlot({
+        withProgress(message = "Generating eCLIPSE binding map...", value = 0.1, {
+          eCLIPSE_raw_user(
+            rnamapfile   = rnamapfile,
+            ASfile       = user_binding_df(),
+            rnaBP        = targets_sel,
+            event_type   = event_type,
+            PSIthreshold = psi_thresh,
+            metric       = metric,
+            plot         = TRUE,
+            title        = targets_sel
+          )
+        })
+      })
+
+    } else {
+      # Multiple targets: heatmap
+      height_px <- min(900 + (n_targets - 1) * 10, 2000)
+
+      output$binding_discovery_plot_ui <- renderUI({
+        shinycssloaders::withSpinner(
+          plotOutput("binding_disc_plot", height = paste0(height_px, "px")),
+          type = 6
+        )
+      })
+
+      output$binding_disc_plot <- renderPlot({
+        withProgress(message = "Generating heatmap...", value = 0.1, {
+          build_binding_heatmap_user(
+            rnamapfile   = rnamapfile,
+            ASfile       = user_binding_df(),
+            targets      = targets_sel,
+            event_type   = event_type,
+            PSIthreshold = psi_thresh,
+            metric       = metric
+          )
+        })
+      })
+    }
+  })
   # ---- Binding Discovery Mode: reset button ----
   observeEvent(input$binding_disc_reset_btn, {
     output$binding_discovery_plot_ui <- renderUI(NULL)
