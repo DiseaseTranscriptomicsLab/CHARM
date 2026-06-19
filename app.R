@@ -79,6 +79,21 @@ EventsK562 <- qs::qread("data/QS_Files/AvailableEvents_K562.qs")
 #EventsHEPG2 <- readRDS("data/AvailableEvents_HEPG2.RDS")
 EventsHEPG2 <- qs::qread("data/QS_Files/AvailableEvents_HEPG2.qs")
 
+#Binding similarity stuff
+similar_binding_ES_both_inc  <- qs::qread("data/QS_Files/similar_binding_ES_both_inc.qs")
+similar_binding_ES_both_dec  <- qs::qread("data/QS_Files/similar_binding_ES_both_dec.qs")
+similar_binding_ES_K562_inc  <- qs::qread("data/QS_Files/similar_binding_ES_K562_inc.qs")
+similar_binding_ES_K562_dec  <- qs::qread("data/QS_Files/similar_binding_ES_K562_dec.qs")
+similar_binding_ES_HEPG2_inc <- qs::qread("data/QS_Files/similar_binding_ES_HEPG2_inc.qs")
+similar_binding_ES_HEPG2_dec <- qs::qread("data/QS_Files/similar_binding_ES_HEPG2_dec.qs")
+similar_binding_IR_both_inc  <- qs::qread("data/QS_Files/similar_binding_IR_both_inc.qs")
+similar_binding_IR_both_dec  <- qs::qread("data/QS_Files/similar_binding_IR_both_dec.qs")
+similar_binding_IR_K562_inc  <- qs::qread("data/QS_Files/similar_binding_IR_K562_inc.qs")
+similar_binding_IR_K562_dec  <- qs::qread("data/QS_Files/similar_binding_IR_K562_dec.qs")
+similar_binding_IR_HEPG2_inc <- qs::qread("data/QS_Files/similar_binding_IR_HEPG2_inc.qs")
+similar_binding_IR_HEPG2_dec <- qs::qread("data/QS_Files/similar_binding_IR_HEPG2_dec.qs")
+
+
 ui <- fluidPage(
   theme = shinytheme("flatly"),
   
@@ -167,13 +182,13 @@ ui <- fluidPage(
               radioButtons(
                 inputId = "expr_mode",
                 label = "Select mode:",
-                choices = c("Explore Mode", "Discovery Mode"),
-                selected = "Explore Mode"
+                choices = c("Explore", "Discovery"),
+                selected = "Explore"
               ),
               
               # --- Explore Mode ---
               conditionalPanel(
-                condition = "input.expr_mode == 'Explore Mode'",
+                condition = "input.expr_mode == 'Explore'",
                 
                 # Dataset selection
                 selectInput(
@@ -316,9 +331,9 @@ ui <- fluidPage(
               
               # --- Discovery Mode: User File Upload ---
               conditionalPanel(
-                condition = "input.expr_mode == 'Discovery Mode'",
+                condition = "input.expr_mode == 'Discovery'",
                 hr(),
-                tags$p("Alternatively, upload your own table with differential expression values. Data must have no header, and the first column must be the HGNC gene symbol, and the second column the t-stats."),
+                tags$p("Alternatively, upload your own table with differential expression values. Data must have a header, and the first column must be the HGNC gene symbol, and the second column the t-stats."),
                 fileInput("user_file_expr", "Upload your file:", accept = c(".txt")),
                 uiOutput("file_warning_expr"),
                 uiOutput("user_file_options")
@@ -333,7 +348,7 @@ ui <- fluidPage(
             
             # --- Explore Mode (default mode) ---
             conditionalPanel(
-              condition = "input.expr_mode == 'Explore Mode' && input.expr_dataset != 'Similar RBPs'",
+              condition = "input.expr_mode == 'Explore' && input.expr_dataset != 'Similar RBPs'",
               # --- Warning message ---
               div(
                 "⚠ Please press reset after every plot!",
@@ -345,27 +360,9 @@ ui <- fluidPage(
                color: #856404;"
               ),
               
-              # --- Gene search plot (appear at top when searched) ---
-              conditionalPanel(
-                condition = "input.search_btn_gene > 0",
-                fluidRow(
-                  column(
-                    width = 12,
-                    plotOutput("expr_gene_plot", height = "600px")
-                  )
-                )
-              ),
-              
-              # --- Hallmark gene set search plot (appear at top when searched) ---
-              conditionalPanel(
-                condition = "input.search_btn_hallmark > 0",
-                fluidRow(
-                  column(
-                    width = 12,
-                    plotOutput("expr_hallmark_plot", height = "600px")
-                  )
-                )
-              ),
+              # --- Top panel: shows gene OR hallmark plot, whichever was searched most recently ---
+              # (server-controlled visibility, see expr_top_panel_ui in server)
+              uiOutput("expr_top_panel_ui"),
               
               # --- Default RBP plots ---
               fluidRow(
@@ -388,7 +385,7 @@ ui <- fluidPage(
             
             # --- Similar RBPs (Explore Mode, special layout) ---
             conditionalPanel(
-              condition = "input.expr_mode == 'Explore Mode' && input.expr_dataset == 'Similar RBPs'",
+              condition = "input.expr_mode == 'Explore' && input.expr_dataset == 'Similar RBPs'",
               div(
                 "⚠ Please press reset after every plot!",
                 style = "border: 2px solid #f0ad4e;
@@ -404,7 +401,7 @@ ui <- fluidPage(
             
             # --- Discovery Mode ---
             conditionalPanel(
-              condition = "input.expr_mode == 'Discovery Mode'",
+              condition = "input.expr_mode == 'Discovery'",
               div(
                 "⚠ Please press reset after every plot!",
                 style = "border: 2px solid #f0ad4e;
@@ -431,10 +428,10 @@ ui <- fluidPage(
           column(
             width = 3,
             wellPanel(
-              radioButtons("splice_mode", "Select mode:", choices = c("Explore Mode", "Discovery Mode"), selected = "Explore Mode"),
+              radioButtons("splice_mode", "Select mode:", choices = c("Explore", "Discovery"), selected = "Explore"),
               
               conditionalPanel(
-                condition = "input.splice_mode == 'Explore Mode'",
+                condition = "input.splice_mode == 'Explore'",
                 selectInput(
                   "splice_dataset", "Select option:",
                   choices = c("Both Cells", "K562", "HEPG2", "Similar RBPs")
@@ -534,7 +531,7 @@ ui <- fluidPage(
                 )
               ),
               conditionalPanel(
-                condition = "input.splice_mode == 'Discovery Mode'",
+                condition = "input.splice_mode == 'Discovery'",
                 hr(),
                 tags$p(
                   list(
@@ -554,7 +551,7 @@ ui <- fluidPage(
                 
                 # ---- eCLIPSE binding map section (appears after successful upload) ----
                 conditionalPanel(
-                  condition = "input.splice_mode == 'Discovery Mode'",
+                  condition = "input.splice_mode == 'Discovery'",
                   uiOutput("eclipse_raw_options_ui")
                 )
               )
@@ -568,7 +565,7 @@ ui <- fluidPage(
             
             # --- Explore Mode (default mode, NOT Similar RBPs) ---
             conditionalPanel(
-              condition = "input.splice_mode == 'Explore Mode' && input.splice_dataset != 'Similar RBPs'",
+              condition = "input.splice_mode == 'Explore' && input.splice_dataset != 'Similar RBPs'",
               # --- Warning message ---
               div(
                 "⚠ Please press reset after every plot!",
@@ -581,6 +578,9 @@ ui <- fluidPage(
                margin-bottom: 10px;"
               ),
               
+              # --- Top panel: Event ID plot, shown when searched (server-controlled) ---
+              uiOutput("splice_top_panel_ui"),
+              
               # --- Default Explore-Mode Plots ---
               fluidRow(
                 column(width = 6, plotOutput("violin_splice_plot", height = "400px")),
@@ -589,15 +589,12 @@ ui <- fluidPage(
               fluidRow(
                 column(width = 6, plotlyOutput("plot_splice_volcano", height = "450px")),
                 column(width = 6, DTOutput("splice_volcano_table"))
-              ),
-              fluidRow(
-                column(width = 12, plotOutput("heatmap_splicing_dpsi", height = "600px"))
               )
             ),
             
             # --- Explore Mode: Similar RBPs ---
             conditionalPanel(
-              condition = "input.splice_mode == 'Explore Mode' && input.splice_dataset == 'Similar RBPs'",
+              condition = "input.splice_mode == 'Explore' && input.splice_dataset == 'Similar RBPs'",
               div(
                 "⚠ Please press reset after every plot!",
                 style = "border: 2px solid #f0ad4e;
@@ -613,7 +610,7 @@ ui <- fluidPage(
             
             # --- Discovery Mode ---
             conditionalPanel(
-              condition = "input.splice_mode == 'Discovery Mode'",
+              condition = "input.splice_mode == 'Discovery'",
               div(
                 "⚠ Please press reset after every plot!",
                 style = "border: 2px solid #f0ad4e;
@@ -651,17 +648,17 @@ ui <- fluidPage(
                            selected = "Exon Skipping"),
               
               radioButtons("binding_mode", "Select mode:",
-                           choices = c("Explore Mode", "Discovery Mode"),
-                           selected = "Explore Mode"),
+                           choices = c("Explore", "Discovery"),
+                           selected = "Explore"),
               
               # -------------------------
               # EXPLORE MODE
               # -------------------------
               conditionalPanel(
-                condition = "input.binding_mode == 'Explore Mode'",
+                condition = "input.binding_mode == 'Explore'",
                 
                 selectInput("binding_dataset", "Select option:",
-                            choices = c("Both Cells", "K562", "HEPG2", "Similar RBPs")),
+                            choices = c("Both Cells", "K562", "HEPG2", "Similar Profiles")),
                 
                 div(
                   style = "display: flex; align-items: center; margin-top: 15px;",
@@ -681,7 +678,8 @@ ui <- fluidPage(
                 
                 # Show only when not "Similar RBPs"
                 conditionalPanel(
-                  condition = "input.binding_dataset != 'Similar RBPs'",
+                  condition = "input.binding_dataset != 'Similar Profiles'",
+                  
                   
                   hr(),
                   tags$h5("eCLIPSE Binding Map"),
@@ -701,7 +699,7 @@ ui <- fluidPage(
               # DISCOVERY MODE
               # -------------------------
               conditionalPanel(
-                condition = "input.binding_mode == 'Discovery Mode'",
+                condition = "input.binding_mode == 'Discovery'",
                 hr(),
                 tags$p(
                   list(
@@ -717,7 +715,8 @@ ui <- fluidPage(
                 ),
                 fileInput("user_file_binding", "Upload your file:", accept = c(".txt")),
                 uiOutput("file_warning_binding"),
-                uiOutput("binding_discovery_options")
+                uiOutput("binding_discovery_options"),
+                uiOutput("binding_similar_profiles_options")
               )
             )
           ),
@@ -757,14 +756,15 @@ ui <- fluidPage(
             
             # Explore Mode plot
             conditionalPanel(
-              condition = "input.binding_mode == 'Explore Mode'",
+              condition = "input.binding_mode == 'Explore'",
               uiOutput("binding_plot_ui")
             ),
             
             # Discovery Mode plot
             conditionalPanel(
-              condition = "input.binding_mode == 'Discovery Mode'",
-              uiOutput("binding_discovery_plot_ui")
+              condition = "input.binding_mode == 'Discovery'",
+              uiOutput("binding_discovery_plot_ui"),
+              uiOutput("binding_similar_profiles_plot_ui")
             )
             
           )
@@ -777,23 +777,71 @@ ui <- fluidPage(
       tagList(fa("project-diagram", fill = "black", height = "1em"), " Network"),
       fluidPage(
         fluidRow(
+          # ── Left sidebar ──────────────────────────────────────────────────
           column(
             width = 3,
             wellPanel(
-              radioButtons("network_mode", "Select mode:", choices = c("Explore Mode", "Discovery Mode"), selected = "Explore Mode"),
+              # Mode — only Explore for now
+              radioButtons(
+                "network_mode",
+                "Select mode:",
+                choices  = c("Explore"),
+                selected = "Explore"
+              ),
+
+              # Cell line
+              radioButtons(
+                "network_cellline",
+                "Cell line:",
+                choices  = c("Both", "K562", "HEPG2"),
+                selected = "Both"
+              ),
+
+              hr(),
+
+              # Data layers (always visible checkboxes)
+              tags$h5("Data layers:", style = "font-weight: bold;"),
+              checkboxGroupInput(
+                "network_layers",
+                label    = NULL,
+                choices  = c("Expression", "Splicing", "Binding"),
+                selected = "Binding"
+              ),
+
+              # Binding sub-options — shown only when Binding is checked
               conditionalPanel(
-                condition = "input.network_mode == 'Explore Mode'",
-                selectInput("network_dataset", "Select option:", choices = c("Both Cells", "K562", "HEPG2", "Similar RBPs")),
-                div(
-                  style = "display: flex; align-items: center; margin-top: 15px;",
-                  selectizeInput("network_search", NULL, choices = NULL, multiple = FALSE, options = list(placeholder = "RBP"), width = "400px"),
-                  actionButton("search_btn", tagList(fa("search"), " Search"), class = "btn btn-primary", style = "margin-left: 10px; border-radius: 20px;"),
-                  actionButton("reset_btn", tagList(fa("redo"), " Reset"), class = "btn btn-secondary", style = "margin-left: 10px; border-radius: 20px;")
+                condition = "input.network_layers.indexOf('Binding') !== -1",
+                tags$h6("Event type:", style = "margin-top: 10px; font-weight: bold;"),
+                checkboxGroupInput(
+                  "network_binding_type",
+                  label    = NULL,
+                  choices  = c("Intron Retention", "Exon Skipping"),
+                  selected = c("Intron Retention", "Exon Skipping")
+                ),
+                tags$h6("Direction:", style = "margin-top: 8px; font-weight: bold;"),
+                checkboxGroupInput(
+                  "network_binding_dir",
+                  label    = NULL,
+                  choices  = c("Increased", "Decreased"),
+                  selected = c("Increased", "Decreased")
                 )
               )
             )
           ),
-          column(width = 9, tags$h3("Network Results"), tags$p("Network-related results will appear here."))
+
+          # ── Right plot area ───────────────────────────────────────────────
+          column(
+            width = 9,
+            tags$h3("RBP Similarity Network"),
+            tags$p(
+              "MDS of RBP binding-profile similarity. Each point is an RBP; distance reflects similarity of binding patterns around regulated splicing events.",
+              style = "color: #555; font-size: 13px; margin-bottom: 15px;"
+            ),
+            shinycssloaders::withSpinner(
+              plotOutput("network_mds_plot", height = "550px"),
+              type = 6
+            )
+          )
         )
       )
     )
@@ -858,8 +906,8 @@ server <- function(input, output, session) {
   })
   
   current_shrna_expr <- reactive({
-    req(input$splice_dataset)
-    switch(input$splice_dataset,
+    req(input$expr_dataset)
+    switch(input$expr_dataset,
            "K562"  = sh_effect_vector_K562,
            "HEPG2" = sh_effect_vector_HEPG2,
            sh_effect_vector)
@@ -877,6 +925,22 @@ server <- function(input, output, session) {
   # Reactive storage
   display_table <- reactiveVal(NULL)
   rbp_current   <- reactiveVal(NULL)
+  
+  # Tracks which panel (if any) should appear pinned at the top of the
+  # Expression Explore page: "gene", "hallmark", or NULL (none).
+  expr_top_panel <- reactiveVal(NULL)
+  
+  output$expr_top_panel_ui <- renderUI({
+    panel <- expr_top_panel()
+    if (is.null(panel)) return(NULL)
+    if (panel == "gene") {
+      fluidRow(column(width = 12, plotOutput("expr_gene_plot", height = "600px")))
+    } else if (panel == "hallmark") {
+      fluidRow(column(width = 12, plotOutput("expr_hallmark_plot", height = "600px")))
+    } else {
+      NULL
+    }
+  })
   
   # ---- Search bar population (Expression tab) ----
   observe({
@@ -953,12 +1017,28 @@ server <- function(input, output, session) {
     )
   })
   
+  # Tracks whether the Event ID panel should appear pinned at the top of the
+  # Splicing Explore page: "event" or NULL (none).
+  splice_top_panel <- reactiveVal(NULL)
+  
+  output$splice_top_panel_ui <- renderUI({
+    panel <- splice_top_panel()
+    if (is.null(panel)) return(NULL)
+    if (panel == "event") {
+      fluidRow(column(width = 12, plotOutput("heatmap_splicing_dpsi", height = "600px")))
+    } else {
+      NULL
+    }
+  })
+  
   # ---- Event ID Search button ----
   observeEvent(input$search_btn_event, {
     req(input$splice_search_event)
     event_id <- input$splice_search_event
     
     charm_obj <- current_charm_splice()
+    
+    splice_top_panel("event")
     
     output$heatmap_splicing_dpsi <- renderPlot({
       plot_event_dpsi_barplot(charm_obj, event_id)
@@ -974,7 +1054,7 @@ server <- function(input, output, session) {
     file_path <- input$user_file_expr$datapath
     
     df <- tryCatch(
-      read.table(file_path, header = FALSE, sep = "\t", stringsAsFactors = FALSE),
+      read.table(file_path, header = TRUE, sep = "\t", stringsAsFactors = FALSE),
       error = function(e) NULL
     )
     
@@ -1321,7 +1401,7 @@ server <- function(input, output, session) {
       
       numericInput(
         "eclipse_raw_psi_thresh",
-        "ΔPSI threshold:",
+        "dPSI threshold:",
         value = 0.05, min = 0, max = 1, step = 0.01
       ),
       
@@ -1373,7 +1453,7 @@ server <- function(input, output, session) {
       return(invisible(NULL))
     }
     
-    # Calculate average ΔPSI by type (safe)
+    # Calculate average dPSI by type (safe)
     avg_vals <- dpsi_table %>%
       group_by(Type) %>%
       summarise(mean_dPSI = mean(dPSI, na.rm = TRUE)) %>%
@@ -1382,14 +1462,14 @@ server <- function(input, output, session) {
     # Build subtitle text safely (handle missing types)
     mean_ES <- ifelse("ES" %in% names(avg_vals), sprintf("%.3f", avg_vals$ES), "NA")
     mean_IR <- ifelse("IR" %in% names(avg_vals), sprintf("%.3f", avg_vals$IR), "NA")
-    subtitle_text <- paste0("Mean ΔPSI — ES: ", mean_ES, " | IR: ", mean_IR)
+    subtitle_text <- paste0("Mean dPSI — ES: ", mean_ES, " | IR: ", mean_IR)
     
     # Violin + jitter plot similar to your function
     ggplot(dpsi_table, aes(x = Type, y = dPSI)) +
       geom_jitter(width = 0.2, alpha = 0.6, size = 1.5) +
       geom_violin(alpha = .7) +
       theme_minimal() +
-      ylab("ΔPSI (shRNA - CTRL)") +
+      ylab("dPSI (shRNA - CTRL)") +
       xlab("Event Type") +
       ggtitle("Uploaded data", subtitle = subtitle_text) +
       coord_flip() +
@@ -1766,6 +1846,9 @@ server <- function(input, output, session) {
     rbp_sel <- input$expr_search_rbp
     rbp_current(rbp_sel)
     
+    # Searching the main RBP plot brings it back to the top: hide gene/hallmark panel
+    expr_top_panel(NULL)
+    
     charm_obj <- current_charm_expr()
     shrna_obj <- current_shrna_expr()
     
@@ -1833,6 +1916,8 @@ server <- function(input, output, session) {
     gene <- input$expr_search_gene
     charm_obj <- current_charm_expr()
     
+    expr_top_panel("gene")
+    
     output$expr_gene_plot <- renderPlot({
       validate(
         need(gene %in% unlist(lapply(charm_obj, function(x) rownames(x$DEGenes))),
@@ -1849,6 +1934,8 @@ server <- function(input, output, session) {
     req(input$expr_search_hallmark)
     geneset <- input$expr_search_hallmark
     charm_obj <- current_charm_expr()
+    
+    expr_top_panel("hallmark")
     
     output$expr_hallmark_plot <- renderPlot({
       validate(
@@ -1960,6 +2047,9 @@ server <- function(input, output, session) {
     rbp_sel <- input$splice_search
     rbp_current(rbp_sel)
     
+    # Searching the main RBP plot brings it back to the top: hide Event ID panel
+    splice_top_panel(NULL)
+    
     charm_obj <- current_charm_splice()
     shrna_obj <- current_shrna_splice()
     
@@ -2018,7 +2108,7 @@ server <- function(input, output, session) {
         scale_color_manual(values = c("None"="#CCCCCC","RBP"="#A10702","Selected"="#008057")) +
         theme_bw() +
         theme(legend.position = "none") +
-        labs(title = paste("Volcano Plot:", rbp_sel), x = "ΔPSI (shRNA - CTRL)", y = "PDiff")
+        labs(title = paste("Volcano Plot:", rbp_sel), x = "dPSI (shRNA - CTRL)", y = "PDiff")
       ggplotly(p, tooltip = "key", source = "splice_volcano") %>%
         event_register("plotly_click")
     }
@@ -2177,10 +2267,12 @@ server <- function(input, output, session) {
   })
   observeEvent(input$reset_btn_gene, {
     output$expr_gene_plot <- renderPlot(NULL)
+    if (identical(expr_top_panel(), "gene")) expr_top_panel(NULL)
   })
   
   observeEvent(input$reset_btn_hallmark, {
     output$expr_hallmark_plot <- renderPlot(NULL)
+    if (identical(expr_top_panel(), "hallmark")) expr_top_panel(NULL)
   })
   # ---- Reset buttons for Splicing tab ----
   
@@ -2257,7 +2349,7 @@ server <- function(input, output, session) {
     selectizeInput(
       "binding_target",
       "Target(s):",
-      choices = c("All", names(data[[rbp]])),
+      choices = c("All", sort(names(data[[rbp]]))),
       multiple = TRUE,
       options = list(placeholder = "Select one or more targets, or 'All'")
     )
@@ -2368,31 +2460,55 @@ server <- function(input, output, session) {
   # Helper: pick dPSI per target
   # -------------------------------
   resolve_dpsi_key <- function(dpsi_names, choice){
-    if (is.null(dpsi_names) || length(dpsi_names) == 0) return(NULL)
+    if (is.null(dpsi_names) || length(dpsi_names) == 0 || is.null(choice)) return(NULL)
+    
+    # ---- 1. Exact match (this covers single-target mode, where `choice` IS
+    #         one of the real keys, e.g. "0.02 (maximised pvaldec)") ----
+    if (choice %in% dpsi_names) return(list(key = choice, fallback = FALSE))
+    
     choice_lc <- tolower(choice)
     
-    # Numeric options: match names that start with 0.05 or 0.1
-    if (choice %in% c("0.05", "0.1")) {
-      hits <- dpsi_names[grepl(paste0("^", choice, "( |\\()"), dpsi_names)]
-      if (length(hits) > 0) return(hits[1])
+    # ---- 2. Plain numeric threshold choice, e.g. "0.05" or "0.1" ----
+    # Keys look like "0.05 (default)" or "0.10 (default)", or even
+    # "0.10 (maximised oddsratinc)" when that exact number happens to also be
+    # the maximising value for this pair. Data always encodes thresholds with
+    # two decimal places (e.g. "0.10", not "0.1"), but the UI choice may not,
+    # so compare parsed numeric values rather than raw strings.
+    if (grepl("^[0-9.]+$", choice)) {
+      choice_num <- suppressWarnings(as.numeric(choice))
+      if (!is.na(choice_num)) {
+        key_leading_num <- suppressWarnings(as.numeric(sub("^([0-9.]+).*", "\\1", dpsi_names)))
+        hits <- dpsi_names[!is.na(key_leading_num) & key_leading_num == choice_num]
+        if (length(hits) > 0) return(list(key = hits[1], fallback = FALSE))
+      }
+      return(NULL)  # that exact threshold isn't available for this target
     }
     
-    # Maximised options
-    if (grepl("maximised", choice_lc)) {
-      # determine direction
-      direction <- ifelse(grepl("inc$", choice_lc), "inc", "dec")
-      hits <- dpsi_names[grepl(direction, tolower(dpsi_names))]
-      if (length(hits) > 0) return(hits[1])
+    # ---- 3. "maximised <metric><direction>" choice, e.g. "maximised pvaldec" ----
+    # The metric+direction suffix (oddsratinc/oddsratdec/pvalinc/pvaldec) must
+    # match exactly -- the leading number is target-specific and not part of
+    # the match (that's the whole point of "maximised").
+    if (grepl("^maximised", choice_lc)) {
+      suffix <- trimws(sub("^maximised", "", choice_lc))  # e.g. "pvaldec", "oddsratinc"
+      # Match keys containing "maximised <suffix>" specifically (parenthesised or not)
+      pattern <- paste0("maximised\\s+", suffix, "\\b")
+      hits <- dpsi_names[grepl(pattern, tolower(dpsi_names))]
+      if (length(hits) > 0) return(list(key = hits[1], fallback = FALSE))
+      
+      # Fallback: this target has no "maximised <suffix>" key -- use its 0.10
+      # entry instead (data encodes thresholds as "0.10", not "0.1"), regardless
+      # of whether that entry happens to also be labeled as maximising a
+      # *different* metric for this target.
+      key_leading_num <- suppressWarnings(as.numeric(sub("^([0-9.]+).*", "\\1", dpsi_names)))
+      hits_01 <- dpsi_names[!is.na(key_leading_num) & key_leading_num == 0.1]
+      if (length(hits_01) > 0) return(list(key = hits_01[1], fallback = TRUE))
+      return(NULL)  # neither the maximised key nor a 0.1 fallback is available
     }
     
-    # Fallback order: pick first numeric or first available
-    hits_005 <- dpsi_names[grepl("^0\\.05( |\\()", dpsi_names)]
-    if (length(hits_005) > 0) return(hits_005[1])
-    
-    hits_01  <- dpsi_names[grepl("^0\\.1( |\\()", dpsi_names)]
-    if (length(hits_01) > 0) return(hits_01[1])
-    
-    dpsi_names[1]
+    # ---- 4. Unrecognised choice: no safe fallback: 4 maximised options and the two
+    #         numeric ones are mutually exclusive categories, so silently picking a
+    #         different one would be misleading. ----
+    NULL
   }
   
   # -------------------------------
@@ -2424,12 +2540,35 @@ server <- function(input, output, session) {
     # -----------------------------
     inc_list <- list()
     dec_list <- list()
+    fallback_targets <- character(0)  # targets that fell back to 0.1 (no maximised key)
+    
+    # Totals depend only on the shRNA (rbp) + dPSI threshold, not on target,
+    # so we grab them once from the first target that has valid data (see the
+    # "maximised" handling below for why that threshold isn't always `key`).
+    inc_total <- NA
+    maint_total <- NA
+    dec_total <- NA
+    totals_captured <- FALSE
+    
+    get_value <- function(df) {
+      if (is.null(df) || nrow(df) == 0) return(NA)
+      if ("Value" %in% names(df)) return(df$Value[1])
+      as.numeric(df[1,1])
+    }
+    
+    # For "maximised" dPSI choices, the threshold (and therefore the totals)
+    # genuinely differs per target, so there is no single shared total. In
+    # that case we always report the totals from the 0.1 threshold instead,
+    # which is target-independent and stable.
+    is_maximised_choice <- grepl("^maximised", tolower(dpsi_choice))
     
     for (tgt in targets) {
       if (is.null(data[[rbp]][[tgt]])) next
       dpsi_names <- names(data[[rbp]][[tgt]])
-      key <- resolve_dpsi_key(dpsi_names, dpsi_choice)
-      if (is.null(key)) next
+      resolved <- resolve_dpsi_key(dpsi_names, dpsi_choice)
+      if (is.null(resolved)) next
+      key <- resolved$key
+      if (isTRUE(resolved$fallback)) fallback_targets <- c(fallback_targets, tgt)
       
       if (metric == "FDR") {
         inc_raw <- tryCatch(data[[rbp]][[tgt]][[key]]$pval$pvalinc, error = function(e) NULL)
@@ -2444,6 +2583,32 @@ server <- function(input, output, session) {
       
       if (!is.null(inc_vec) && !all(is.na(inc_vec))) inc_list[[tgt]] <- inc_vec
       if (!is.null(dec_vec) && !all(is.na(dec_vec))) dec_list[[tgt]] <- dec_vec
+      
+      # Capture the shRNA-level totals once (same for every target/dPSI key).
+      # For "maximised" choices, always pull the totals from the 0.1 key
+      # specifically, since the actual maximised threshold is target-specific
+      # and there's no single shared total across targets in that case.
+      if (!totals_captured) {
+        totals_key <- key
+        if (is_maximised_choice) {
+          totals_resolved <- resolve_dpsi_key(dpsi_names, "0.1")
+          if (!is.null(totals_resolved)) totals_key <- totals_resolved$key else totals_key <- NULL
+        }
+        if (!is.null(totals_key)) {
+          this_data_tot <- tryCatch(data[[rbp]][[tgt]][[totals_key]], error = function(e) NULL)
+          if (!is.null(this_data_tot)) {
+            inc_total_tmp   <- get_value(this_data_tot$raw$TotalIncreasedEvents)
+            maint_total_tmp <- get_value(this_data_tot$raw$TotalMaintainedEvents)
+            dec_total_tmp   <- get_value(this_data_tot$raw$TotalDecreasedEvents)
+            if (!is.na(inc_total_tmp) || !is.na(maint_total_tmp) || !is.na(dec_total_tmp)) {
+              inc_total   <- inc_total_tmp
+              maint_total <- maint_total_tmp
+              dec_total   <- dec_total_tmp
+              totals_captured <- TRUE
+            }
+          }
+        }
+      }
     }
     
     if (length(inc_list) == 0 && length(dec_list) == 0) {
@@ -2452,6 +2617,17 @@ server <- function(input, output, session) {
     
     inc_mat <- pad_and_rbind(inc_list)
     dec_mat <- pad_and_rbind(dec_list)
+    
+    # Mark fallback targets in row names with an asterisk so it's visible on the
+    # heatmap y-axis (no "maximised" key was available; used 0.1 instead)
+    mark_fallback <- function(mat) {
+      if (is.null(mat)) return(NULL)
+      rn <- rownames(mat)
+      rownames(mat) <- ifelse(rn %in% fallback_targets, paste0(rn, " *"), rn)
+      mat
+    }
+    inc_mat <- mark_fallback(inc_mat)
+    dec_mat <- mark_fallback(dec_mat)
     
     # -----------------------------
     # 3. Determine color limits
@@ -2564,12 +2740,58 @@ server <- function(input, output, session) {
     heat_dec_plot <- plot_matrix(dec_mat, "Decreased Events", schem)
     
     # -----------------------------
+    # 6b. Labels row (shRNA-level totals, shared across all targets)
+    # -----------------------------
+    inc_color   <- "#de425b"
+    dec_color   <- "#769fca"
+    maint_color <- "black"
+    
+    labels_plot <- ggplot() +
+      annotate("text", x = 1, y = 0,
+               label = paste0("Increased: ", inc_total, "\n"),
+               color = inc_color, size = 5, fontface = "bold", hjust = -0.75) +
+      annotate("text", x = 1, y = 0,
+               label = paste0("Maintained: ", maint_total, "\n"),
+               color = maint_color, size = 5, fontface = "bold", hjust = 0.5) +
+      annotate("text", x = 1, y = 0,
+               label = paste0("Decreased: ", dec_total, "\n"),
+               color = dec_color, size = 5, fontface = "bold", hjust = 1.75) +
+      theme_void() +
+      theme(plot.margin = margin(t = 0, r = 0, b = 0, l = 0))
+    
+    # -----------------------------
     # 7. Combine side-by-side
     # -----------------------------
+    heat_row <- NULL
     if (!is.null(heat_dec_plot) && !is.null(heat_inc_plot)) {
-      return(ggpubr::ggarrange(heat_dec_plot, heat_inc_plot, ncol=2, widths=c(0.5,0.5)))
-    } else if (!is.null(heat_dec_plot)) return(heat_dec_plot)
-    else if (!is.null(heat_inc_plot)) return(heat_inc_plot)
+      heat_row <- ggpubr::ggarrange(heat_dec_plot, heat_inc_plot, ncol=2, widths=c(0.5,0.5))
+    } else if (!is.null(heat_dec_plot)) {
+      heat_row <- heat_dec_plot
+    } else if (!is.null(heat_inc_plot)) {
+      heat_row <- heat_inc_plot
+    }
+    
+    if (!is.null(heat_row)) {
+      footnote_lines <- character(0)
+      if (is_maximised_choice) {
+        footnote_lines <- c(footnote_lines,
+          "Increased/Maintained/Decreased totals above use the 0.1 threshold (no single shared total exists across targets for 'maximised' choices).")
+      }
+      if (length(fallback_targets) > 0) {
+        footnote_lines <- c(footnote_lines,
+          "* No 'maximised' dPSI value available for this target — showing its 0.1 threshold instead.")
+      }
+      
+      if (length(footnote_lines) > 0) {
+        footnote <- ggplot() +
+          annotate("text", x = 0.5, y = 0.5,
+                   label = paste(footnote_lines, collapse = "\n"),
+                   size = 4, fontface = "italic", hjust = 0.5) +
+          theme_void()
+        return(ggpubr::ggarrange(labels_plot, heat_row, footnote, ncol = 1, heights = c(0.05, 0.88, 0.07)))
+      }
+      return(ggpubr::ggarrange(labels_plot, heat_row, ncol = 1, heights = c(0.06, 0.94)))
+    }
     
     ggplot() + theme_void() + ggtitle("No heatmap data")
   }
@@ -2602,15 +2824,28 @@ server <- function(input, output, session) {
       if (length(targets) == 1) {
         # Single target: regular eCLIPSE plot
         dpsi_names <- names(data[[rbp]][[targets]])
-        dpsi_key <- resolve_dpsi_key(dpsi_names, input$binding_dpsi)
+        dpsi_resolved <- resolve_dpsi_key(dpsi_names, input$binding_dpsi)
+        if (is.null(dpsi_resolved)) {
+          return(ggplot() +
+                   annotate("text", x = 0.5, y = 0.5,
+                            label = paste0("dPSI option '", input$binding_dpsi,
+                                           "' is not available for ", rbp, " - ", targets, "."),
+                            size = 6, hjust = 0.5) +
+                   theme_void())
+        }
+        dpsi_key   <- dpsi_resolved$key
         dpsi_value <- suppressWarnings(as.numeric(sub(" .*", "", dpsi_key)))
+        plot_title <- paste(rbp, targets)
+        if (isTRUE(dpsi_resolved$fallback)) {
+          plot_title <- paste0(plot_title, " [* fell back to 0.1, no maximised value available]")
+        }
         p <- eCLIPSE_full(
           bindingvalues_nested = data,
           rnaBP = rbp,
           target = targets,
           dPSI = dpsi_value,
           metric = metric,
-          title = paste(rbp, targets),
+          title = plot_title,
           schematic_exon_skipping = schematic_exon_skipping,
           schematic_intron_retention = schematic_intron_retention
         )
@@ -2631,6 +2866,27 @@ server <- function(input, output, session) {
     })
   })
   
+  # ---- Helper reactive: pick the correct binding similarity object list ----
+  binding_sim_objects <- reactive({
+    req(input$binding_eventtype)
+    is_IR <- grepl("Intron Retention", input$binding_eventtype, ignore.case = TRUE)
+    prefix <- if (is_IR) "IR" else "ES"
+    
+    list(
+      "Both Cells" = list(
+        inc = get(paste0("similar_binding_", prefix, "_both_inc")),
+        dec = get(paste0("similar_binding_", prefix, "_both_dec"))
+      ),
+      "K562" = list(
+        inc = get(paste0("similar_binding_", prefix, "_K562_inc")),
+        dec = get(paste0("similar_binding_", prefix, "_K562_dec"))
+      ),
+      "HEPG2" = list(
+        inc = get(paste0("similar_binding_", prefix, "_HEPG2_inc")),
+        dec = get(paste0("similar_binding_", prefix, "_HEPG2_dec"))
+      )
+    )
+  })
   
   # -------------------------------
   # Render plot
@@ -2676,6 +2932,304 @@ server <- function(input, output, session) {
   })
   
   
+  output$binding_similar_profiles_options <- renderUI({
+    if (!upload_ok_binding()) return(NULL)
+    
+    # Determine available profile IDs from the inc object (Both Cells, current event type)
+    sim_objs <- binding_sim_objects()
+    all_profile_ids <- rownames(sim_objs[["Both Cells"]]$inc$cor_matrix)
+    if (is.null(all_profile_ids)) all_profile_ids <- character(0)
+    
+    tagList(
+      hr(),
+      tags$h5("Similar Profiles"),
+      tags$p(
+        "Find RBP–Target binding profiles that are most similar to a chosen query profile.",
+        style = "font-size: 12px; color: #666; margin-top: -5px;"
+      ),
+      
+      # Query profile selector
+      selectizeInput(
+        "binding_sim_query_id",
+        "Query profile (RBP__Target):",
+        choices  = all_profile_ids,
+        multiple = FALSE,
+        options  = list(placeholder = "e.g. HNRNPC__HsaEX0001234")
+      ),
+      
+      # Compare with specific profiles (optional)
+      selectizeInput(
+        "binding_sim_compare",
+        "Compare with specific profiles (optional):",
+        choices  = all_profile_ids,
+        multiple = TRUE,
+        options  = list(placeholder = "Select one or more profiles")
+      ),
+      
+      numericInput(
+        "binding_sim_topN",
+        "Show top N most similar profiles (optional):",
+        value = NA, min = 1
+      ),
+      helpText("Tip: selecting a number here takes precedence over the two below."),
+      numericInput(
+        "binding_sim_n_close",
+        "Show top N closest profiles (optional):",
+        value = NA, min = 1
+      ),
+      numericInput(
+        "binding_sim_n_far",
+        "Show top N most dissimilar profiles (optional):",
+        value = NA, min = 1
+      ),
+      
+      div(
+        style = "display: flex; align-items: center; margin-top: 15px;",
+        actionButton(
+          "binding_sim_plot_btn",
+          tagList(fa("chart-line"), " Plot"),
+          class = "btn btn-primary",
+          style = "margin-right: 10px; border-radius: 20px;"
+        ),
+        actionButton(
+          "binding_sim_reset_btn",
+          tagList(fa("redo"), " Reset"),
+          class = "btn btn-secondary",
+          style = "border-radius: 20px;"
+        )
+      )
+    )
+  })
+  
+  
+  # ─────────────────────────────────────────────────────────────────────────────
+  # PATCH 8 — SERVER: plot button for Similar Profiles (6 plots)
+  # ─────────────────────────────────────────────────────────────────────────────
+  
+  observeEvent(input$binding_sim_plot_btn, {
+    req(upload_ok_binding(),
+        input$binding_sim_query_id,
+        input$binding_eventtype)
+    
+    query_id    <- input$binding_sim_query_id
+    compare_ids <- if (length(input$binding_sim_compare) > 0) input$binding_sim_compare else NULL
+    topN        <- input$binding_sim_topN
+    n_close     <- input$binding_sim_n_close
+    n_far       <- input$binding_sim_n_far
+    
+    sim_objs <- binding_sim_objects()
+    dataset_names <- c("Both Cells", "K562", "HEPG2")
+    directions    <- c("inc", "dec")
+    
+    output$binding_similar_profiles_plot_ui <- renderUI({
+      tagList(
+        hr(),
+        tags$h4("Similar Profiles Results",
+                style = "font-weight:bold; color:#A10702; margin-bottom:15px;"),
+        
+        # Row 1 — Both Cells
+        fluidRow(
+          column(6,
+                 tags$h5("Both Cells — Increased Events", style = "text-align:center;"),
+                 shinycssloaders::withSpinner(
+                   plotOutput("binding_sim_plot_both_inc", height = "400px"), type = 6)
+          ),
+          column(6,
+                 tags$h5("Both Cells — Decreased Events", style = "text-align:center;"),
+                 shinycssloaders::withSpinner(
+                   plotOutput("binding_sim_plot_both_dec", height = "400px"), type = 6)
+          )
+        ),
+        
+        # Row 2 — K562
+        fluidRow(
+          column(6,
+                 tags$h5("K562 — Increased Events", style = "text-align:center;"),
+                 shinycssloaders::withSpinner(
+                   plotOutput("binding_sim_plot_K562_inc", height = "400px"), type = 6)
+          ),
+          column(6,
+                 tags$h5("K562 — Decreased Events", style = "text-align:center;"),
+                 shinycssloaders::withSpinner(
+                   plotOutput("binding_sim_plot_K562_dec", height = "400px"), type = 6)
+          )
+        ),
+        
+        # Row 3 — HEPG2
+        fluidRow(
+          column(6,
+                 tags$h5("HEPG2 — Increased Events", style = "text-align:center;"),
+                 shinycssloaders::withSpinner(
+                   plotOutput("binding_sim_plot_HEPG2_inc", height = "400px"), type = 6)
+          ),
+          column(6,
+                 tags$h5("HEPG2 — Decreased Events", style = "text-align:center;"),
+                 shinycssloaders::withSpinner(
+                   plotOutput("binding_sim_plot_HEPG2_dec", height = "400px"), type = 6)
+          )
+        )
+      )
+    })
+    
+    # Render each of the 6 plots
+    for (ds in dataset_names) {
+      for (dir in directions) {
+        local({
+          ds_local  <- ds
+          dir_local <- dir
+          plot_id   <- paste0("binding_sim_plot_", gsub(" ", "", ds_local), "_", dir_local)
+          
+          output[[plot_id]] <- renderPlot({
+            sim_obj <- sim_objs[[ds_local]][[dir_local]]
+            res <- binding_profile_correl(
+              sim_obj       = sim_obj,
+              query_id      = query_id,
+              top_n         = if (!is.na(topN))    topN    else NULL,
+              n_close       = if (!is.na(n_close)) n_close else NULL,
+              n_far         = if (!is.na(n_far))   n_far   else NULL,
+              other_ids     = compare_ids,
+              direction     = dir_local,
+              dataset_label = ds_local
+            )
+            res$heatmap
+          })
+        })
+      }
+    }
+  })
+  
+  
+  # ─────────────────────────────────────────────────────────────────────────────
+  # PATCH 9 — SERVER: reset button for Similar Profiles
+  # ─────────────────────────────────────────────────────────────────────────────
+  
+  observeEvent(input$binding_sim_reset_btn, {
+    output$binding_similar_profiles_plot_ui <- renderUI(NULL)
+    updateSelectizeInput(session, "binding_sim_query_id", selected = "")
+    updateSelectizeInput(session, "binding_sim_compare",  selected = "")
+    updateNumericInput(session,   "binding_sim_topN",     value    = NA)
+    updateNumericInput(session,   "binding_sim_n_close",  value    = NA)
+    updateNumericInput(session,   "binding_sim_n_far",    value    = NA)
+  })
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # NETWORK TAB — MDS of RBP binding-profile similarity
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  output$network_mds_plot <- renderPlot({
+    # Gather selected binding objects based on cell line, event type and direction
+    cell    <- input$network_cellline
+    btypes  <- input$network_binding_type
+    dirs    <- input$network_binding_dir
+
+    if (is.null(btypes) || length(btypes) == 0 ||
+        is.null(dirs)   || length(dirs)   == 0) {
+      return(ggplot() +
+               annotate("text", x = 0.5, y = 0.5,
+                        label = "Please select at least one event type and direction.",
+                        size = 7, hjust = 0.5) +
+               theme_void())
+    }
+
+    # Map UI selections to object suffixes
+    cell_key <- switch(cell, "Both" = "both", "K562" = "K562", "HEPG2" = "HEPG2")
+    type_keys <- c()
+    if ("Exon Skipping"     %in% btypes) type_keys <- c(type_keys, "ES")
+    if ("Intron Retention"  %in% btypes) type_keys <- c(type_keys, "IR")
+    dir_keys <- c()
+    if ("Increased" %in% dirs) dir_keys <- c(dir_keys, "inc")
+    if ("Decreased" %in% dirs) dir_keys <- c(dir_keys, "dec")
+
+    # Collect and merge mean_profiles matrices across all selected combinations
+    all_mats <- list()
+    for (tk in type_keys) {
+      for (dk in dir_keys) {
+        obj_name <- paste0("similar_binding_", tk, "_", cell_key, "_", dk)
+        obj <- tryCatch(get(obj_name), error = function(e) NULL)
+        if (!is.null(obj) && !is.null(obj$mean_profiles)) {
+          mat <- obj$mean_profiles
+          # Keep only RBP part of rowname (RBP__Target → RBP)
+          rbp_names <- sub("__.*", "", rownames(mat))
+          # Average profiles per RBP
+          unique_rbps <- unique(rbp_names)
+          agg <- do.call(rbind, lapply(unique_rbps, function(r) {
+            idx <- which(rbp_names == r)
+            colMeans(mat[idx, , drop = FALSE], na.rm = TRUE)
+          }))
+          rownames(agg) <- unique_rbps
+          label <- paste0(tk, "_", dk)
+          all_mats[[label]] <- agg
+        }
+      }
+    }
+
+    if (length(all_mats) == 0) {
+      return(ggplot() +
+               annotate("text", x = 0.5, y = 0.5,
+                        label = "No binding data available for the selected combination.",
+                        size = 7, hjust = 0.5) +
+               theme_void())
+    }
+
+    # Find common RBPs across all collected matrices
+    common_rbps <- Reduce(intersect, lapply(all_mats, rownames))
+    if (length(common_rbps) < 3) {
+      return(ggplot() +
+               annotate("text", x = 0.5, y = 0.5,
+                        label = paste0("Not enough common RBPs (", length(common_rbps),
+                                       ") to compute MDS. Try selecting more event types or directions."),
+                        size = 6, hjust = 0.5) +
+               theme_void())
+    }
+
+    # Compute a distance matrix per layer separately (profiles may have different
+    # numbers of columns, e.g. ES=1000, IR=500), then average the distance matrices.
+    dist_mats <- lapply(all_mats, function(m) {
+      sub_m <- m[common_rbps, , drop = FALSE]
+      as.matrix(dist(sub_m, method = "euclidean"))
+    })
+    dist_mat <- Reduce("+", dist_mats) / length(dist_mats)
+    dist_mat <- as.dist(dist_mat)
+    # Run MDS (cmdscale)
+    mds_fit  <- cmdscale(dist_mat, k = 2, eig = TRUE)
+    mds_df   <- data.frame(
+      RBP = common_rbps,
+      Dim1 = mds_fit$points[, 1],
+      Dim2 = mds_fit$points[, 2],
+      stringsAsFactors = FALSE
+    )
+
+    # Variance explained
+    eig_pos   <- pmax(mds_fit$eig, 0)
+    var_expl  <- round(eig_pos[1:2] / sum(eig_pos) * 100, 1)
+
+    # Plot
+    ggplot(mds_df, aes(x = Dim1, y = Dim2, label = RBP)) +
+      geom_point(size = 3, color = "#2c3e50", alpha = 0.75) +
+      ggrepel::geom_text_repel(
+        size         = 4,
+        fontface     = "bold",
+        max.overlaps = 20,
+        colour       = "#2c3e50"
+      ) +
+      labs(
+        title    = paste0("RBP Binding-Profile Similarity — MDS (", cell, ")"),
+        subtitle = paste0("Event types: ",  paste(btypes, collapse = " + "),
+                          "  |  Directions: ", paste(dirs, collapse = " + ")),
+        x        = paste0("MDS Dim 1 (", var_expl[1], "% variance)"),
+        y        = paste0("MDS Dim 2 (", var_expl[2], "% variance)")
+      ) +
+      theme_bw() +
+      theme(
+        plot.title    = element_text(hjust = 0.5, face = "bold", size = 16),
+        plot.subtitle = element_text(hjust = 0.5, size = 12, color = "#555555"),
+        text          = element_text(size = 13, face = "bold"),
+        panel.grid    = element_blank(),
+        axis.line     = element_line(colour = "black"),
+        panel.border  = element_blank()
+      )
+  })
+
 }
 
 

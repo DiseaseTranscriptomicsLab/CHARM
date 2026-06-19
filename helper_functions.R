@@ -26,6 +26,14 @@ violinplotter <- function(charmobj, rbp,
   logFC <- mean_expr$mean_exp[mean_expr$Group == rbp] -
     mean_expr$mean_exp[mean_expr$Group == "Control"]
 
+  # --- Compute Cohen's D ---
+  ctrl_vals <- df$Expression[df$Group == "Control"]
+  rbp_vals  <- df$Expression[df$Group == rbp]
+  pooled_sd <- sqrt((var(ctrl_vals, na.rm = TRUE) * (length(ctrl_vals) - 1) +
+                     var(rbp_vals,  na.rm = TRUE) * (length(rbp_vals)  - 1)) /
+                    (length(ctrl_vals) + length(rbp_vals) - 2))
+  cohens_d  <- if (pooled_sd == 0) NA_real_ else (mean(rbp_vals, na.rm = TRUE) - mean(ctrl_vals, na.rm = TRUE)) / pooled_sd
+
   # --- Build violin plot ---
   p <- ggplot(df, aes(x = Group, y = Expression, fill = Group)) +
 
@@ -41,7 +49,8 @@ violinplotter <- function(charmobj, rbp,
     # Titles and theme
     labs(
       title = paste("Expression of", rbp, "KD vs Control"),
-      subtitle = paste0("Log2 Fold-Change: ", round(logFC, 2))
+      subtitle = paste0("Log2 Fold-Change: ", round(logFC, 2),
+                        "  |  Cohen's D: ", round(cohens_d, 2))
     ) +
     theme_bw() +
     theme(
@@ -51,11 +60,11 @@ violinplotter <- function(charmobj, rbp,
       panel.background = element_blank(),
       plot.title = element_text(hjust = 0.5),
       plot.subtitle = element_text(hjust = 0.5),
-      text = element_text(size = 15, family = "Arial MS", face = "bold"),
+      text = element_text(size = 20, family = "Arial MS", face = "bold"),
       legend.position = "none"
     ) +
     xlab("") +
-    ylab("Expression") +
+    ylab("Expression (log2 CPM)") +
     ylim(0, max(df$Expression, na.rm = TRUE) * 1.05)
 
   return(p)
@@ -97,7 +106,7 @@ plot_shRNA_effect <- function(sh_effect_vector, rbp) {
       panel.background = element_blank(),
       plot.title = element_text(hjust = 0.5),
       plot.subtitle = element_text(hjust = 0.5),
-      text = element_text(size = 15, family = "Arial MS", face="bold")
+      text = element_text(size = 20, family = "Arial MS", face="bold")
     )
 }
 
@@ -196,7 +205,7 @@ plot_rbp_volcano <- function(charmobj, rbp, other_genes = NULL) {
           panel.border = element_blank(),
           panel.background = element_blank(),
           legend.position = "none",
-          text = element_text(size = 15, family = "Arial MS", face="bold")) +
+          text = element_text(size = 20, family = "Arial MS", face="bold")) +
     labs(title = paste("Volcano plot:", rbp), x = "Log2 Fold-Change", y = "B-statistic")
 
   return(list(top_table = top.table, volcano_plot = volcano_plot))
@@ -270,14 +279,14 @@ plot_gsea <- function(charmobj, rbp, thresh = 0.05,
            caption = paste0("padj < ", thresh)) +
       theme_bw(base_family = "Arial MS") +
       theme(
-        plot.title = element_text(hjust = 0.5, size = 18, face = "bold"),
-        plot.subtitle = element_text(hjust = 0.5, size = 14),
-        text = element_text(size = 14),
+        plot.title = element_text(hjust = 0.5, size = 17, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 13),
+        text = element_text(size = 17),
         legend.position = if (show_legend) "right" else "none"
       )+
       theme(legend.position = "none",
-            text = element_text(size = 14, family = "Arial MS", face = "bold"),
-            plot.title = element_text(hjust = 1, face = "bold"),
+            text = element_text(size = 17, family = "Arial MS", face = "bold"),
+            plot.title = element_text(hjust = 0.5, size = 17, face = "bold"),
             axis.title = element_text(face = "bold"),
             axis.text = element_text(face = "bold"),
             legend.title = element_text(face = "bold"),
@@ -490,7 +499,8 @@ exp_correl <- function(rbp_results, rbp, correl_num = NULL,
     top_cor <- rbind(top_pos, top_neg)
 
   } else {
-    stop("Please provide either other_rbps, correl_num, or n_pos/n_neg")
+    # Default: if nothing else was selected, show top 10 correlated RBPs
+    top_cor <- head(cor_results[order(-abs(cor_results$Correlation)), ], 10)
   }
 
   # --- Bar plot instead of heatmap ---
@@ -516,7 +526,7 @@ exp_correl <- function(rbp_results, rbp, correl_num = NULL,
     theme(
       plot.title = element_text(hjust = 0.5, face = "bold"),
       plot.subtitle = element_text(hjust = 0.5),
-      text = element_text(size = 12),
+      text = element_text(size = 17),
       legend.position = if (show_legend) "right" else "none",
       axis.text = element_text(face = "bold"),
       axis.title = element_text(face = "bold")
@@ -643,7 +653,8 @@ gsea_correl <- function(gsea_df, rbp, correl_num = NULL,
     top_neg <- if (n_neg_safe > 0) head(neg, n_neg_safe) else NULL
     top_cor <- dplyr::bind_rows(Filter(Negate(is.null), list(top_pos, top_neg)))
   } else {
-    stop("Please provide either other_rbps, correl_num, or n_pos/n_neg")
+    # Default: if nothing else was selected, show top 10 correlated RBPs
+    top_cor <- cor_results %>% dplyr::arrange(desc(abs(Correlation))) %>% dplyr::slice_head(n = 10)
   }
 
   # --- Handle empty top_cor ---
@@ -769,13 +780,14 @@ splicing_correl <- function(charmobj, rbp, correl_num = NULL,
     top_neg <- if (n_neg_val > 0) head(neg, n_neg_val) else NULL
     top_cor <- dplyr::bind_rows(Filter(Negate(is.null), list(top_pos, top_neg)))
   } else {
-    stop("Provide either other_rbps, correl_num, or (n_pos and/or n_neg)")
+    # Default: if nothing else was selected, show top 10 correlated RBPs
+    top_cor <- head(cor_results[order(-abs(cor_results$Correlation)), ], 10)
   }
 
   # --- Handle empty result gracefully ---
   if (nrow(top_cor) == 0) {
     p <- ggplot2::ggplot() +
-      ggplot2::labs(title = paste("No correlations available for", rbp_label, "(ΔPSI)")) +
+      ggplot2::labs(title = paste("No correlations available for", rbp_label, "(dPSI))")) +
       ggplot2::theme_minimal()
     return(list(correlation_table = cor_results, top_table = top_cor, heatmap = p))
   }
@@ -800,7 +812,7 @@ splicing_correl <- function(charmobj, rbp, correl_num = NULL,
     ) +
     ggplot2::labs(
       x = "RBP",
-      y = "Spearman correlation (ΔPSI)",
+      y = "Spearman correlation (dPSI)",
       title = paste("Splicing correlations with", rbp_label),
       subtitle = paste0("Reference: ", rbp_label),
       caption = "Method: Spearman"
@@ -838,7 +850,7 @@ violin_splice_plot <- function(Charmobj, rbp) {
     )) %>%
     filter(!is.na(Type))  # Clean up
 
-  # Calculate average ΔPSI by type
+  # Calculate average dPSI by type
   avg_vals <- dpsi_table %>%
     group_by(Type) %>%
     summarise(mean_dPSI = mean(dPSI, na.rm = TRUE)) %>%
@@ -846,7 +858,7 @@ violin_splice_plot <- function(Charmobj, rbp) {
 
   # Build subtitle text
   subtitle_text <- paste0(
-    "Mean ΔPSI — ES: ",
+    "Mean dPSI — ES: ",
     sprintf("%.3f", avg_vals$ES),
     " | IR: ",
     sprintf("%.3f", avg_vals$IR)
@@ -858,7 +870,7 @@ violin_splice_plot <- function(Charmobj, rbp) {
     # Violin plot
     geom_jitter(width = 0.2, alpha = 0.6, size = 1.5) +geom_violin(alpha=.7) +
     theme_minimal() +
-    ylab("ΔPSI (shRNA - CTRL)") +
+    ylab("dPSI (shRNA - CTRL)") +
     xlab("Event Type") +
     ggtitle(paste0(rbp), subtitle = subtitle_text) +
     coord_flip() +
@@ -886,7 +898,7 @@ plot_splice_volcano <- function(charmobj, rbp, other_events = NULL) {
     mutate(text = paste0(
       "Gene: ", Gene, "<br>",
       "Event: ", Event.ID, "<br>",
-      "ΔPSI: ", round(dPSI, 3), "<br>",
+      "dPSI: ", round(dPSI, 3), "<br>",
       "Pdiff: ", signif(Pdiff, 3)
     ))
 
@@ -911,7 +923,7 @@ plot_splice_volcano <- function(charmobj, rbp, other_events = NULL) {
     ) +
     labs(
       title = paste("Volcano Plot:", rbp),
-      x = "ΔPSI (shRNA - CTRL)",
+      x = "dPSI (shRNA - CTRL)",
       y = "PDiff"
     )+
     theme(
@@ -921,7 +933,7 @@ plot_splice_volcano <- function(charmobj, rbp, other_events = NULL) {
       panel.background = element_blank(),
       plot.title = element_text(hjust = 0.5),
       plot.subtitle = element_text(hjust = 0.5),
-      text = element_text(size = 15, face = "bold"),
+      text = element_text(size = 20, face = "bold"),
       legend.position = "none"
     )
 
@@ -981,15 +993,15 @@ correl_splicing_rbp_plotly <- function(charmobj, rbp, other_rbp, plot_title = NU
     type = "scatter",
     mode = "markers",
     text = ~paste0("Event: ", Event.ID,
-                   "<br>", rbp_label, " ΔPSI: ", round(dPSI_ref, 3),
-                   "<br>", other_label, " ΔPSI: ", round(dPSI_other, 3)),
+                   "<br>", rbp_label, " dPSI: ", round(dPSI_ref, 3),
+                   "<br>", other_label, " dPSI: ", round(dPSI_other, 3)),
     hoverinfo = "text",
     marker = list(size = 7, color = "#DDDDDD", line = list(width = 1, color = "black"))
   ) %>%
     plotly::layout(
       title = title_txt,
-      xaxis = list(title = paste0(rbp_label, " ΔPSI")),
-      yaxis = list(title = paste0(other_label, " ΔPSI")),
+      xaxis = list(title = paste0(rbp_label, " dPSI")),
+      yaxis = list(title = paste0(other_label, " dPSI")),
       showlegend = FALSE
     )
 }
@@ -1045,9 +1057,9 @@ plot_gene_logFC_barplot <- function(CharmObj, gene,
     ) +
     theme_bw(base_family = "Arial MS") +
     theme(
-      plot.title = element_text(hjust = 0.5, size = 18, face = "bold"),
-      plot.subtitle = element_text(hjust = 0.5, size = 14),
-      text = element_text(size = 14),
+      plot.title = element_text(hjust = 0.5, size = 17, face = "bold"),
+      plot.subtitle = element_text(hjust = 0.5, size = 13),
+      text = element_text(size = 17),
       legend.position = if (show_legend) "right" else "none",
       axis.text = element_text(face = "bold"),
       axis.title = element_text(face = "bold"),
@@ -1112,9 +1124,9 @@ plot_hallmark_nes_barplot <- function(CharmObj, geneset,
     ) +
     theme_bw(base_family = "Arial MS") +
     theme(
-      plot.title = element_text(hjust = 0.5, size = 18, face = "bold"),
-      plot.subtitle = element_text(hjust = 0.5, size = 14),
-      text = element_text(size = 14),
+      plot.title = element_text(hjust = 0.5, size = 17, face = "bold"),
+      plot.subtitle = element_text(hjust = 0.5, size = 13),
+      text = element_text(size = 17),
       legend.position = if (show_legend) "right" else "none",
       axis.text = element_text(face = "bold"),
       axis.title = element_text(face = "bold"),
@@ -1179,8 +1191,8 @@ plot_event_dpsi_barplot <- function(CharmObj, Event.ID,
     ) +
     ggplot2::labs(
       x = "RBP",
-      y = "ΔPSI",
-      title = paste0("Top/bottom RBPs by ΔPSI for event ", Event.ID),
+      y = "dPSI",
+      title = paste0("Top/bottom RBPs by dPSI for event ", Event.ID),
       subtitle = paste0("Event ID: ", Event.ID),
       caption = "Only top/bottom 10 shown"
     ) +
@@ -1361,10 +1373,11 @@ eCLIPSE_full <- function(bindingvalues_nested, rnaBP, target, dPSI,
     scale_fill_identity() +
     theme_void(base_size = 18) +
     theme(
-      text = element_text(size = 18, face = "bold"),
+      text = element_text(size = 20, face = "bold"),
       axis.title = element_blank(),
       axis.text.x = element_text(size = 16, face = "bold"),
-      axis.text.y = element_text(size = 16, face = "bold"),
+      axis.text.y = element_blank(),
+      axis.ticks.y = element_blank(),
       panel.grid = element_blank(),
       plot.margin = margin(t = 10, r = 10, b = 10, l = 10),
       legend.position = "none"
@@ -1386,7 +1399,7 @@ eCLIPSE_full <- function(bindingvalues_nested, rnaBP, target, dPSI,
       axis.text.x = element_blank(),
       axis.ticks.x = element_blank(),
       legend.position = "none",
-      text = element_text(size = 15, face = "bold")
+      text = element_text(size = 20, face = "bold")
     )+ geom_vline(xintercept = c(50,250,450,500,550,750,950), linetype="dashed")
   
   # --- 12. Labels plot (summary counts) - bold
@@ -1418,7 +1431,7 @@ eCLIPSE_full <- function(bindingvalues_nested, rnaBP, target, dPSI,
             axis.text.x = element_blank(),
             axis.ticks.x = element_blank(),
             legend.position = "none",
-            text = element_text(size = 15, face = "bold"))
+            text = element_text(size = 20, face = "bold"))
   } else {
     metricplot <- ggplot(dfforvis_pval, aes(x = pos)) +
       geom_line(aes(y = pvalinc), color = inc_color, size = 1) +
@@ -1433,7 +1446,7 @@ eCLIPSE_full <- function(bindingvalues_nested, rnaBP, target, dPSI,
             axis.text.x = element_blank(),
             axis.ticks.x = element_blank(),
             legend.position = "none",
-            text = element_text(size = 15, face = "bold"))
+            text = element_text(size = 20, face = "bold"))
   }
   
   
@@ -1635,16 +1648,27 @@ eCLIPSE_raw_user <- function(rnamapfile,
   dfforvis$DecreasedEvents  <- dfforvis$DecreasedEvents  / cs_dec$incomp
   dfforvis$MaintainedEvents <- dfforvis$MaintainedEvents / cs_maint$incomp
   
-  if (!plot) {
-    return(list(pval_data = dfforvis_pval, oddsratio_data = dfforvis_oddsratio))
-  }
-  
-  n_inc_rbp   <- length(unique(rbp_inc$EVENTS))
-  n_inc_total <- nrow(ASfile_filt_increased)
-  n_maint_rbp <- length(unique(rbp_maint$EVENTS))
+  # Totals depend only on the shRNA knockdown (ASfile) + dPSI threshold,
+  # not on the metric or whether we're plotting, so compute them up front.
+  n_inc_rbp     <- length(unique(rbp_inc$EVENTS))
+  n_inc_total   <- nrow(ASfile_filt_increased)
+  n_maint_rbp   <- length(unique(rbp_maint$EVENTS))
   n_maint_total <- nrow(ASfile_filt_maintained)
-  n_dec_rbp   <- length(unique(rbp_dec$EVENTS))
-  n_dec_total <- nrow(ASfile_filt_decreased)
+  n_dec_rbp     <- length(unique(rbp_dec$EVENTS))
+  n_dec_total   <- nrow(ASfile_filt_decreased)
+  
+  if (!plot) {
+    return(list(
+      pval_data      = dfforvis_pval,
+      oddsratio_data = dfforvis_oddsratio,
+      n_inc_rbp      = n_inc_rbp,
+      n_inc_total    = n_inc_total,
+      n_maint_rbp    = n_maint_rbp,
+      n_maint_total  = n_maint_total,
+      n_dec_rbp      = n_dec_rbp,
+      n_dec_total    = n_dec_total
+    ))
+  }
   
   inc_color   <- "#de425b"
   dec_color   <- "#769fca"
@@ -1746,6 +1770,13 @@ build_binding_heatmap_user <- function(rnamapfile,
   # 1. Collect per-target vectors from eCLIPSE_raw_user(plot=FALSE)
   inc_list <- list()
   dec_list <- list()
+  
+  # Totals depend only on the uploaded shRNA file + dPSI threshold, not on
+  # target, so capture them once from the first successful target result.
+  n_inc_total <- NA
+  n_maint_total <- NA
+  n_dec_total <- NA
+  totals_captured <- FALSE
 
   for (tgt in targets) {
     res <- tryCatch(
@@ -1773,6 +1804,13 @@ build_binding_heatmap_user <- function(rnamapfile,
 
     if (!is.null(inc_vec) && !all(is.na(inc_vec))) inc_list[[tgt]] <- inc_vec
     if (!is.null(dec_vec) && !all(is.na(dec_vec))) dec_list[[tgt]] <- dec_vec
+    
+    if (!totals_captured && !is.null(res$n_inc_total)) {
+      n_inc_total   <- res$n_inc_total
+      n_maint_total <- res$n_maint_total
+      n_dec_total   <- res$n_dec_total
+      totals_captured <- TRUE
+    }
   }
 
   if (length(inc_list) == 0 && length(dec_list) == 0) {
@@ -1900,11 +1938,162 @@ build_binding_heatmap_user <- function(rnamapfile,
   # 6. Build and combine plots
   heat_inc <- plot_matrix(inc_mat, "Increased Events")
   heat_dec <- plot_matrix(dec_mat, "Decreased Events")
+  
+  # Labels row (shRNA-level totals, shared across all targets)
+  inc_color_lbl   <- "#de425b"
+  dec_color_lbl   <- "#769fca"
+  maint_color_lbl <- "black"
+  
+  labels_plot <- ggplot() +
+    annotate("text", x = 1, y = 0,
+             label = paste0("Increased: ", n_inc_total, "\n"),
+             color = inc_color_lbl, size = 5, fontface = "bold", hjust = -0.75) +
+    annotate("text", x = 1, y = 0,
+             label = paste0("Maintained: ", n_maint_total, "\n"),
+             color = maint_color_lbl, size = 5, fontface = "bold", hjust = 0.5) +
+    annotate("text", x = 1, y = 0,
+             label = paste0("Decreased: ", n_dec_total, "\n"),
+             color = dec_color_lbl, size = 5, fontface = "bold", hjust = 1.75) +
+    theme_void() +
+    theme(plot.margin = margin(t = 0, r = 0, b = 0, l = 0))
 
+  heat_row <- NULL
   if (!is.null(heat_dec) && !is.null(heat_inc)) {
-    return(ggpubr::ggarrange(heat_dec, heat_inc, ncol = 2, widths = c(0.5, 0.5)))
-  } else if (!is.null(heat_dec)) return(heat_dec)
-  else if (!is.null(heat_inc)) return(heat_inc)
+    heat_row <- ggpubr::ggarrange(heat_dec, heat_inc, ncol = 2, widths = c(0.5, 0.5))
+  } else if (!is.null(heat_dec)) {
+    heat_row <- heat_dec
+  } else if (!is.null(heat_inc)) {
+    heat_row <- heat_inc
+  }
+  
+  if (!is.null(heat_row)) {
+    return(ggpubr::ggarrange(labels_plot, heat_row, ncol = 1, heights = c(0.06, 0.94)))
+  }
 
   ggplot() + theme_void() + ggtitle("No heatmap data")
+}
+
+binding_profile_correl <- function(sim_obj,
+                                   query_id,
+                                   top_n         = NULL,
+                                   n_close       = NULL,
+                                   n_far         = NULL,
+                                   other_ids     = NULL,
+                                   direction     = "inc",
+                                   dataset_label = "Both Cells",
+                                   close_color   = "#2166AC",
+                                   far_color     = "#D6604D") {
+  
+  mean_profiles <- sim_obj$mean_profiles
+  
+  # ── 1. Check query exists ──────────────────────────────────────────────────
+  if (!query_id %in% rownames(mean_profiles)) {
+    empty_plot <- ggplot2::ggplot() +
+      ggplot2::annotate("text", x = 0.5, y = 0.5,
+                        label = paste0("Profile '", query_id, "' not found in this dataset."),
+                        size = 5, hjust = 0.5) +
+      ggplot2::theme_void()
+    return(list(distance_table = data.frame(), heatmap = empty_plot))
+  }
+  
+  # ── 2. Compute Euclidean distances: query vs all others ───────────────────
+  query_vec  <- mean_profiles[query_id,                              , drop = FALSE]
+  others_mat <- mean_profiles[rownames(mean_profiles) != query_id,  , drop = FALSE]
+  
+  # rbind query on top so dist() row 1 = query vs all others
+  combined <- rbind(query_vec, others_mat)
+  dist_mat <- as.matrix(dist(combined, method = "euclidean"))
+  dist_vec <- dist_mat[1, -1]   # row 1 = query; drop col 1 (self = 0)
+  
+  dist_df <- data.frame(
+    Profile  = names(dist_vec),
+    Distance = as.numeric(dist_vec),
+    stringsAsFactors = FALSE
+  )
+  dist_df$RBP    <- sub("__.*",     "", dist_df$Profile)
+  dist_df$Target <- sub("^[^_]*__", "", dist_df$Profile)
+  dist_df        <- dist_df[order(dist_df$Distance), ]   # smallest first
+  
+  # ── 3. Apply filters ───────────────────────────────────────────────────────
+  if (!is.null(other_ids) && length(other_ids) > 0) {
+    # Specific profiles requested — keep only those, maintain distance order
+    dist_df <- dist_df[dist_df$Profile %in% other_ids, , drop = FALSE]
+    
+  } else if (!is.null(top_n) && !is.na(top_n) && top_n > 0) {
+    # Top N most similar overall
+    dist_df <- head(dist_df, top_n)
+    
+  } else {
+    # Separate closest and most-dissimilar slices
+    close_df <- dist_df                              # already ascending
+    far_df   <- dist_df[order(-dist_df$Distance), ] # descending for most dissimilar
+    
+    if (!is.null(n_close) && !is.na(n_close) && n_close > 0)
+      close_df <- head(close_df, n_close)
+    if (!is.null(n_far)   && !is.na(n_far)   && n_far   > 0)
+      far_df   <- head(far_df,   n_far)
+    
+    dist_df <- unique(rbind(close_df, far_df))
+    dist_df <- dist_df[order(dist_df$Distance), ]
+  }
+  
+  if (nrow(dist_df) == 0) {
+    empty_plot <- ggplot2::ggplot() +
+      ggplot2::annotate("text", x = 0.5, y = 0.5,
+                        label = "No profiles match the current filter settings.",
+                        size = 5, hjust = 0.5) +
+      ggplot2::theme_void()
+    return(list(distance_table = dist_df, heatmap = empty_plot))
+  }
+  
+  # ── 4. Build heatmap ───────────────────────────────────────────────────────
+  dir_label  <- if (direction == "inc") "Increased Events" else "Decreased Events"
+  plot_title <- paste0("Similar Profiles — ", dir_label,
+                       "\n", dataset_label, "  |  Query: ", query_id)
+  
+  # Factor: most similar at the left, most dissimilar at the right
+  dist_df$Profile <- factor(dist_df$Profile, levels = dist_df$Profile)
+  
+  # Normalise to [0, 1] for fill (0 = identical, 1 = most dissimilar in this set)
+  max_dist <- max(dist_df$Distance, na.rm = TRUE)
+  dist_df$Distance_norm <- if (max_dist == 0) 0 else dist_df$Distance / max_dist
+  
+  heatmap_plot <- ggplot2::ggplot(
+    dist_df,
+    ggplot2::aes(x = Profile, y = "Euclidean distance",
+                 fill = Distance_norm,
+                 label = round(Distance, 2))
+  ) +
+    ggplot2::geom_tile(color = "white", linewidth = 0.3) +
+    ggplot2::geom_text(size = 3.2, fontface = "bold",
+                       color = ifelse(dist_df$Distance_norm < 0.5, "white", "black")) +
+    ggplot2::scale_fill_gradient(
+      low   = close_color,   # small distance = similar = blue
+      high  = far_color,     # large distance = dissimilar = red
+      name  = "Euclidean\nDistance\n(normalised)",
+      limits = c(0, 1)
+    ) +
+    ggplot2::scale_x_discrete(expand = c(0, 0)) +
+    ggplot2::scale_y_discrete(expand = c(0, 0)) +
+    ggplot2::labs(
+      title = plot_title,
+      x     = "RBP — Target Profile",
+      y     = NULL
+    ) +
+    ggplot2::theme_bw(base_family = "Arial MS") +
+    ggplot2::theme(
+      plot.title      = ggplot2::element_text(hjust = 0.5, face = "bold", size = 11),
+      axis.text.x     = ggplot2::element_text(angle = 45, hjust = 1,
+                                              face = "bold", size = 9),
+      axis.text.y     = ggplot2::element_blank(),
+      axis.ticks.y    = ggplot2::element_blank(),
+      axis.title.x    = ggplot2::element_text(face = "bold"),
+      legend.position = "right",
+      panel.grid      = ggplot2::element_blank()
+    )
+  
+  list(
+    distance_table = dist_df[, c("Profile", "RBP", "Target", "Distance")],
+    heatmap        = heatmap_plot
+  )
 }
