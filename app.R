@@ -692,6 +692,61 @@ ui <- fluidPage(
                   selectInput("binding_metric", "Metric:",
                               choices = c("FDR", "EffectSize"),
                               selected = "FDR")
+                ),
+                
+                # Show only when "Similar Profiles" is selected
+                conditionalPanel(
+                  condition = "input.binding_dataset == 'Similar Profiles'",
+                  
+                  hr(),
+                  tags$h5("Similar Profiles"),
+                  tags$p(
+                    "Find RBP\u2013Target binding profiles that are most similar to a chosen query pair, in terms of increased or decreased events.",
+                    style = "font-size: 12px; color: #666; margin-top: -5px;"
+                  ),
+                  
+                  uiOutput("binding_explore_sim_target_ui"),
+                  
+                  radioButtons(
+                    "binding_explore_sim_direction",
+                    "Direction:",
+                    choices  = c("Increased" = "inc", "Decreased" = "dec"),
+                    selected = "inc",
+                    inline   = TRUE
+                  ),
+                  
+                  numericInput(
+                    "binding_explore_sim_topN",
+                    "Show top N most similar profiles (optional):",
+                    value = NA, min = 1
+                  ),
+                  helpText("Tip: selecting a number here takes precedence over the two below."),
+                  numericInput(
+                    "binding_explore_sim_n_close",
+                    "Show top N closest profiles (optional):",
+                    value = NA, min = 1
+                  ),
+                  numericInput(
+                    "binding_explore_sim_n_far",
+                    "Show top N most dissimilar profiles (optional):",
+                    value = NA, min = 1
+                  ),
+                  
+                  div(
+                    style = "display: flex; align-items: center; margin-top: 15px;",
+                    actionButton(
+                      "binding_explore_sim_plot_btn",
+                      tagList(fa("chart-line"), " Plot"),
+                      class = "btn btn-primary",
+                      style = "margin-right: 10px; border-radius: 20px;"
+                    ),
+                    actionButton(
+                      "binding_explore_sim_reset_btn",
+                      tagList(fa("redo"), " Reset"),
+                      class = "btn btn-secondary",
+                      style = "border-radius: 20px;"
+                    )
+                  )
                 )
               ),
               
@@ -756,8 +811,14 @@ ui <- fluidPage(
             
             # Explore Mode plot
             conditionalPanel(
-              condition = "input.binding_mode == 'Explore'",
+              condition = "input.binding_mode == 'Explore' && input.binding_dataset != 'Similar Profiles'",
               uiOutput("binding_plot_ui")
+            ),
+            
+            # Explore Mode — Similar Profiles plot
+            conditionalPanel(
+              condition = "input.binding_mode == 'Explore' && input.binding_dataset == 'Similar Profiles'",
+              uiOutput("binding_explore_similar_plot_ui")
             ),
             
             # Discovery Mode plot
@@ -2469,18 +2530,12 @@ server <- function(input, output, session) {
     choice_lc <- tolower(choice)
     
     # ---- 2. Plain numeric threshold choice, e.g. "0.05" or "0.1" ----
-    # Keys look like "0.05 (default)" or "0.10 (default)", or even
-    # "0.10 (maximised oddsratinc)" when that exact number happens to also be
-    # the maximising value for this pair. Data always encodes thresholds with
-    # two decimal places (e.g. "0.10", not "0.1"), but the UI choice may not,
-    # so compare parsed numeric values rather than raw strings.
+    # Keys look like "0.05 (oddsratinc)" -- match the number exactly (escaped),
+    # followed by a space or open-paren, and make sure it is NOT a "maximised" key.
     if (grepl("^[0-9.]+$", choice)) {
-      choice_num <- suppressWarnings(as.numeric(choice))
-      if (!is.na(choice_num)) {
-        key_leading_num <- suppressWarnings(as.numeric(sub("^([0-9.]+).*", "\\1", dpsi_names)))
-        hits <- dpsi_names[!is.na(key_leading_num) & key_leading_num == choice_num]
-        if (length(hits) > 0) return(list(key = hits[1], fallback = FALSE))
-      }
+      pattern <- paste0("^", gsub("\\.", "\\\\.", choice), "[ (]")
+      hits <- dpsi_names[grepl(pattern, dpsi_names) & !grepl("maximised", tolower(dpsi_names))]
+      if (length(hits) > 0) return(list(key = hits[1], fallback = FALSE))
       return(NULL)  # that exact threshold isn't available for this target
     }
     
@@ -2495,12 +2550,8 @@ server <- function(input, output, session) {
       hits <- dpsi_names[grepl(pattern, tolower(dpsi_names))]
       if (length(hits) > 0) return(list(key = hits[1], fallback = FALSE))
       
-      # Fallback: this target has no "maximised <suffix>" key -- use its 0.10
-      # entry instead (data encodes thresholds as "0.10", not "0.1"), regardless
-      # of whether that entry happens to also be labeled as maximising a
-      # *different* metric for this target.
-      key_leading_num <- suppressWarnings(as.numeric(sub("^([0-9.]+).*", "\\1", dpsi_names)))
-      hits_01 <- dpsi_names[!is.na(key_leading_num) & key_leading_num == 0.1]
+      # Fallback: this target has no "maximised <suffix>" key -- use its 0.1 entry instead
+      hits_01 <- dpsi_names[grepl("^0\\.1[ (]", dpsi_names) & !grepl("maximised", tolower(dpsi_names))]
       if (length(hits_01) > 0) return(list(key = hits_01[1], fallback = TRUE))
       return(NULL)  # neither the maximised key nor a 0.1 fallback is available
     }
@@ -2888,6 +2939,108 @@ server <- function(input, output, session) {
     )
   })
   
+  # ─────────────────────────────────────────────────────────────────────────────
+  # EXPLORE MODE — Similar Profiles (binding_dataset == "Similar Profiles")
+  # ─────────────────────────────────────────────────────────────────────────────
+  
+  # ---- Target selector: targets available for the chosen RBP, current event type ----
+  output$binding_explore_sim_target_ui <- renderUI({
+    req(input$binding_search, input$binding_dataset == "Similar Profiles")
+    
+    sim_objs <- binding_sim_objects()
+    # Use "Both Cells" / "inc" as the universe of profile IDs (RBP__Target pairs
+    # are the same set across inc/dec for a given event type + cell line).
+    all_ids <- rownames(sim_objs[["Both Cells"]]$inc$mean_profiles)
+    if (is.null(all_ids)) all_ids <- character(0)
+    
+    rbp <- input$binding_search
+    rbp_targets <- sort(unique(sub("^[^_]*__", "", all_ids[startsWith(all_ids, paste0(rbp, "__"))])))
+    
+    selectizeInput(
+      "binding_explore_sim_target",
+      "Target:",
+      choices  = rbp_targets,
+      multiple = FALSE,
+      options  = list(placeholder = "Select a target")
+    )
+  })
+  
+  # ---- Plot button: render the 3 cell-line panels for the chosen pair/direction ----
+  observeEvent(input$binding_explore_sim_plot_btn, {
+    req(input$binding_dataset == "Similar Profiles",
+        input$binding_search,
+        input$binding_explore_sim_target,
+        input$binding_eventtype)
+    
+    rbp      <- input$binding_search
+    target   <- input$binding_explore_sim_target
+    query_id <- paste0(rbp, "__", target)
+    dir_sel  <- input$binding_explore_sim_direction   # "inc" or "dec"
+    
+    topN    <- input$binding_explore_sim_topN
+    n_close <- input$binding_explore_sim_n_close
+    n_far   <- input$binding_explore_sim_n_far
+    
+    # If the user left every filter blank, default to the top 10 closest
+    # profiles instead of plotting every profile in the dataset.
+    if (is.na(topN) && is.na(n_close) && is.na(n_far)) n_close <- 10
+    
+    sim_objs      <- binding_sim_objects()
+    dataset_names <- c("Both Cells", "K562", "HEPG2")
+    
+    output$binding_explore_similar_plot_ui <- renderUI({
+      tagList(
+        tags$h4(paste0("Similar Profiles to ", query_id,
+                       " (", if (dir_sel == "inc") "Increased" else "Decreased",
+                       " Events)"),
+                style = "text-align:center;"),
+        lapply(dataset_names, function(ds_name) {
+          fluidRow(
+            column(width = 12,
+                   tags$h5(ds_name, style = "text-align:center;"),
+                   shinycssloaders::withSpinner(
+                     plotOutput(paste0("binding_explore_sim_plot_", gsub(" ", "", ds_name)),
+                                height = "450px"),
+                     type = 6
+                   )
+            )
+          )
+        }) %>% tagList()
+      )
+    })
+    
+    for (ds in dataset_names) {
+      local({
+        ds_local <- ds
+        plot_id  <- paste0("binding_explore_sim_plot_", gsub(" ", "", ds_local))
+        
+        output[[plot_id]] <- renderPlot({
+          sim_obj <- sim_objs[[ds_local]][[dir_sel]]
+          res <- binding_profile_correl(
+            sim_obj       = sim_obj,
+            query_id      = query_id,
+            top_n         = if (!is.na(topN))    topN    else NULL,
+            n_close       = if (!is.na(n_close)) n_close else NULL,
+            n_far         = if (!is.na(n_far))   n_far   else NULL,
+            other_ids     = NULL,
+            direction     = dir_sel,
+            dataset_label = ds_local
+          )
+          res$heatmap
+        })
+      })
+    }
+  })
+  
+  # ---- Reset button ----
+  observeEvent(input$binding_explore_sim_reset_btn, {
+    output$binding_explore_similar_plot_ui <- renderUI(NULL)
+    updateSelectizeInput(session, "binding_explore_sim_target", selected = "")
+    updateNumericInput(session,   "binding_explore_sim_topN",    value = NA)
+    updateNumericInput(session,   "binding_explore_sim_n_close", value = NA)
+    updateNumericInput(session,   "binding_explore_sim_n_far",   value = NA)
+  })
+  
   # -------------------------------
   # Render plot
   # -------------------------------
@@ -2937,7 +3090,7 @@ server <- function(input, output, session) {
     
     # Determine available profile IDs from the inc object (Both Cells, current event type)
     sim_objs <- binding_sim_objects()
-    all_profile_ids <- rownames(sim_objs[["Both Cells"]]$inc$cor_matrix)
+    all_profile_ids <- rownames(sim_objs[["Both Cells"]]$inc$mean_profiles)
     if (is.null(all_profile_ids)) all_profile_ids <- character(0)
     
     tagList(

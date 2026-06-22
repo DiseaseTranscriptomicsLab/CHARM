@@ -1981,8 +1981,8 @@ binding_profile_correl <- function(sim_obj,
                                    other_ids     = NULL,
                                    direction     = "inc",
                                    dataset_label = "Both Cells",
-                                   close_color   = "#2166AC",
-                                   far_color     = "#D6604D") {
+                                   up_color      = "#BA3B46",
+                                   down_color    = "#53A2BE") {
   
   mean_profiles <- sim_obj$mean_profiles
   
@@ -1993,107 +1993,115 @@ binding_profile_correl <- function(sim_obj,
                         label = paste0("Profile '", query_id, "' not found in this dataset."),
                         size = 5, hjust = 0.5) +
       ggplot2::theme_void()
-    return(list(distance_table = data.frame(), heatmap = empty_plot))
+    return(list(correlation_table = data.frame(), heatmap = empty_plot))
   }
   
-  # ── 2. Compute Euclidean distances: query vs all others ───────────────────
-  query_vec  <- mean_profiles[query_id,                              , drop = FALSE]
-  others_mat <- mean_profiles[rownames(mean_profiles) != query_id,  , drop = FALSE]
+  # ── 2. Compute Pearson correlations: query vs all others ───────────────────
+  # Profiles are compared by the SHAPE of their binding signal across positions
+  # (Pearson correlation), rather than Euclidean distance. Distance is dominated
+  # by overall magnitude and scales poorly with ~500-1000 position columns, while
+  # correlation captures whether two profiles rise/fall together across the
+  # binding map — which is the biologically meaningful notion of "similar
+  # profile" here — and is naturally bounded to [-1, 1].
+  query_vec  <- as.numeric(mean_profiles[query_id, ])
+  others_mat <- mean_profiles[rownames(mean_profiles) != query_id, , drop = FALSE]
   
-  # rbind query on top so dist() row 1 = query vs all others
-  combined <- rbind(query_vec, others_mat)
-  dist_mat <- as.matrix(dist(combined, method = "euclidean"))
-  dist_vec <- dist_mat[1, -1]   # row 1 = query; drop col 1 (self = 0)
+  # Vectorized Pearson correlation of the query against every other row in one
+  # call (cor() against a matrix returns one correlation per row of the
+  # matrix). pairwise.complete.obs makes each row's correlation robust to NA
+  # positions without needing a per-row R loop, which matters for datasets
+  # with thousands of profiles (e.g. "Both Cells").
+  cor_vec <- as.numeric(suppressWarnings(
+    cor(query_vec, t(others_mat), use = "pairwise.complete.obs")
+  ))
+  names(cor_vec) <- rownames(others_mat)
   
-  dist_df <- data.frame(
-    Profile  = names(dist_vec),
-    Distance = as.numeric(dist_vec),
+  cor_df <- data.frame(
+    Profile     = names(cor_vec),
+    Correlation = as.numeric(cor_vec),
     stringsAsFactors = FALSE
   )
-  dist_df$RBP    <- sub("__.*",     "", dist_df$Profile)
-  dist_df$Target <- sub("^[^_]*__", "", dist_df$Profile)
-  dist_df        <- dist_df[order(dist_df$Distance), ]   # smallest first
+  cor_df <- cor_df[!is.na(cor_df$Correlation), , drop = FALSE]
+  cor_df$RBP    <- sub("__.*",     "", cor_df$Profile)
+  cor_df$Target <- sub("^[^_]*__", "", cor_df$Profile)
+  cor_df        <- cor_df[order(-cor_df$Correlation), ]   # most similar (highest r) first
   
   # ── 3. Apply filters ───────────────────────────────────────────────────────
   if (!is.null(other_ids) && length(other_ids) > 0) {
-    # Specific profiles requested — keep only those, maintain distance order
-    dist_df <- dist_df[dist_df$Profile %in% other_ids, , drop = FALSE]
+    # Specific profiles requested — keep only those, maintain correlation order
+    cor_df <- cor_df[cor_df$Profile %in% other_ids, , drop = FALSE]
     
   } else if (!is.null(top_n) && !is.na(top_n) && top_n > 0) {
-    # Top N most similar overall
-    dist_df <- head(dist_df, top_n)
+    # Top N most correlated overall, by MAGNITUDE — a strong negative
+    # correlation (opposite shape) is just as "correlated" as a strong
+    # positive one, so rank by |r| here. n_close/n_far (below) are where
+    # direction becomes an explicit, separate axis.
+    cor_df <- cor_df[order(-abs(cor_df$Correlation)), ]
+    cor_df <- head(cor_df, top_n)
+    cor_df <- cor_df[order(-cor_df$Correlation), ]   # restore display order: highest r first
     
   } else {
-    # Separate closest and most-dissimilar slices
-    close_df <- dist_df                              # already ascending
-    far_df   <- dist_df[order(-dist_df$Distance), ] # descending for most dissimilar
+    # Separate most-similar (highest r) and most-dissimilar (most negative r) slices
+    close_df <- cor_df                               # already sorted, highest r first
+    far_df   <- cor_df[order(cor_df$Correlation), ]  # most negative r first
     
     if (!is.null(n_close) && !is.na(n_close) && n_close > 0)
       close_df <- head(close_df, n_close)
     if (!is.null(n_far)   && !is.na(n_far)   && n_far   > 0)
       far_df   <- head(far_df,   n_far)
     
-    dist_df <- unique(rbind(close_df, far_df))
-    dist_df <- dist_df[order(dist_df$Distance), ]
+    cor_df <- unique(rbind(close_df, far_df))
+    cor_df <- cor_df[order(-cor_df$Correlation), ]
   }
   
-  if (nrow(dist_df) == 0) {
+  if (nrow(cor_df) == 0) {
     empty_plot <- ggplot2::ggplot() +
       ggplot2::annotate("text", x = 0.5, y = 0.5,
                         label = "No profiles match the current filter settings.",
                         size = 5, hjust = 0.5) +
       ggplot2::theme_void()
-    return(list(distance_table = dist_df, heatmap = empty_plot))
+    return(list(correlation_table = cor_df, heatmap = empty_plot))
   }
   
-  # ── 4. Build heatmap ───────────────────────────────────────────────────────
+  # ── 4. Build horizontal bar plot (same style as exp_correl / splicing_correl) ─
   dir_label  <- if (direction == "inc") "Increased Events" else "Decreased Events"
-  plot_title <- paste0("Similar Profiles — ", dir_label,
-                       "\n", dataset_label, "  |  Query: ", query_id)
+  plot_title <- paste0("Similar Profiles — ", dir_label)
+  plot_subtitle <- paste0(dataset_label, "  |  Query: ", query_id)
   
-  # Factor: most similar at the left, most dissimilar at the right
-  dist_df$Profile <- factor(dist_df$Profile, levels = dist_df$Profile)
-  
-  # Normalise to [0, 1] for fill (0 = identical, 1 = most dissimilar in this set)
-  max_dist <- max(dist_df$Distance, na.rm = TRUE)
-  dist_df$Distance_norm <- if (max_dist == 0) 0 else dist_df$Distance / max_dist
+  cor_df$Status  <- ifelse(cor_df$Correlation > 0, "Positive", "Negative")
+  cor_df$Profile <- factor(cor_df$Profile, levels = cor_df$Profile[order(cor_df$Correlation)])
   
   heatmap_plot <- ggplot2::ggplot(
-    dist_df,
-    ggplot2::aes(x = Profile, y = "Euclidean distance",
-                 fill = Distance_norm,
-                 label = round(Distance, 2))
+    cor_df,
+    ggplot2::aes(x = Profile, y = Correlation, fill = Status)
   ) +
-    ggplot2::geom_tile(color = "white", linewidth = 0.3) +
-    ggplot2::geom_text(size = 3.2, fontface = "bold",
-                       color = ifelse(dist_df$Distance_norm < 0.5, "white", "black")) +
-    ggplot2::scale_fill_gradient(
-      low   = close_color,   # small distance = similar = blue
-      high  = far_color,     # large distance = dissimilar = red
-      name  = "Euclidean\nDistance\n(normalised)",
-      limits = c(0, 1)
+    ggplot2::geom_col(alpha = 0.8) +
+    ggplot2::scale_fill_manual(values = c("Positive" = up_color, "Negative" = down_color)) +
+    ggplot2::coord_flip() +
+    ggplot2::geom_text(
+      ggplot2::aes(label = sprintf("%.2f", Correlation)),
+      hjust = ifelse(cor_df$Correlation > 0, -0.1, 1.1),
+      color = "black", size = 4
     ) +
-    ggplot2::scale_x_discrete(expand = c(0, 0)) +
-    ggplot2::scale_y_discrete(expand = c(0, 0)) +
     ggplot2::labs(
-      title = plot_title,
-      x     = "RBP — Target Profile",
-      y     = NULL
+      x        = "RBP \u2013 Target Profile",
+      y        = "Pearson correlation (r)",
+      title    = plot_title,
+      subtitle = plot_subtitle,
+      caption  = "Method: Pearson"
     ) +
     ggplot2::theme_bw(base_family = "Arial MS") +
     ggplot2::theme(
-      plot.title      = ggplot2::element_text(hjust = 0.5, face = "bold", size = 11),
-      axis.text.x     = ggplot2::element_text(angle = 45, hjust = 1,
-                                              face = "bold", size = 9),
-      axis.text.y     = ggplot2::element_blank(),
-      axis.ticks.y    = ggplot2::element_blank(),
-      axis.title.x    = ggplot2::element_text(face = "bold"),
-      legend.position = "right",
-      panel.grid      = ggplot2::element_blank()
+      plot.title      = ggplot2::element_text(hjust = 0.5, face = "bold"),
+      plot.subtitle   = ggplot2::element_text(hjust = 0.5),
+      text            = ggplot2::element_text(size = 13),
+      legend.position = "none",
+      axis.text       = ggplot2::element_text(face = "bold"),
+      axis.title      = ggplot2::element_text(face = "bold")
     )
   
   list(
-    distance_table = dist_df[, c("Profile", "RBP", "Target", "Distance")],
-    heatmap        = heatmap_plot
+    correlation_table = cor_df[, c("Profile", "RBP", "Target", "Correlation")],
+    heatmap           = heatmap_plot
   )
 }

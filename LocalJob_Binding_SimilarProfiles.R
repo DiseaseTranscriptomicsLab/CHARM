@@ -4,11 +4,18 @@
 #  For each of the 6 binding datasets (ES/IR × Both/K562/HEPG2):
 #    1. Smooth positional profiles (sliding-window, same as LocalJob_File_Binding_New.R)
 #    2. Build per (RBP, Target) mean profile matrix per Direction (inc / dec)
-#    3. Save the mean_profiles matrix — Euclidean distances are computed at
-#       query time in the app (one row vs all others), so no N×N matrix is stored
+#    3. Save the mean_profiles matrix — similarity (Pearson correlation) between
+#       the query and all other profiles is computed at query time in the app
+#       (one row vs all others), so no N×N matrix is stored
 #
-#  Distance metric: Euclidean (same as LocalJob_File_Binding_New.R MDS + heatmaps)
-#  Profiles are ranked by SMALLEST distance (= most similar shape + magnitude).
+#  Similarity metric: Pearson correlation of the positional profiles (computed
+#  in the app's binding_profile_correl(), not here). Correlation captures
+#  whether two profiles rise/fall together across the binding map (shape),
+#  rather than Euclidean distance, which is dominated by overall magnitude and
+#  scales poorly across ~500-1000 position columns.
+#  Profiles are ranked by LARGEST correlation (= most similar shape), with the
+#  most negative correlation representing the most dissimilar ("opposite
+#  shape") profiles.
 #
 #  Output files (save to data/QS_Files/):
 #    similar_binding_ES_both_inc.qs   – Exon Skipping, Both cells, oddsratinc
@@ -84,10 +91,11 @@ smooth_profiles <- function(df, half_win = 4L, min_win = 5L) {
 #      that share the same RBP, Target, and Direction.  (Typically one row each,
 #      but averaging is safe if duplicates exist.)
 #    • This gives a matrix of shape [n_profiles × n_positions].
-#    • Only the mean_profiles matrix is saved.  Euclidean distances between the
-#      query and all other profiles are computed at query time in the app — this
-#      is a single dist(rbind(query, others)) call and is fast even for large
-#      profile sets, while avoiding storing an N×N distance matrix on disk.
+#    • Only the mean_profiles matrix is saved.  Pearson correlations between
+#      the query and all other profiles are computed at query time in the app —
+#      this is a single vectorized cor(query, t(others)) call and is fast even
+#      for large profile sets, while avoiding storing an N×N similarity matrix
+#      on disk.
 #
 build_similarity_object <- function(df_smooth, direction) {
   pos_cols <- grep("^pos_\\d+$", colnames(df_smooth), value = TRUE)
