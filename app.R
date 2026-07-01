@@ -842,14 +842,6 @@ ui <- fluidPage(
           column(
             width = 3,
             wellPanel(
-              # Mode — only Explore for now
-              radioButtons(
-                "network_mode",
-                "Select mode:",
-                choices  = c("Explore"),
-                selected = "Explore"
-              ),
-
               # Cell line
               radioButtons(
                 "network_cellline",
@@ -860,7 +852,18 @@ ui <- fluidPage(
 
               hr(),
 
-              # Data layers (always visible checkboxes)
+              # ── Plot type ──
+              tags$h5("Plot type:", style = "font-weight: bold;"),
+              radioButtons(
+                "network_plot_type",
+                label    = NULL,
+                choices  = c("MDS", "PCA", "t-SNE", "Dendrogram"),
+                selected = "MDS"
+              ),
+
+              hr(),
+
+              # Data layers
               tags$h5("Data layers:", style = "font-weight: bold;"),
               checkboxGroupInput(
                 "network_layers",
@@ -869,7 +872,22 @@ ui <- fluidPage(
                 selected = "Binding"
               ),
 
-              # Binding sub-options — shown only when Binding is checked
+              # Slow-layer warning
+              conditionalPanel(
+                condition = "input.network_layers.indexOf('Expression') !== -1 ||
+                             input.network_layers.indexOf('Splicing') !== -1",
+                tags$div(
+                  style = "background:#fff3cd; border:1px solid #ffc107;
+                           border-radius:6px; padding:8px 10px; margin-top:6px;
+                           font-size:11px; color:#856404;",
+                  tags$b("\u26a0 Note:"),
+                  " Expression and Splicing layers build large feature matrices
+                    and may take several minutes to compute depending on the
+                    number of RBPs. Please be patient after clicking Plot."
+                )
+              ),
+
+              # ── Binding sub-options ──
               conditionalPanel(
                 condition = "input.network_layers.indexOf('Binding') !== -1",
                 tags$h6("Event type:", style = "margin-top: 10px; font-weight: bold;"),
@@ -886,6 +904,56 @@ ui <- fluidPage(
                   choices  = c("Increased", "Decreased"),
                   selected = c("Increased", "Decreased")
                 )
+              ),
+
+              hr(),
+
+              # ── Layer weights ──
+              tags$h5("Layer weights:", style = "font-weight: bold;"),
+              tags$p(
+                "Weights are automatically normalised to sum to 1.",
+                style = "font-size: 11px; color: #888; margin-top: -5px;"
+              ),
+
+              # ── RBP highlight search ──
+              tags$h5("Highlight RBPs:", style = "font-weight: bold;"),
+              tags$p(
+                HTML("&#9888; RBPs must be selected <b>before</b> clicking Plot."),
+                style = "font-size: 11px; color: #856404; margin-top: -5px;"
+              ),
+              selectizeInput(
+                "network_highlight_rbps",
+                label    = NULL,
+                choices  = sort(names(Charm.object)),
+                multiple = TRUE,
+                options  = list(placeholder = "Type to search RBPs...")
+              ),
+
+              hr(),
+
+              conditionalPanel(
+                condition = "input.network_layers.indexOf('Expression') !== -1",
+                sliderInput("network_weight_expr",   "Expression weight:",
+                            min = 0, max = 1, value = 0.33, step = 0.05)
+              ),
+              conditionalPanel(
+                condition = "input.network_layers.indexOf('Splicing') !== -1",
+                sliderInput("network_weight_splice", "Splicing weight:",
+                            min = 0, max = 1, value = 0.33, step = 0.05)
+              ),
+              conditionalPanel(
+                condition = "input.network_layers.indexOf('Binding') !== -1",
+                sliderInput("network_weight_binding","Binding weight:",
+                            min = 0, max = 1, value = 0.34, step = 0.05)
+              ),
+
+              hr(),
+
+              actionButton(
+                "network_plot_btn",
+                tagList(fa("chart-line"), " Plot"),
+                class = "btn btn-primary",
+                style = "border-radius: 20px; width: 100%;"
               )
             )
           ),
@@ -895,11 +963,15 @@ ui <- fluidPage(
             width = 9,
             tags$h3("RBP Similarity Network"),
             tags$p(
-              "MDS of RBP binding-profile similarity. Each point is an RBP; distance reflects similarity of binding patterns around regulated splicing events.",
+              "Multi-omic ordination of RBP similarity. Each point is an RBP;
+               proximity reflects similarity across the selected data layers
+               (Expression: t-statistics across shared genes; Splicing: dPSI
+               across shared events; Binding: profile shape across regulated
+               splice sites). Layer weights are normalised to sum to 1.",
               style = "color: #555; font-size: 13px; margin-bottom: 15px;"
             ),
             shinycssloaders::withSpinner(
-              plotOutput("network_mds_plot", height = "550px"),
+              plotOutput("network_mds_plot", height = "600px"),
               type = 6
             )
           )
@@ -3270,117 +3342,264 @@ server <- function(input, output, session) {
   # ─────────────────────────────────────────────────────────────────────────────
 
   output$network_mds_plot <- renderPlot({
-    # Gather selected binding objects based on cell line, event type and direction
-    cell    <- input$network_cellline
-    btypes  <- input$network_binding_type
-    dirs    <- input$network_binding_dir
+    input$network_plot_btn
 
-    if (is.null(btypes) || length(btypes) == 0 ||
-        is.null(dirs)   || length(dirs)   == 0) {
-      return(ggplot() +
-               annotate("text", x = 0.5, y = 0.5,
-                        label = "Please select at least one event type and direction.",
-                        size = 7, hjust = 0.5) +
-               theme_void())
-    }
+    isolate({
+      layers    <- input$network_layers
+      cell      <- input$network_cellline
+      btypes    <- input$network_binding_type
+      dirs      <- input$network_binding_dir
+      plot_type <- input$network_plot_type
+      hl_rbps   <- input$network_highlight_rbps
 
-    # Map UI selections to object suffixes
-    cell_key <- switch(cell, "Both" = "both", "K562" = "K562", "HEPG2" = "HEPG2")
-    type_keys <- c()
-    if ("Exon Skipping"     %in% btypes) type_keys <- c(type_keys, "ES")
-    if ("Intron Retention"  %in% btypes) type_keys <- c(type_keys, "IR")
-    dir_keys <- c()
-    if ("Increased" %in% dirs) dir_keys <- c(dir_keys, "inc")
-    if ("Decreased" %in% dirs) dir_keys <- c(dir_keys, "dec")
+      if (is.null(layers) || length(layers) == 0) {
+        return(ggplot() +
+                 annotate("text", x = 0.5, y = 0.5,
+                          label = "Please select at least one data layer.",
+                          size = 6, hjust = 0.5) + theme_void())
+      }
 
-    # Collect and merge mean_profiles matrices across all selected combinations
-    all_mats <- list()
-    for (tk in type_keys) {
-      for (dk in dir_keys) {
-        obj_name <- paste0("similar_binding_", tk, "_", cell_key, "_", dk)
-        obj <- tryCatch(get(obj_name), error = function(e) NULL)
-        if (!is.null(obj) && !is.null(obj$mean_profiles)) {
-          mat <- obj$mean_profiles
-          # Keep only RBP part of rowname (RBP__Target → RBP)
-          rbp_names <- sub("__.*", "", rownames(mat))
-          # Average profiles per RBP
-          unique_rbps <- unique(rbp_names)
-          agg <- do.call(rbind, lapply(unique_rbps, function(r) {
-            idx <- which(rbp_names == r)
-            colMeans(mat[idx, , drop = FALSE], na.rm = TRUE)
-          }))
-          rownames(agg) <- unique_rbps
-          label <- paste0(tk, "_", dk)
-          all_mats[[label]] <- agg
+      # ── Cell line mapping ──────────────────────────────────────────────────
+      cell_key_binding <- switch(cell, "Both" = "both", "K562" = "K562", "HEPG2" = "HEPG2")
+      charm_obj <- switch(cell,
+                          "Both"  = Charm.object,
+                          "K562"  = Charm.object_K562,
+                          "HEPG2" = Charm.object_HEPG2)
+      expr_obj  <- switch(cell,
+                          "Both"  = similar_expression_all,
+                          "K562"  = similar_expression_K562,
+                          "HEPG2" = similar_expression_HEPG2)
+
+      # ── Weights ───────────────────────────────────────────────────────────
+      raw_weights <- c()
+      if ("Expression" %in% layers)
+        raw_weights["Expression"] <- max(0, if (is.null(input$network_weight_expr))    1 else input$network_weight_expr)
+      if ("Splicing"   %in% layers)
+        raw_weights["Splicing"]   <- max(0, if (is.null(input$network_weight_splice))  1 else input$network_weight_splice)
+      if ("Binding"    %in% layers)
+        raw_weights["Binding"]    <- max(0, if (is.null(input$network_weight_binding)) 1 else input$network_weight_binding)
+      total_w <- sum(raw_weights)
+      if (total_w == 0) raw_weights[] <- 1 / length(raw_weights)
+      weights <- raw_weights / total_w
+
+      # ── Build correlation matrices per layer ───────────────────────────────
+      cor_matrices <- list()
+
+      if ("Expression" %in% layers) {
+        cm <- network_cor_matrix(type = "expression", rbp_list = expr_obj)
+        if (!is.null(cm) && nrow(cm) >= 3) cor_matrices[["Expression"]] <- cm
+      }
+
+      if ("Splicing" %in% layers) {
+        cm <- network_cor_matrix(type = "splicing", rbp_list = charm_obj)
+        if (!is.null(cm) && nrow(cm) >= 3) cor_matrices[["Splicing"]] <- cm
+      }
+
+      if ("Binding" %in% layers) {
+        if (!is.null(btypes) && length(btypes) > 0 &&
+            !is.null(dirs)   && length(dirs)   > 0) {
+
+          type_keys <- c()
+          if ("Exon Skipping"    %in% btypes) type_keys <- c(type_keys, "ES")
+          if ("Intron Retention" %in% btypes) type_keys <- c(type_keys, "IR")
+          dir_keys <- c()
+          if ("Increased" %in% dirs) dir_keys <- c(dir_keys, "inc")
+          if ("Decreased" %in% dirs) dir_keys <- c(dir_keys, "dec")
+
+          binding_cor_list <- list()
+          for (tk in type_keys) {
+            for (dk in dir_keys) {
+              obj_name <- paste0("similar_binding_", tk, "_", cell_key_binding, "_", dk)
+              obj <- tryCatch(get(obj_name), error = function(e) NULL)
+              if (is.null(obj) || is.null(obj$mean_profiles)) next
+              mat       <- obj$mean_profiles
+              rbp_names <- sub("__.*", "", rownames(mat))
+              unique_rbps <- unique(rbp_names)
+              agg <- do.call(rbind, lapply(unique_rbps, function(r) {
+                colMeans(mat[which(rbp_names == r), , drop = FALSE], na.rm = TRUE)
+              }))
+              rownames(agg) <- unique_rbps
+              cm <- network_cor_matrix(type = "binding", rbp_mat = agg)
+              if (!is.null(cm) && nrow(cm) >= 3)
+                binding_cor_list[[paste0(tk, "_", dk)]] <- cm
+            }
+          }
+
+          if (length(binding_cor_list) > 0) {
+            common_b <- Reduce(intersect, lapply(binding_cor_list, rownames))
+            avg_b <- Reduce("+", lapply(binding_cor_list, function(m) m[common_b, common_b])) /
+                     length(binding_cor_list)
+            cor_matrices[["Binding"]] <- avg_b
+          }
         }
       }
-    }
 
-    if (length(all_mats) == 0) {
-      return(ggplot() +
-               annotate("text", x = 0.5, y = 0.5,
-                        label = "No binding data available for the selected combination.",
-                        size = 7, hjust = 0.5) +
-               theme_void())
-    }
+      if (length(cor_matrices) == 0) {
+        return(ggplot() +
+                 annotate("text", x = 0.5, y = 0.5,
+                          label = "No data available for the selected combination.",
+                          size = 6, hjust = 0.5) + theme_void())
+      }
 
-    # Find common RBPs across all collected matrices
-    common_rbps <- Reduce(intersect, lapply(all_mats, rownames))
-    if (length(common_rbps) < 3) {
-      return(ggplot() +
-               annotate("text", x = 0.5, y = 0.5,
-                        label = paste0("Not enough common RBPs (", length(common_rbps),
-                                       ") to compute MDS. Try selecting more event types or directions."),
-                        size = 6, hjust = 0.5) +
-               theme_void())
-    }
+      # ── Common RBPs ───────────────────────────────────────────────────────
+      common_rbps <- Reduce(intersect, lapply(cor_matrices, rownames))
+      if (length(common_rbps) < 3) {
+        return(ggplot() +
+                 annotate("text", x = 0.5, y = 0.5,
+                          label = paste0("Only ", length(common_rbps),
+                                         " RBP(s) shared across all layers. Need \u2265 3."),
+                          size = 5, hjust = 0.5) + theme_void())
+      }
 
-    # Compute a distance matrix per layer separately (profiles may have different
-    # numbers of columns, e.g. ES=1000, IR=500), then average the distance matrices.
-    dist_mats <- lapply(all_mats, function(m) {
-      sub_m <- m[common_rbps, , drop = FALSE]
-      as.matrix(dist(sub_m, method = "euclidean"))
-    })
-    dist_mat <- Reduce("+", dist_mats) / length(dist_mats)
-    dist_mat <- as.dist(dist_mat)
-    # Run MDS (cmdscale)
-    mds_fit  <- cmdscale(dist_mat, k = 2, eig = TRUE)
-    mds_df   <- data.frame(
-      RBP = common_rbps,
-      Dim1 = mds_fit$points[, 1],
-      Dim2 = mds_fit$points[, 2],
-      stringsAsFactors = FALSE
-    )
+      # ── Weighted average correlation → dissimilarity ───────────────────────
+      active_layers <- names(cor_matrices)
+      w <- weights[active_layers]; w <- w / sum(w)
 
-    # Variance explained
-    eig_pos   <- pmax(mds_fit$eig, 0)
-    var_expl  <- round(eig_pos[1:2] / sum(eig_pos) * 100, 1)
+      avg_cor <- Reduce("+", mapply(
+        function(cm, wi) cm[common_rbps, common_rbps] * wi,
+        cor_matrices[active_layers], w, SIMPLIFY = FALSE
+      ))
+      diss_mat <- 1 - avg_cor   # dissimilarity in [0, 2]
 
-    # Plot
-    ggplot(mds_df, aes(x = Dim1, y = Dim2, label = RBP)) +
-      geom_point(size = 3, color = "#2c3e50", alpha = 0.75) +
-      ggrepel::geom_text_repel(
-        size         = 4,
-        fontface     = "bold",
-        max.overlaps = 20,
-        colour       = "#2c3e50"
-      ) +
-      labs(
-        title    = paste0("RBP Binding-Profile Similarity — MDS (", cell, ")"),
-        subtitle = paste0("Event types: ",  paste(btypes, collapse = " + "),
-                          "  |  Directions: ", paste(dirs, collapse = " + ")),
-        x        = paste0("MDS Dim 1 (", var_expl[1], "% variance)"),
-        y        = paste0("MDS Dim 2 (", var_expl[2], "% variance)")
-      ) +
-      theme_bw() +
-      theme(
-        plot.title    = element_text(hjust = 0.5, face = "bold", size = 16),
-        plot.subtitle = element_text(hjust = 0.5, size = 12, color = "#555555"),
-        text          = element_text(size = 13, face = "bold"),
-        panel.grid    = element_blank(),
-        axis.line     = element_line(colour = "black"),
-        panel.border  = element_blank()
+      # ── Highlight setup ───────────────────────────────────────────────────
+      hl_valid  <- intersect(hl_rbps, common_rbps)
+      highlight <- common_rbps %in% hl_valid
+
+      weight_str <- paste(
+        sapply(active_layers, function(l) sprintf("%s (%.0f%%)", l, w[l] * 100)),
+        collapse = " | "
       )
+      caption_base <- paste0("Dissimilarity = 1 \u2212 weighted Spearman r  |  n = ",
+                             length(common_rbps), " RBPs")
+
+      # ── Helper: base scatter ggplot ────────────────────────────────────────
+      make_scatter <- function(df, xlab, ylab, title, subtitle) {
+        df$Highlight <- ifelse(highlight, "Highlighted", "Other")
+        has_hl       <- length(hl_valid) > 0
+
+        p <- ggplot(df, aes(x = Dim1, y = Dim2)) +
+          geom_point(
+            aes(color = Highlight, size = Highlight),
+            alpha = 0.8
+          ) +
+          scale_color_manual(values = c("Highlighted" = "#BA3B46", "Other" = "#2c3e50")) +
+          scale_size_manual( values = c("Highlighted" = 4,         "Other" = 2.5)) +
+          # Always label all RBPs — highlighted ones in red, others in dark
+          ggrepel::geom_text_repel(
+            data     = df[df$Highlight == "Other", ],
+            aes(label = RBP),
+            color    = "#2c3e50",
+            fontface = "bold",
+            size     = 3.5,
+            max.overlaps = 20
+          ) +
+          ggrepel::geom_text_repel(
+            data     = df[df$Highlight == "Highlighted", ],
+            aes(label = RBP),
+            color    = "#BA3B46",
+            fontface = "bold",
+            size     = 4,
+            max.overlaps = 30
+          ) +
+          labs(title = title, subtitle = subtitle,
+               x = xlab, y = ylab, caption = caption_base) +
+          theme_bw() +
+          theme(
+            plot.title    = element_text(hjust = 0.5, face = "bold", size = 15),
+            plot.subtitle = element_text(hjust = 0.5, size = 11, color = "#555555"),
+            plot.caption  = element_text(hjust = 0.5, size = 9,  color = "#888888"),
+            text          = element_text(size = 12),
+            panel.grid    = element_blank(),
+            axis.line     = element_line(colour = "black"),
+            panel.border  = element_blank(),
+            legend.position = if (has_hl) "right" else "none"
+          )
+        p
+      }
+
+      # ── Plot type dispatch ─────────────────────────────────────────────────
+
+      if (plot_type == "MDS") {
+        fit     <- cmdscale(as.dist(diss_mat), k = 2, eig = TRUE)
+        eig_pos <- pmax(fit$eig, 0)
+        ve      <- round(eig_pos[1:2] / sum(eig_pos) * 100, 1)
+        df <- data.frame(RBP = common_rbps,
+                         Dim1 = fit$points[,1], Dim2 = fit$points[,2])
+        return(make_scatter(df,
+          xlab     = paste0("MDS Dim 1 (", ve[1], "% var.)"),
+          ylab     = paste0("MDS Dim 2 (", ve[2], "% var.)"),
+          title    = paste0("RBP Similarity — MDS (", cell, ")"),
+          subtitle = weight_str))
+      }
+
+      if (plot_type == "PCA") {
+        # PCA runs on the feature matrix, not the dissimilarity matrix.
+        # Use the average correlation matrix as a proxy feature space —
+        # each RBP's row in avg_cor is its "profile" of similarity to all others.
+        pca <- prcomp(avg_cor[common_rbps, common_rbps], scale. = TRUE, center = TRUE)
+        ve  <- round(summary(pca)$importance[2, 1:2] * 100, 1)
+        df  <- data.frame(RBP  = common_rbps,
+                          Dim1 = pca$x[, 1],
+                          Dim2 = pca$x[, 2])
+        return(make_scatter(df,
+          xlab     = paste0("PC1 (", ve[1], "% var.)"),
+          ylab     = paste0("PC2 (", ve[2], "% var.)"),
+          title    = paste0("RBP Similarity — PCA (", cell, ")"),
+          subtitle = weight_str))
+      }
+
+      if (plot_type == "t-SNE") {
+        if (!requireNamespace("Rtsne", quietly = TRUE)) {
+          return(ggplot() +
+                   annotate("text", x = 0.5, y = 0.5, size = 5, hjust = 0.5,
+                            label = "Package 'Rtsne' is required for t-SNE.\nInstall it with: install.packages('Rtsne')") +
+                   theme_void())
+        }
+        set.seed(42)
+        tsne <- Rtsne::Rtsne(as.dist(diss_mat), is_distance = TRUE,
+                              perplexity = min(30, floor((length(common_rbps) - 1) / 3)))
+        df   <- data.frame(RBP  = common_rbps,
+                           Dim1 = tsne$Y[, 1],
+                           Dim2 = tsne$Y[, 2])
+        return(make_scatter(df,
+          xlab     = "t-SNE 1",
+          ylab     = "t-SNE 2",
+          title    = paste0("RBP Similarity — t-SNE (", cell, ")"),
+          subtitle = weight_str))
+      }
+
+      if (plot_type == "Dendrogram") {
+        hc  <- hclust(as.dist(diss_mat), method = "ward.D2")
+        dend <- as.dendrogram(hc)
+
+        # Colour highlighted leaves
+        if (length(hl_valid) > 0) {
+          color_leaf <- function(node) {
+            if (is.leaf(node)) {
+              lbl <- attr(node, "label")
+              if (lbl %in% hl_valid) {
+                attr(node, "nodePar") <- list(lab.col = "#BA3B46",
+                                              lab.font = 2, pch = NA)
+              }
+            }
+            node
+          }
+          dend <- dendrapply(dend, color_leaf)
+        }
+
+        par(mar = c(12, 4, 4, 2))
+        plot(dend, main = paste0("RBP Similarity — Dendrogram (", cell, ")"),
+             sub  = weight_str,
+             ylab = "Height (1 \u2212 Spearman r)",
+             cex.main = 1.3, font.main = 2,
+             cex.sub  = 0.9, col.sub  = "#555555",
+             cex.lab  = 1.0, cex.axis = 0.9)
+        if (length(hl_valid) > 0)
+          legend("topright", legend = "Highlighted RBPs",
+                 text.col = "#BA3B46", text.font = 2, bty = "n", cex = 0.9)
+        return(invisible(NULL))
+      }
+    })
   })
 
 }

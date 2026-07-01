@@ -2105,3 +2105,72 @@ binding_profile_correl <- function(sim_obj,
     heatmap           = heatmap_plot
   )
 }
+
+
+# =============================================================================
+#  network_cor_matrix()
+#  ─────────────────────────────────────────────────────────────────────────────
+#  Build a square RBP × RBP Spearman correlation matrix from one data layer.
+#
+#  All three layer types are handled via a "wide matrix" strategy: features
+#  (positions / genes / events) become columns, RBPs become rows, missing
+#  features filled with NA.  A single vectorized cor(t(mat), method="spearman",
+#  use="pairwise.complete.obs") call then computes all pairwise correlations in
+#  C — avoiding the O(n²) R-level loop that was the previous bottleneck.
+#
+#    "binding"    — rbp_mat: RBP × position matrix (already aggregated per RBP).
+#    "expression" — rbp_list: named list of data.frames(Gene, t).
+#    "splicing"   — rbp_list: named list with $VulcanTable(Event.ID, dPSI).
+#
+#  Returns a symmetric matrix, values in [-1, 1].
+# =============================================================================
+network_cor_matrix <- function(type, rbp_mat = NULL, rbp_list = NULL) {
+  
+  if (type == "binding") {
+    # All RBPs already share the same position columns — one call suffices.
+    cor_m <- suppressWarnings(
+      cor(t(rbp_mat), use = "pairwise.complete.obs", method = "spearman")
+    )
+    return(cor_m)
+  }
+  
+  if (type == "expression") {
+    # Build wide matrix: rows = RBPs, cols = union of all genes (NA if absent)
+    rbps      <- names(rbp_list)
+    all_genes <- unique(unlist(lapply(rbp_list, function(df) df$Gene)))
+    
+    wide <- matrix(NA_real_, nrow = length(rbps), ncol = length(all_genes),
+                   dimnames = list(rbps, all_genes))
+    for (rbp in rbps) {
+      df <- rbp_list[[rbp]]
+      wide[rbp, df$Gene] <- df$t
+    }
+    
+    # One vectorized Spearman correlation over all RBP pairs —
+    # pairwise.complete.obs handles the NAs per pair internally in C.
+    cor_m <- suppressWarnings(
+      cor(t(wide), use = "pairwise.complete.obs", method = "spearman")
+    )
+    return(cor_m)
+  }
+  
+  if (type == "splicing") {
+    # Build wide matrix: rows = RBPs, cols = union of all Event.IDs (NA if absent)
+    rbps       <- names(rbp_list)
+    all_events <- unique(unlist(lapply(rbp_list, function(obj) obj$VulcanTable$Event.ID)))
+    
+    wide <- matrix(NA_real_, nrow = length(rbps), ncol = length(all_events),
+                   dimnames = list(rbps, all_events))
+    for (rbp in rbps) {
+      df <- rbp_list[[rbp]]$VulcanTable[, c("Event.ID", "dPSI")]
+      wide[rbp, df$Event.ID] <- df$dPSI
+    }
+    
+    cor_m <- suppressWarnings(
+      cor(t(wide), use = "pairwise.complete.obs", method = "spearman")
+    )
+    return(cor_m)
+  }
+  
+  stop("network_cor_matrix: type must be one of 'binding', 'expression', 'splicing'")
+}
