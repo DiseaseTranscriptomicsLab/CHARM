@@ -79,19 +79,8 @@ EventsK562 <- qs::qread("data/QS_Files/AvailableEvents_K562.qs")
 #EventsHEPG2 <- readRDS("data/AvailableEvents_HEPG2.RDS")
 EventsHEPG2 <- qs::qread("data/QS_Files/AvailableEvents_HEPG2.qs")
 
-#Binding similarity stuff
-similar_binding_ES_both_inc  <- qs::qread("data/QS_Files/similar_binding_ES_both_inc.qs")
-similar_binding_ES_both_dec  <- qs::qread("data/QS_Files/similar_binding_ES_both_dec.qs")
-similar_binding_ES_K562_inc  <- qs::qread("data/QS_Files/similar_binding_ES_K562_inc.qs")
-similar_binding_ES_K562_dec  <- qs::qread("data/QS_Files/similar_binding_ES_K562_dec.qs")
-similar_binding_ES_HEPG2_inc <- qs::qread("data/QS_Files/similar_binding_ES_HEPG2_inc.qs")
-similar_binding_ES_HEPG2_dec <- qs::qread("data/QS_Files/similar_binding_ES_HEPG2_dec.qs")
-similar_binding_IR_both_inc  <- qs::qread("data/QS_Files/similar_binding_IR_both_inc.qs")
-similar_binding_IR_both_dec  <- qs::qread("data/QS_Files/similar_binding_IR_both_dec.qs")
-similar_binding_IR_K562_inc  <- qs::qread("data/QS_Files/similar_binding_IR_K562_inc.qs")
-similar_binding_IR_K562_dec  <- qs::qread("data/QS_Files/similar_binding_IR_K562_dec.qs")
-similar_binding_IR_HEPG2_inc <- qs::qread("data/QS_Files/similar_binding_IR_HEPG2_inc.qs")
-similar_binding_IR_HEPG2_dec <- qs::qread("data/QS_Files/similar_binding_IR_HEPG2_dec.qs")
+#Binding similarity stuff — loaded lazily on first Network tab use (see server)
+# similar_binding_* objects are loaded via the binding_sim_cache reactive below
 
 
 ui <- fluidPage(
@@ -117,7 +106,32 @@ ui <- fluidPage(
       Shiny.addCustomMessageHandler('toggleCursor', function(state) {
         document.body.style.cursor = state ? 'wait' : 'default';
       });
-    "))
+      Shiny.addCustomMessageHandler('clickButton', function(msg) {
+        setTimeout(function() {
+          var btn = document.getElementById(msg.id);
+          if (btn) btn.click();
+        }, msg.delay || 300);
+      });
+      Shiny.addCustomMessageHandler('showStatus', function(msg) {
+        var bar = document.getElementById('charm-status-bar');
+        if (!bar) return;
+        if (msg.show) {
+          bar.innerText = msg.text || 'Loading\u2026';
+          bar.style.display = 'block';
+        } else {
+          bar.style.display = 'none';
+        }
+      });
+    ")),
+    
+    # Persistent status bar — shown during long computations
+    tags$div(
+      id = "charm-status-bar",
+      style = "display:none; position:fixed; top:0; left:0; right:0; z-index:9999;
+               background:#2c3e50; color:white; font-weight:bold; font-size:14px;
+               padding:10px 20px; text-align:center;
+               box-shadow:0 2px 8px rgba(0,0,0,0.3);"
+    )
   ),
   
   # Tabset with 5 tabs
@@ -128,6 +142,7 @@ ui <- fluidPage(
     # Home tab
     tabPanel(
       tagList(fa("home", fill = "black", height = "1em"), " Home"),
+      value = "Home",
       fluidPage(
         fluidRow(
           column(
@@ -146,21 +161,42 @@ ui <- fluidPage(
         ),
         fluidRow(
           column(
-            6,
-            div(
-              style = "background-color: #EAEBEB; color: black; border: 2px solid #2c3e50; border-radius: 20px; padding: 40px; text-align: center; margin: 15px;",
-              div(style = "margin-bottom: 10px;", fa("globe", fill = "black", height = "3em")),
-              tags$h3("Explore", style = "font-weight: bold;"),
-              tags$p("Investigate how a known RBP affects expression, splicing, and binding, based on ENCODE's gene silencing series and eCLIP data. Find out which genes/gene sets are more influenced by RBPs")
+            4,
+            tags$div(
+              style = "cursor:pointer;",
+              onclick = "Shiny.setInputValue('home_go_explore', Math.random());",
+              tags$div(
+                style = "background-color:#EAEBEB; color:black; border:2px solid #2c3e50; border-radius:20px; padding:40px; text-align:center; margin:15px;",
+                div(style = "margin-bottom:10px;", fa("globe", fill = "black", height = "3em")),
+                tags$h3("Explore", style = "font-weight:bold;"),
+                tags$p("Investigate how a known RBP affects expression, splicing, and binding, based on ENCODE's gene silencing series and eCLIP data.")
+              )
             )
           ),
           column(
-            6,
-            div(
-              style = "background-color: #EAEBEB; color: black; border: 2px solid #2c3e50; border-radius: 20px; padding: 40px; text-align: center; margin: 15px;",
-              div(style = "margin-bottom: 10px;", fa("map", fill = "black", height = "3em")),
-              tags$h3("Discover", style = "font-weight: bold;"),
-              tags$p("Users can input their own expression, splicing, or binding data to discover which RBPs are more likely to be altered on your biological system.")
+            4,
+            tags$div(
+              style = "cursor:pointer;",
+              onclick = "Shiny.setInputValue('home_go_discover', Math.random());",
+              tags$div(
+                style = "background-color:#EAEBEB; color:black; border:2px solid #2c3e50; border-radius:20px; padding:40px; text-align:center; margin:15px;",
+                div(style = "margin-bottom:10px;", fa("map", fill = "black", height = "3em")),
+                tags$h3("Discover", style = "font-weight:bold;"),
+                tags$p("Upload your own expression, splicing, or binding data to discover which RBPs are most likely altered in your biological system.")
+              )
+            )
+          ),
+          column(
+            4,
+            tags$div(
+              style = "cursor:pointer;",
+              onclick = "Shiny.setInputValue('home_go_network', Math.random());",
+              tags$div(
+                style = "background-color:#EAEBEB; color:black; border:2px solid #2c3e50; border-radius:20px; padding:40px; text-align:center; margin:15px;",
+                div(style = "margin-bottom:10px;", fa("project-diagram", fill = "black", height = "3em")),
+                tags$h3("Network", style = "font-weight:bold;"),
+                tags$p("Explore multi-omic RBP similarity via an integrated network combining expression, splicing, and binding layers.")
+              )
             )
           )
         )
@@ -170,6 +206,7 @@ ui <- fluidPage(
     # Expression tab
     tabPanel(
       tagList(fa("dna", fill = "black", height = "1em"), " Expression"),
+      value = "Expression",
       fluidPage(
         fluidRow(
           # Left sidebar
@@ -344,21 +381,12 @@ ui <- fluidPage(
           # Right content area
           column(
             width = 9,
-            tags$h3("Expression Data  <- "),
+            tags$h3("Expression Results"),
+            uiOutput("expr_nav_bar"),
             
             # --- Explore Mode (default mode) ---
             conditionalPanel(
               condition = "input.expr_mode == 'Explore' && input.expr_dataset != 'Similar RBPs'",
-              # --- Warning message ---
-              div(
-                "⚠ Please press reset after every plot!",
-                style = "border: 2px solid #f0ad4e;
-               background-color: #fff3cd;
-               padding: 8px;
-               border-radius: 6px;
-               font-weight: bold;
-               color: #856404;"
-              ),
               
               # --- Top panel: shows gene OR hallmark plot, whichever was searched most recently ---
               # (server-controlled visibility, see expr_top_panel_ui in server)
@@ -366,52 +394,48 @@ ui <- fluidPage(
               
               # --- Default RBP plots ---
               fluidRow(
-                column(width = 6, plotOutput("expr_violin", height = "400px")),
+                column(width = 6,
+                  plotOutput("expr_violin", height = "400px"),
+                  uiOutput("dl_ui_expr_violin")
+                ),
                 column(
                   width = 6,
                   plotOutput("shrna_plot"),
+                  uiOutput("dl_ui_shrna"),
                   uiOutput("shrna_warning")
                 )
               ),
               fluidRow(
-                column(width = 6, plotlyOutput("volcano_plot", height = "450px")),
-                column(width = 6, DTOutput("volcano_table"))
+                column(width = 6,
+                  plotlyOutput("volcano_plot", height = "450px"),
+                  uiOutput("dl_ui_volcano")
+                ),
+                column(width = 6,
+                  DTOutput("volcano_table"),
+                  uiOutput("dl_ui_volcano_table")
+                )
               ),
               fluidRow(
-                column(width = 6, plotOutput("gsea_plot", height = "600px")),
-                column(width = 6, DTOutput("geneset_table"))
+                column(width = 6,
+                  plotOutput("gsea_plot", height = "600px"),
+                  uiOutput("dl_ui_gsea")
+                ),
+                column(width = 6,
+                  DTOutput("geneset_table"),
+                  uiOutput("dl_ui_geneset_table")
+                )
               )
             ),
             
             # --- Similar RBPs (Explore Mode, special layout) ---
             conditionalPanel(
               condition = "input.expr_mode == 'Explore' && input.expr_dataset == 'Similar RBPs'",
-              div(
-                "⚠ Please press reset after every plot!",
-                style = "border: 2px solid #f0ad4e;
-               background-color: #fff3cd;
-               padding: 8px;
-               border-radius: 6px;
-               font-weight: bold;
-               color: #856404;
-               margin-bottom: 10px;"
-              ),
               uiOutput("similar_expr_plots")
             ),
             
             # --- Discovery Mode ---
             conditionalPanel(
               condition = "input.expr_mode == 'Discovery'",
-              div(
-                "⚠ Please press reset after every plot!",
-                style = "border: 2px solid #f0ad4e;
-               background-color: #fff3cd;
-               padding: 8px;
-               border-radius: 6px;
-               font-weight: bold;
-               color: #856404;
-               margin-bottom: 10px;"
-              ),
               uiOutput("userfilesimilar_expr"),
               uiOutput("userfilesimilar_gsea")
             )
@@ -423,6 +447,7 @@ ui <- fluidPage(
     # Splicing tab
     tabPanel(
       tagList(fa("scissors", fill = "black", height = "1em"), " Splicing"),
+      value = "Splicing",
       fluidPage(
         fluidRow(
           column(
@@ -512,6 +537,12 @@ ui <- fluidPage(
                           tagList(fa("search"), " Search"),
                           class = "btn btn-primary",
                           style = "margin-right: 10px; border-radius: 20px;"
+                        ),
+                        actionButton(
+                          "splice_event_reset_btn",
+                          tagList(fa("redo"), " Reset"),
+                          class = "btn btn-secondary",
+                          style = "border-radius: 20px;"
                         )
                       )
                     )
@@ -562,65 +593,47 @@ ui <- fluidPage(
           column(
             width = 9,
             tags$h3("Splicing Data Results"),
+            uiOutput("splice_nav_bar"),
             
             # --- Explore Mode (default mode, NOT Similar RBPs) ---
             conditionalPanel(
               condition = "input.splice_mode == 'Explore' && input.splice_dataset != 'Similar RBPs'",
-              # --- Warning message ---
-              div(
-                "⚠ Please press reset after every plot!",
-                style = "border: 2px solid #f0ad4e;
-               background-color: #fff3cd;
-               padding: 8px;
-               border-radius: 6px;
-               font-weight: bold;
-               color: #856404;
-               margin-bottom: 10px;"
-              ),
               
               # --- Top panel: Event ID plot, shown when searched (server-controlled) ---
               uiOutput("splice_top_panel_ui"),
               
               # --- Default Explore-Mode Plots ---
               fluidRow(
-                column(width = 6, plotOutput("violin_splice_plot", height = "400px")),
-                column(width = 6, plotOutput("plot_shrna_effect", height = "400px"))
+                column(width = 6,
+                  plotOutput("violin_splice_plot", height = "400px"),
+                  uiOutput("dl_ui_splice_violin")
+                ),
+                column(width = 6,
+                  plotOutput("plot_shrna_effect", height = "400px"),
+                  uiOutput("dl_ui_shrna_splice")
+                )
               ),
               fluidRow(
-                column(width = 6, plotlyOutput("plot_splice_volcano", height = "450px")),
-                column(width = 6, DTOutput("splice_volcano_table"))
+                column(width = 6,
+                  plotlyOutput("plot_splice_volcano", height = "450px"),
+                  uiOutput("dl_ui_splice_volcano")
+                ),
+                column(width = 6,
+                  DTOutput("splice_volcano_table"),
+                  uiOutput("dl_ui_splice_volcano_table")
+                )
               )
             ),
             
             # --- Explore Mode: Similar RBPs ---
             conditionalPanel(
               condition = "input.splice_mode == 'Explore' && input.splice_dataset == 'Similar RBPs'",
-              div(
-                "⚠ Please press reset after every plot!",
-                style = "border: 2px solid #f0ad4e;
-               background-color: #fff3cd;
-               padding: 8px;
-               border-radius: 6px;
-               font-weight: bold;
-               color: #856404;
-               margin-bottom: 10px;"
-              ),
               uiOutput("similar_splice_plots")
             ),
             
             # --- Discovery Mode ---
             conditionalPanel(
               condition = "input.splice_mode == 'Discovery'",
-              div(
-                "⚠ Please press reset after every plot!",
-                style = "border: 2px solid #f0ad4e;
-             background-color: #fff3cd;
-             padding: 8px;
-             border-radius: 6px;
-             font-weight: bold;
-             color: #856404;
-             margin-bottom: 10px;"
-              ),
               shinycssloaders::withSpinner(
                 plotOutput("user_file_initial_plot_splice", height = "420px"),
                 type = 6
@@ -638,6 +651,7 @@ ui <- fluidPage(
     # Binding tab
     tabPanel(
       tagList(fa("link", fill = "black", height = "1em"), " Binding"),
+      value = "Binding",
       fluidPage(
         fluidRow(
           column(
@@ -687,6 +701,7 @@ ui <- fluidPage(
                          style = "font-size: 12px; color: #666; margin-top: -5px;"),
                   
                   uiOutput("binding_target_ui"),
+                  uiOutput("binding_target_warning"),
                   uiOutput("binding_dpsi_ui"),
                   
                   selectInput("binding_metric", "Metric:",
@@ -783,17 +798,7 @@ ui <- fluidPage(
             width = 9,
             
             tags$h3("Binding Data Results"),
-            
-            div(
-              "⚠ Please press reset after every plot!",
-              style = "border: 2px solid #f0ad4e;
-        background-color: #fff3cd;
-        padding: 8px;
-        border-radius: 6px;
-        font-weight: bold;
-        color: #856404;
-        margin-bottom: 10px;"
-            ),
+            uiOutput("binding_nav_bar"),
             
             div(
               tagList(
@@ -836,6 +841,7 @@ ui <- fluidPage(
     # Network tab
     tabPanel(
       tagList(fa("project-diagram", fill = "black", height = "1em"), " Network"),
+      value = "Network",
       fluidPage(
         fluidRow(
           # ── Left sidebar ──────────────────────────────────────────────────
@@ -882,7 +888,7 @@ ui <- fluidPage(
                            font-size:11px; color:#856404;",
                   tags$b("\u26a0 Note:"),
                   " Expression and Splicing layers build large feature matrices
-                    and may take several minutes to compute depending on the
+                    and may take 10\u201330 seconds to compute depending on the
                     number of RBPs. Please be patient after clicking Plot."
                 )
               ),
@@ -915,22 +921,6 @@ ui <- fluidPage(
                 style = "font-size: 11px; color: #888; margin-top: -5px;"
               ),
 
-              # ── RBP highlight search ──
-              tags$h5("Highlight RBPs:", style = "font-weight: bold;"),
-              tags$p(
-                HTML("&#9888; RBPs must be selected <b>before</b> clicking Plot."),
-                style = "font-size: 11px; color: #856404; margin-top: -5px;"
-              ),
-              selectizeInput(
-                "network_highlight_rbps",
-                label    = NULL,
-                choices  = sort(names(Charm.object)),
-                multiple = TRUE,
-                options  = list(placeholder = "Type to search RBPs...")
-              ),
-
-              hr(),
-
               conditionalPanel(
                 condition = "input.network_layers.indexOf('Expression') !== -1",
                 sliderInput("network_weight_expr",   "Expression weight:",
@@ -945,6 +935,20 @@ ui <- fluidPage(
                 condition = "input.network_layers.indexOf('Binding') !== -1",
                 sliderInput("network_weight_binding","Binding weight:",
                             min = 0, max = 1, value = 0.34, step = 0.05)
+              ),
+
+              hr(),
+
+              # ── RBP highlight search ──
+              tags$h5("Highlight RBPs:", style = "font-weight: bold;"),
+              tags$p("Selected RBPs will be highlighted in red on the plot.",
+                     style = "font-size: 11px; color: #888; margin-top: -5px;"),
+              selectizeInput(
+                "network_highlight_rbps",
+                label   = NULL,
+                choices = sort(names(Charm.object)),
+                multiple = TRUE,
+                options  = list(placeholder = "Type to search RBPs...")
               ),
 
               hr(),
@@ -973,7 +977,8 @@ ui <- fluidPage(
             shinycssloaders::withSpinner(
               plotOutput("network_mds_plot", height = "600px"),
               type = 6
-            )
+            ),
+            uiOutput("dl_ui_network")
           )
         )
       )
@@ -1006,6 +1011,161 @@ ui <- fluidPage(
 # ---- Server ----
 
 server <- function(input, output, session) {
+  
+  # ── Downloadable plot stores ──────────────────────────────────────────────
+  # Each reactiveVal holds the last ggplot rendered for that output,
+  # so downloadHandler can call ggsave() on it at any time.
+  dl_store <- list(
+    expr_violin    = reactiveVal(NULL),
+    shrna          = reactiveVal(NULL),
+    volcano        = reactiveVal(NULL),
+    gsea           = reactiveVal(NULL),
+    expr_gene      = reactiveVal(NULL),
+    expr_hallmark  = reactiveVal(NULL),
+    splice_violin  = reactiveVal(NULL),
+    shrna_splice   = reactiveVal(NULL),
+    splice_volcano = reactiveVal(NULL),
+    binding        = reactiveVal(NULL),
+    network        = reactiveVal(NULL)
+  )
+  
+  # ── Status bar helpers ────────────────────────────────────────────────────
+  show_status <- function(msg = "Loading\u2026") {
+    session$sendCustomMessage("showStatus", list(show = TRUE, text = msg))
+    session$sendCustomMessage("toggleCursor", TRUE)
+  }
+  hide_status <- function() {
+    session$sendCustomMessage("showStatus", list(show = FALSE))
+    session$sendCustomMessage("toggleCursor", FALSE)
+  }
+  
+  # ── Download handlers ─────────────────────────────────────────────────────
+  # Helper: build a plot downloadHandler from a dl_store key
+  make_dl_handler <- function(store_key, filename_prefix,
+                              width = 10, height = 7, dpi = 300) {
+    downloadHandler(
+      filename = function() {
+        rbp <- if (!is.null(input$expr_search_rbp) && nchar(input$expr_search_rbp) > 0)
+                 input$expr_search_rbp
+               else if (!is.null(input$splice_search) && nchar(input$splice_search) > 0)
+                 input$splice_search
+               else if (!is.null(input$binding_search) && nchar(input$binding_search) > 0)
+                 input$binding_search
+               else "plot"
+        paste0(filename_prefix, "_", rbp, "_", Sys.Date(), ".png")
+      },
+      content = function(file) {
+        p <- dl_store[[store_key]]()
+        req(p)
+        ggplot2::ggsave(file, plot = p, device = "png",
+                        width = width, height = height, dpi = dpi, bg = "white")
+      }
+    )
+  }
+  
+  # Helper: build a table downloadHandler from a reactiveVal holding a data.frame
+  make_table_dl_handler <- function(data_fn, filename_prefix) {
+    downloadHandler(
+      filename = function() paste0(filename_prefix, "_", Sys.Date(), ".csv"),
+      content  = function(file) {
+        df <- data_fn()
+        req(!is.null(df) && nrow(df) > 0)
+        write.csv(df, file, row.names = FALSE)
+      }
+    )
+  }
+  
+  # Helper: render a download button only once the corresponding store is non-NULL
+  make_dl_ui <- function(store_key, dl_id, label = "\u2193 Download plot") {
+    output[[paste0("dl_ui_", store_key)]] <- renderUI({
+      req(!is.null(dl_store[[store_key]]()))
+      downloadButton(dl_id, label,
+                     class = "btn btn-sm btn-default",
+                     style = "margin-top:5px;")
+    })
+  }
+  
+  # ── Plot download handlers ─────────────────────────────────────────────────
+  output$dl_expr_violin   <- make_dl_handler("expr_violin",   "expression_violin",   width = 8,  height = 6)
+  output$dl_shrna         <- make_dl_handler("shrna",         "shrna_efficiency",    width = 8,  height = 6)
+  output$dl_volcano       <- make_dl_handler("volcano",       "expression_volcano",  width = 8,  height = 7)
+  output$dl_gsea          <- make_dl_handler("gsea",          "expression_gsea",     width = 10, height = 8)
+  output$dl_expr_gene     <- make_dl_handler("expr_gene",     "expression_gene",     width = 8,  height = 7)
+  output$dl_expr_hallmark <- make_dl_handler("expr_hallmark", "expression_hallmark", width = 8,  height = 7)
+  output$dl_splice_violin <- make_dl_handler("splice_violin", "splicing_violin",     width = 8,  height = 6)
+  output$dl_shrna_splice  <- make_dl_handler("shrna_splice",  "shrna_efficiency_splice", width = 8, height = 6)
+  output$dl_splice_volcano<- make_dl_handler("splice_volcano","splicing_volcano",    width = 8,  height = 7)
+  output$dl_binding       <- make_dl_handler("binding",       "binding_map",         width = 12, height = 9)
+  output$dl_network       <- make_dl_handler("network",       "network",             width = 12, height = 9)
+  
+  # ── Conditional download button UIs (appear only after plot is rendered) ──
+  make_dl_ui("expr_violin",   "dl_expr_violin")
+  make_dl_ui("shrna",         "dl_shrna")
+  make_dl_ui("volcano",       "dl_volcano")
+  make_dl_ui("gsea",          "dl_gsea")
+  make_dl_ui("expr_gene",     "dl_expr_gene")
+  make_dl_ui("expr_hallmark", "dl_expr_hallmark")
+  make_dl_ui("splice_violin", "dl_splice_violin")
+  make_dl_ui("shrna_splice",  "dl_shrna_splice")
+  make_dl_ui("splice_volcano","dl_splice_volcano")
+  make_dl_ui("binding",       "dl_binding")
+  make_dl_ui("network",       "dl_network")
+  
+  # ── Table download handlers ────────────────────────────────────────────────
+  output$dl_volcano_table        <- make_table_dl_handler(display_table,  "expression_volcano_table")
+  output$dl_geneset_table        <- make_table_dl_handler(gsea_table_rv,  "expression_gsea_table")
+  output$dl_splice_volcano_table <- make_table_dl_handler(
+    reactive({ res <- result_splice(); if (!is.null(res)) res$top_table else NULL }),
+    "splicing_volcano_table"
+  )
+  
+  # Table download button UIs
+  output$dl_ui_volcano_table <- renderUI({
+    req(!is.null(display_table()) && nrow(display_table()) > 0)
+    downloadButton("dl_volcano_table", "\u2193 Download table",
+                   class = "btn btn-sm btn-default", style = "margin-top:5px;")
+  })
+  output$dl_ui_geneset_table <- renderUI({
+    req(!is.null(gsea_table_rv()) && nrow(gsea_table_rv()) > 0)
+    downloadButton("dl_geneset_table", "\u2193 Download table",
+                   class = "btn btn-sm btn-default", style = "margin-top:5px;")
+  })
+  output$dl_ui_splice_volcano_table <- renderUI({
+    res <- result_splice()
+    req(!is.null(res) && !is.null(res$top_table) && nrow(res$top_table) > 0)
+    downloadButton("dl_splice_volcano_table", "\u2193 Download table",
+                   class = "btn btn-sm btn-default", style = "margin-top:5px;")
+  })
+  
+  # ── Lazy-load all 12 similar_binding_* objects on first Network/Binding use ──
+  # Using a reactive means the 12 qs::qread() calls only happen the first time
+  # this reactive is evaluated, and the result is cached for all subsequent calls.
+  # This shaves the 12 file reads off app startup time.
+  binding_sim_cache <- reactive({
+    keys <- c(
+      "ES_both_inc",  "ES_both_dec",
+      "ES_K562_inc",  "ES_K562_dec",
+      "ES_HEPG2_inc", "ES_HEPG2_dec",
+      "IR_both_inc",  "IR_both_dec",
+      "IR_K562_inc",  "IR_K562_dec",
+      "IR_HEPG2_inc", "IR_HEPG2_dec"
+    )
+    objs <- lapply(keys, function(k) {
+      qs::qread(paste0("data/QS_Files/similar_binding_", k, ".qs"))
+    })
+    names(objs) <- paste0("similar_binding_", keys)
+    objs
+  })
+  observeEvent(input$home_go_explore, {
+    updateTabsetPanel(session, "main_tabs", selected = "Expression")
+  })
+  observeEvent(input$home_go_discover, {
+    updateTabsetPanel(session, "main_tabs", selected = "Expression")
+    updateRadioButtons(session, "expr_mode", selected = "Discovery")
+  })
+  observeEvent(input$home_go_network, {
+    updateTabsetPanel(session, "main_tabs", selected = "Network")
+  })
   
   
   image_to_ggplot <- function(path) {
@@ -1058,6 +1218,254 @@ server <- function(input, output, session) {
   # Reactive storage
   display_table <- reactiveVal(NULL)
   rbp_current   <- reactiveVal(NULL)
+  gsea_table_rv <- reactiveVal(NULL)
+  
+  # ── Cross-tab RBP navigation ──────────────────────────────────────────────
+  # nav_rbp holds the RBP to jump to, plus the source tab so we don't
+  # fire the observer back on the originating tab.
+  nav_rbp <- reactiveVal(list(rbp = NULL, from = NULL))
+  binding_nav_trigger <- reactiveVal(NULL)
+  binding_nav_target  <- reactiveVal(NULL)   # stores the pre-chosen target for nav
+  
+  # When binding_nav_trigger is set, watch for binding_search to update
+  # (which happens synchronously when updateSelectizeInput fires), then
+  # select the target and click Search. We watch binding_search rather than
+  # binding_target because binding_target is NULL until the user interacts
+  # with it, so its change never fires when navigating programmatically.
+  observeEvent(input$binding_search, {
+    trigger_rbp <- binding_nav_trigger()
+    req(!is.null(trigger_rbp))
+    req(input$binding_search == trigger_rbp)
+    
+    data <- binding_data()
+    req(!is.null(data))
+    available_targets <- names(data[[trigger_rbp]])
+    
+    target_to_use <- if (trigger_rbp %in% available_targets) {
+      trigger_rbp
+    } else if (length(available_targets) > 0) {
+      available_targets[1]
+    } else {
+      NULL
+    }
+    
+    req(!is.null(target_to_use))
+    binding_nav_trigger(NULL)          # clear so this doesn't re-fire
+    binding_nav_target(target_to_use)  # store target for results() to pick up
+    
+    # Also update the selectize so the UI reflects the chosen target
+    updateSelectizeInput(session, "binding_target", selected = target_to_use)
+    
+    # Click Search after a delay so results() fires with binding_nav_target set
+    session$sendCustomMessage("clickButton", list(id = "search_btn", delay = 500))
+  }, ignoreNULL = TRUE, ignoreInit = TRUE)
+  
+  # Helper: render the navigation bar for a given tab
+  make_nav_bar <- function(rbp, current_tab) {
+    other_tabs <- setdiff(c("Expression", "Splicing", "Binding"), current_tab)
+    links <- lapply(other_tabs, function(tab) {
+      btn_id <- paste0("nav_to_", tab, "_from_", current_tab)
+      icon_name <- switch(tab,
+        "Expression" = "dna",
+        "Splicing"   = "scissors",
+        "Binding"    = "link"
+      )
+      actionButton(
+        btn_id,
+        tagList(fa(icon_name, height = "0.9em"), paste0(" View in ", tab, " \u2192")),
+        class = "btn btn-sm btn-outline-secondary",
+        style = "margin-right:8px; border-radius:20px;"
+      )
+    })
+    div(
+      style = "background:#f0f4f8; border:1px solid #d0d8e4; border-radius:8px;
+               padding:8px 14px; margin-bottom:12px; display:flex; align-items:center;",
+      tags$span(
+        style = "font-weight:bold; margin-right:12px; color:#2c3e50;",
+        paste0("Viewing: ", rbp)
+      ),
+      tagList(links)
+    )
+  }
+  
+  # Expression nav bar — shown when an RBP is active
+  output$expr_nav_bar <- renderUI({
+    rbp <- rbp_current()
+    req(!is.null(rbp))
+    make_nav_bar(rbp, "Expression")
+  })
+  
+  # Splicing nav bar
+  output$splice_nav_bar <- renderUI({
+    rbp <- rbp_current()
+    req(!is.null(rbp))
+    make_nav_bar(rbp, "Splicing")
+  })
+  
+  # Binding nav bar — shown when binding_search is set and a plot has been made
+  output$binding_nav_bar <- renderUI({
+    rbp <- input$binding_search
+    req(!is.null(rbp) && nchar(rbp) > 0 && show_plot())
+    make_nav_bar(rbp, "Binding")
+  })
+  
+  # ── Navigation button handlers ─────────────────────────────────────────────
+  # Expression → Splicing
+  observeEvent(input$nav_to_Splicing_from_Expression, {
+    rbp <- rbp_current(); req(!is.null(rbp))
+    updateTabsetPanel(session, "main_tabs", selected = "Splicing")
+    updateRadioButtons(session, "splice_mode", selected = "Explore")
+    updateSelectizeInput(session, "splice_search", selected = rbp)
+    nav_rbp(list(rbp = rbp, from = "Expression", to = "Splicing"))
+  })
+  
+  # Expression → Binding
+  observeEvent(input$nav_to_Binding_from_Expression, {
+    rbp <- rbp_current(); req(!is.null(rbp))
+    updateTabsetPanel(session, "main_tabs", selected = "Binding")
+    updateRadioButtons(session, "binding_mode", selected = "Explore")
+    updateSelectizeInput(session, "binding_search", selected = rbp)
+    nav_rbp(list(rbp = rbp, from = "Expression", to = "Binding"))
+  })
+  
+  # Splicing → Expression
+  observeEvent(input$nav_to_Expression_from_Splicing, {
+    rbp <- rbp_current(); req(!is.null(rbp))
+    updateTabsetPanel(session, "main_tabs", selected = "Expression")
+    updateRadioButtons(session, "expr_mode", selected = "Explore")
+    updateSelectizeInput(session, "expr_search_rbp", selected = rbp)
+    nav_rbp(list(rbp = rbp, from = "Splicing", to = "Expression"))
+  })
+  
+  # Splicing → Binding
+  observeEvent(input$nav_to_Binding_from_Splicing, {
+    rbp <- rbp_current(); req(!is.null(rbp))
+    updateTabsetPanel(session, "main_tabs", selected = "Binding")
+    updateRadioButtons(session, "binding_mode", selected = "Explore")
+    updateSelectizeInput(session, "binding_search", selected = rbp)
+    nav_rbp(list(rbp = rbp, from = "Splicing", to = "Binding"))
+  })
+  
+  # Binding → Expression
+  observeEvent(input$nav_to_Expression_from_Binding, {
+    rbp <- input$binding_search; req(!is.null(rbp) && nchar(rbp) > 0)
+    updateTabsetPanel(session, "main_tabs", selected = "Expression")
+    updateRadioButtons(session, "expr_mode", selected = "Explore")
+    updateSelectizeInput(session, "expr_search_rbp", selected = rbp)
+    nav_rbp(list(rbp = rbp, from = "Binding", to = "Expression"))
+  })
+  
+  # Binding → Splicing
+  observeEvent(input$nav_to_Splicing_from_Binding, {
+    rbp <- input$binding_search; req(!is.null(rbp) && nchar(rbp) > 0)
+    updateTabsetPanel(session, "main_tabs", selected = "Splicing")
+    updateRadioButtons(session, "splice_mode", selected = "Explore")
+    updateSelectizeInput(session, "splice_search", selected = rbp)
+    nav_rbp(list(rbp = rbp, from = "Binding", to = "Splicing"))
+  })
+  
+  # ── Auto-fire search when landing via navigation ───────────────────────────
+  # Each observer fires only when nav_rbp targets *its* tab, so the originating
+  # tab's search is never re-triggered.
+  observeEvent(nav_rbp(), {
+    nav <- nav_rbp()
+    req(!is.null(nav$rbp), !is.null(nav$to))
+    
+    if (nav$to == "Expression") {
+      rbp_sel   <- nav$rbp
+      charm_obj <- current_charm_expr()
+      shrna_obj <- current_shrna_expr()
+      req(rbp_sel %in% names(charm_obj))
+      rbp_current(rbp_sel)
+      expr_top_panel(NULL)
+      output$expr_violin    <- renderPlot(NULL)
+      output$shrna_plot     <- renderPlot(NULL)
+      output$volcano_plot   <- renderPlotly(NULL)
+      output$volcano_table  <- renderDT(NULL)
+      output$gsea_plot      <- renderPlot(NULL)
+      output$geneset_table  <- renderDT(NULL)
+      display_table(NULL)
+      output$expr_violin <- renderPlot({
+        p <- violinplotter(charm_obj, rbp_sel)
+        dl_store$expr_violin(p); p
+      })
+      output$shrna_plot <- renderPlot({
+        p <- plot_shRNA_effect(shrna_obj, rbp_sel)
+        dl_store$shrna(p); p
+      })
+      result <- plot_rbp_volcano(charm_obj, rbp_sel)
+      tbl <- as.data.frame(result$top_table)
+      if (!"gene" %in% colnames(tbl)) tbl$gene <- rownames(tbl)
+      tbl <- tbl[, c("gene", setdiff(colnames(tbl), "gene"))]
+      tbl$highlight <- ifelse(tbl$gene == rbp_sel, "RBP", "None")
+      display_table(tbl)
+      output$volcano_plot <- renderPlotly({
+        p <- make_volcano_plot(display_table(), rbp_sel)
+        dl_store$volcano(p)
+        ggplotly(p, tooltip = "text", source = "volcano") %>% event_register("plotly_click")
+      })
+      output$volcano_table <- renderDT({
+        datatable(display_table(), filter = "none", selection = "single",
+                  rownames = FALSE, options = list(pageLength = 10, scrollX = TRUE, searching = TRUE))
+      })
+      gsea_result <- plot_gsea(charm_obj, rbp_sel, thresh = 0.05)
+      gsea_table_rv(gsea_result$geneset_table)
+      output$gsea_plot <- renderPlot({
+        p <- gsea_result$gsea_plot; dl_store$gsea(p); p
+      })
+      output$geneset_table <- renderDT({
+        datatable(gsea_result$geneset_table, filter = "none", rownames = FALSE,
+                  options = list(pageLength = 10, scrollX = TRUE))
+      })
+    }
+    
+    if (nav$to == "Splicing") {
+      rbp_sel   <- nav$rbp
+      charm_obj <- current_charm_splice()
+      shrna_obj <- current_shrna_splice()
+      req(rbp_sel %in% names(charm_obj))
+      rbp_current(rbp_sel)
+      splice_top_panel(NULL)
+      output$violin_splice_plot  <- renderPlot(NULL)
+      output$plot_shrna_effect   <- renderPlot(NULL)
+      output$plot_splice_volcano <- renderPlotly(NULL)
+      output$splice_volcano_table <- renderDT(NULL)
+      output$violin_splice_plot <- renderPlot({
+        p <- violin_splice_plot(charm_obj, rbp_sel)
+        dl_store$splice_violin(p); p
+      })
+      output$plot_shrna_effect <- renderPlot({
+        p <- plot_shRNA_effect(shrna_obj, rbp_sel)
+        dl_store$shrna_splice(p); p
+      })
+      splice_res <- plot_splice_volcano(charm_obj, rbp_sel)
+      req(!is.null(splice_res))
+      result_splice(splice_res)
+      output$plot_splice_volcano <- renderPlotly({
+        req(result_splice())
+        tbl <- result_splice()$top_table
+        p <- ggplot(tbl, aes(x = dPSI, y = Pdiff, key = Event.ID, color = highlight)) +
+          geom_point(alpha = 0.7) +
+          scale_color_manual(values = c("None" = "#CCCCCC", "RBP" = "#A10702", "Selected" = "#008057")) +
+          theme_bw() + theme(legend.position = "none") +
+          labs(title = paste("Volcano Plot:", rbp_sel), x = "dPSI (shRNA - CTRL)", y = "PDiff")
+        dl_store$splice_volcano(p)
+        ggplotly(p, tooltip = "key", source = "splice_volcano") %>% event_register("plotly_click")
+      })
+      output$splice_volcano_table <- DT::renderDataTable({
+        req(result_splice())
+        result_splice()$top_table %>% select(-text)
+      }, rownames = FALSE, selection = "single", options = list(pageLength = 10))
+    }
+    
+    if (nav$to == "Binding") {
+      rbp <- nav$rbp
+      show_status(paste0("Loading binding data for ", rbp, " \u2014 please wait\u2026"))
+      binding_nav_trigger(rbp)
+    }
+    
+    nav_rbp(list(rbp = NULL, from = NULL, to = NULL))  # reset to avoid re-firing
+  }, ignoreNULL = TRUE, ignoreInit = TRUE)
   
   # Tracks which panel (if any) should appear pinned at the top of the
   # Expression Explore page: "gene", "hallmark", or NULL (none).
@@ -1067,9 +1475,15 @@ server <- function(input, output, session) {
     panel <- expr_top_panel()
     if (is.null(panel)) return(NULL)
     if (panel == "gene") {
-      fluidRow(column(width = 12, plotOutput("expr_gene_plot", height = "600px")))
+      tagList(
+        fluidRow(column(width = 12, plotOutput("expr_gene_plot", height = "600px"))),
+        uiOutput("dl_ui_expr_gene")
+      )
     } else if (panel == "hallmark") {
-      fluidRow(column(width = 12, plotOutput("expr_hallmark_plot", height = "600px")))
+      tagList(
+        fluidRow(column(width = 12, plotOutput("expr_hallmark_plot", height = "600px"))),
+        uiOutput("dl_ui_expr_hallmark")
+      )
     } else {
       NULL
     }
@@ -1216,9 +1630,23 @@ server <- function(input, output, session) {
     
     output$file_warning_expr <- renderUI({
       if (upload_ok()) {
-        div(style="color:green;font-weight:bold;margin-top:10px;", "Upload complete!")
+        df_prev <- user_expr_df()
+        tagList(
+          div(style = "color:green; font-weight:bold; margin-top:10px;",
+              sprintf("\u2713 Upload successful — %d genes detected.", nrow(df_prev))),
+          tags$small(style = "color:#666;",
+                     paste("Columns:", paste(colnames(df_prev), collapse = ", "))),
+          br(),
+          DT::renderDataTable(
+            head(df_prev, 6),
+            options = list(dom = "t", ordering = FALSE, pageLength = 6),
+            rownames = FALSE,
+            class    = "compact"
+          )
+        )
       } else {
-        div(style="color:red;font-weight:bold;margin-top:10px;", paste("Upload failed:", error_msg))
+        div(style = "color:red; font-weight:bold; margin-top:10px;",
+            paste("Upload failed:", error_msg))
       }
     })
   })
@@ -1454,10 +1882,22 @@ server <- function(input, output, session) {
     
     output$file_warning_splice <- renderUI({
       if (upload_ok_splice()) {
-        div(style = "color:green;font-weight:bold;margin-top:10px;",
-            "Upload complete!")
+        df_prev <- user_splice_df()
+        tagList(
+          div(style = "color:green; font-weight:bold; margin-top:10px;",
+              sprintf("\u2713 Upload successful — %d events detected.", nrow(df_prev))),
+          tags$small(style = "color:#666;",
+                     paste("Columns:", paste(colnames(df_prev), collapse = ", "))),
+          br(),
+          DT::renderDataTable(
+            head(df_prev, 6),
+            options = list(dom = "t", ordering = FALSE, pageLength = 6),
+            rownames = FALSE,
+            class    = "compact"
+          )
+        )
       } else {
-        div(style = "color:red;font-weight:bold;margin-top:10px;",
+        div(style = "color:red; font-weight:bold; margin-top:10px;",
             paste("Upload failed:", error_msg))
       }
     })
@@ -1754,9 +2194,22 @@ server <- function(input, output, session) {
 
     output$file_warning_binding <- renderUI({
       if (upload_ok_binding()) {
-        div(style = "color:green;font-weight:bold;margin-top:10px;", "Upload complete!")
+        df_prev <- user_binding_df()
+        tagList(
+          div(style = "color:green; font-weight:bold; margin-top:10px;",
+              sprintf("\u2713 Upload successful — %d events detected.", nrow(df_prev))),
+          tags$small(style = "color:#666;",
+                     paste("Columns:", paste(colnames(df_prev), collapse = ", "))),
+          br(),
+          DT::renderDataTable(
+            head(df_prev, 6),
+            options = list(dom = "t", ordering = FALSE, pageLength = 6),
+            rownames = FALSE,
+            class    = "compact"
+          )
+        )
       } else {
-        div(style = "color:red;font-weight:bold;margin-top:10px;",
+        div(style = "color:red; font-weight:bold; margin-top:10px;",
             paste("Upload failed:", error_msg))
       }
     })
@@ -1979,6 +2432,17 @@ server <- function(input, output, session) {
     rbp_sel <- input$expr_search_rbp
     rbp_current(rbp_sel)
     
+    # Auto-clear previous outputs before rendering new ones —
+    # eliminates the need for the "please reset" warning banner
+    output$expr_violin    <- renderPlot(NULL)
+    output$shrna_plot     <- renderPlot(NULL)
+    output$shrna_warning  <- renderUI(NULL)
+    output$volcano_plot   <- renderPlotly(NULL)
+    output$volcano_table  <- renderDT(NULL)
+    output$gsea_plot      <- renderPlot(NULL)
+    output$geneset_table  <- renderDT(NULL)
+    display_table(NULL)
+    
     # Searching the main RBP plot brings it back to the top: hide gene/hallmark panel
     expr_top_panel(NULL)
     
@@ -1996,11 +2460,19 @@ server <- function(input, output, session) {
       return(NULL)
     }
     
-    session$sendCustomMessage("toggleCursor", TRUE)
+    show_status("Generating expression plots \u2014 please wait\u2026")
     
-    output$expr_violin <- renderPlot({ violinplotter(charm_obj, rbp_sel) })
+    output$expr_violin <- renderPlot({
+      p <- violinplotter(charm_obj, rbp_sel)
+      dl_store$expr_violin(p)
+      p
+    })
     
-    output$shrna_plot <- renderPlot({ plot_shRNA_effect(shrna_obj, rbp_sel) })
+    output$shrna_plot <- renderPlot({
+      p <- plot_shRNA_effect(shrna_obj, rbp_sel)
+      dl_store$shrna(p)
+      p
+    })
     output$shrna_warning <- renderUI({
       stats <- shrna_obj[rbp_sel,,drop=FALSE]
       if (is.null(stats) || nrow(stats)==0) return(NULL)
@@ -2028,27 +2500,33 @@ server <- function(input, output, session) {
     })
     
     output$volcano_plot <- renderPlotly({
-      ggplotly(make_volcano_plot(display_table(), rbp_sel), tooltip="text", source="volcano") %>%
+      p <- make_volcano_plot(display_table(), rbp_sel)
+      dl_store$volcano(p)
+      ggplotly(p, tooltip = "text", source = "volcano") %>%
         event_register("plotly_click")
     })
     
     gsea_result <- plot_gsea(charm_obj, rbp_sel, thresh = 0.05)
-    output$gsea_plot <- renderPlot({ gsea_result$gsea_plot })
+    gsea_table_rv(gsea_result$geneset_table)
+    output$gsea_plot <- renderPlot({
+      p <- gsea_result$gsea_plot
+      dl_store$gsea(p)
+      hide_status()
+      p
+    })
     output$geneset_table <- renderDT({
       datatable(gsea_result$geneset_table,
                 filter = "none",
                 rownames = FALSE,
                 options = list(pageLength = 10, scrollX = TRUE))
     })
-    
-    session$sendCustomMessage("toggleCursor", FALSE)
   })
   # ---- Gene Search ----
   observeEvent(input$search_btn_gene, {
     req(input$expr_search_gene)
     gene <- input$expr_search_gene
     charm_obj <- current_charm_expr()
-    
+    show_status("Generating gene plot \u2014 please wait\u2026")
     expr_top_panel("gene")
     
     output$expr_gene_plot <- renderPlot({
@@ -2056,10 +2534,12 @@ server <- function(input, output, session) {
         need(gene %in% unlist(lapply(charm_obj, function(x) rownames(x$DEGenes))),
              paste("Gene", gene, "not found in any RBP DEGenes tables."))
       )
-      plot_gene_logFC_barplot(charm_obj, gene)
+      p <- plot_gene_logFC_barplot(charm_obj, gene)
+      dl_store$expr_gene(p)
+      hide_status()
+      p
     })
     
-    session$sendCustomMessage("toggleCursor", FALSE) # turn cursor back
   })
   
   # ---- Hallmark Gene Set Search ----
@@ -2067,7 +2547,7 @@ server <- function(input, output, session) {
     req(input$expr_search_hallmark)
     geneset <- input$expr_search_hallmark
     charm_obj <- current_charm_expr()
-    
+    show_status("Generating hallmark plot \u2014 please wait\u2026")
     expr_top_panel("hallmark")
     
     output$expr_hallmark_plot <- renderPlot({
@@ -2075,10 +2555,12 @@ server <- function(input, output, session) {
         need(geneset %in% unlist(lapply(charm_obj, function(x) x$GSEA$pathway)),
              paste0("Geneset '", geneset, "' not found in any RBP GSEA tables."))
       )
-      plot_hallmark_nes_barplot(charm_obj, geneset)
+      p <- plot_hallmark_nes_barplot(charm_obj, geneset)
+      dl_store$expr_hallmark(p)
+      hide_status()
+      p
     })
     
-    session$sendCustomMessage("toggleCursor", FALSE)
   })
   
   # Reactive values to store what the user selected
@@ -2116,6 +2598,9 @@ server <- function(input, output, session) {
     req(input$expr_search_rbp)
     rbp1 <- input$expr_search_rbp
     mode <- input$similar_mode
+    
+    # Auto-clear previous output
+    output$similar_expr_plots <- renderUI(NULL)
     
     # Datasets
     datasets <- list(
@@ -2180,6 +2665,13 @@ server <- function(input, output, session) {
     rbp_sel <- input$splice_search
     rbp_current(rbp_sel)
     
+    # Auto-clear previous outputs before rendering new ones
+    output$violin_splice_plot   <- renderPlot(NULL)
+    output$plot_shrna_effect    <- renderPlot(NULL)
+    output$shrna_warning_splice <- renderUI(NULL)
+    output$plot_splice_volcano  <- renderPlotly(NULL)
+    output$splice_volcano_table <- renderDT(NULL)
+    
     # Searching the main RBP plot brings it back to the top: hide Event ID panel
     splice_top_panel(NULL)
     
@@ -2197,17 +2689,22 @@ server <- function(input, output, session) {
       return(NULL)
     }
     
-    session$sendCustomMessage("toggleCursor", TRUE)
+    show_status("Generating splicing plots \u2014 please wait\u2026")
     
     
     
     # ---- Top row: Violin + shRNA knockdown plots ----
     output$violin_splice_plot <- renderPlot({
-      violin_splice_plot(charm_obj, rbp_sel)
+      p <- violin_splice_plot(charm_obj, rbp_sel)
+      dl_store$splice_violin(p)
+      hide_status()
+      p
     })
     
     output$plot_shrna_effect <- renderPlot({
-      plot_shRNA_effect(shrna_obj, rbp_sel)
+      p <- plot_shRNA_effect(shrna_obj, rbp_sel)
+      dl_store$shrna_splice(p)
+      p
     })
     
     output$shrna_warning_splice <- renderUI({
@@ -2242,6 +2739,7 @@ server <- function(input, output, session) {
         theme_bw() +
         theme(legend.position = "none") +
         labs(title = paste("Volcano Plot:", rbp_sel), x = "dPSI (shRNA - CTRL)", y = "PDiff")
+      dl_store$splice_volcano(p)
       ggplotly(p, tooltip = "key", source = "splice_volcano") %>%
         event_register("plotly_click")
     }
@@ -2294,7 +2792,6 @@ server <- function(input, output, session) {
       update_highlight(clicked_event)
     })
     
-    session$sendCustomMessage("toggleCursor", FALSE)
   })
   
   # ---- Event ID Search ----
@@ -2314,6 +2811,9 @@ server <- function(input, output, session) {
     if (input$splice_dataset != "Similar RBPs") return(NULL)
     req(input$splice_search)
     rbp1 <- input$splice_search
+    
+    # Auto-clear previous output
+    output$similar_splice_plots <- renderUI(NULL)
     
     # Only one mode currently
     mode <- "splice"
@@ -2396,6 +2896,9 @@ server <- function(input, output, session) {
     output$geneset_table  <- renderDT(NULL)
     display_table(NULL)
     rbp_current(NULL)
+    gsea_table_rv(NULL)
+    dl_store$expr_violin(NULL); dl_store$shrna(NULL)
+    dl_store$volcano(NULL);     dl_store$gsea(NULL)
     updateSelectizeInput(session, "expr_search", selected = "")
   })
   observeEvent(input$reset_btn_gene, {
@@ -2422,8 +2925,10 @@ server <- function(input, output, session) {
     output$shrna_warning_splice  <- renderUI(NULL)
     output$plot_splice_volcano   <- renderPlotly(NULL)
     output$splice_volcano_table  <- renderDT(NULL)
-    result_splice(NULL)  # if using reactiveVal to store results
-    rbp_current(NULL)    # if using reactiveVal for selected RBP
+    result_splice(NULL)
+    rbp_current(NULL)
+    dl_store$splice_violin(NULL); dl_store$shrna_splice(NULL)
+    dl_store$splice_volcano(NULL)
     updateSelectizeInput(session, "splice_search", selected = "")
   })
   
@@ -2486,6 +2991,28 @@ server <- function(input, output, session) {
       multiple = TRUE,
       options = list(placeholder = "Select one or more targets, or 'All'")
     )
+  })
+  
+  # Warn when many targets selected — heatmap will be slow / unreadable
+  output$binding_target_warning <- renderUI({
+    tgts <- input$binding_target
+    if (is.null(tgts) || length(tgts) == 0) return(NULL)
+    n <- if ("All" %in% tgts) {
+      data <- binding_data()
+      rbp  <- input$binding_search
+      length(names(data[[rbp]]))
+    } else {
+      length(tgts)
+    }
+    if (n > 10) {
+      div(
+        style = "background:#fff3cd; border:1px solid #ffc107; border-radius:6px;
+                 padding:7px 10px; margin-top:5px; font-size:11px; color:#856404;",
+        tags$b("\u26a0 Large selection:"),
+        sprintf(" %d targets selected. Generating the heatmap may take
+                 30\u201360 seconds. Consider selecting fewer targets for faster results.", n)
+      )
+    }
   })
   
   # =========================
@@ -2926,11 +3453,20 @@ server <- function(input, output, session) {
   results <- eventReactive(input$search_btn, {
     withProgress(message = "Generating Plot...", value = 0, {
       incProgress(0.05)
-      req(input$binding_search, input$binding_target, input$binding_dpsi, input$binding_metric)
+      
+      # Use binding_nav_target if set (navigation case), otherwise read from UI
+      nav_tgt <- binding_nav_target()
+      targets <- if (!is.null(nav_tgt)) {
+        binding_nav_target(NULL)   # consume and clear
+        nav_tgt
+      } else {
+        input$binding_target
+      }
+      
+      req(input$binding_search, targets, input$binding_dpsi, input$binding_metric)
       
       data <- binding_data()
       rbp  <- input$binding_search
-      targets <- input$binding_target
       
       # NEW: define hide_labels
       hide_labels <- FALSE
@@ -2992,21 +3528,22 @@ server <- function(input, output, session) {
   # ---- Helper reactive: pick the correct binding similarity object list ----
   binding_sim_objects <- reactive({
     req(input$binding_eventtype)
-    is_IR <- grepl("Intron Retention", input$binding_eventtype, ignore.case = TRUE)
+    is_IR  <- grepl("Intron Retention", input$binding_eventtype, ignore.case = TRUE)
     prefix <- if (is_IR) "IR" else "ES"
+    cache  <- binding_sim_cache()   # triggers lazy load on first call
     
     list(
       "Both Cells" = list(
-        inc = get(paste0("similar_binding_", prefix, "_both_inc")),
-        dec = get(paste0("similar_binding_", prefix, "_both_dec"))
+        inc = cache[[paste0("similar_binding_", prefix, "_both_inc")]],
+        dec = cache[[paste0("similar_binding_", prefix, "_both_dec")]]
       ),
       "K562" = list(
-        inc = get(paste0("similar_binding_", prefix, "_K562_inc")),
-        dec = get(paste0("similar_binding_", prefix, "_K562_dec"))
+        inc = cache[[paste0("similar_binding_", prefix, "_K562_inc")]],
+        dec = cache[[paste0("similar_binding_", prefix, "_K562_dec")]]
       ),
       "HEPG2" = list(
-        inc = get(paste0("similar_binding_", prefix, "_HEPG2_inc")),
-        dec = get(paste0("similar_binding_", prefix, "_HEPG2_dec"))
+        inc = cache[[paste0("similar_binding_", prefix, "_HEPG2_inc")]],
+        dec = cache[[paste0("similar_binding_", prefix, "_HEPG2_dec")]]
       )
     )
   })
@@ -3120,6 +3657,8 @@ server <- function(input, output, session) {
     req(results())
     p <- results()
     if (inherits(p, "ggplot") || inherits(p, "ggarrange")) {
+      dl_store$binding(p)
+      hide_status()
       print(p)
     }
   })
@@ -3129,17 +3668,19 @@ server <- function(input, output, session) {
   
   # When search button is pressed, show plot
   observeEvent(input$search_btn, {
+    show_status("Generating binding map \u2014 this may take a moment\u2026")
     show_plot(TRUE)
   })
   
   # When reset button is pressed, hide plot
   observeEvent(input$reset_btn, {
     show_plot(FALSE)
+    dl_store$binding(NULL)
+    binding_nav_target(NULL)
   })
   output$binding_plot_ui <- renderUI({
     req(show_plot())
     
-    # Determine target count
     targets <- input$binding_target
     data <- binding_data()
     rbp <- input$binding_search
@@ -3150,10 +3691,12 @@ server <- function(input, output, session) {
       n_targets <- length(targets)
     }
     
-    # Compute dynamic height
     height_px <- min(900 + (n_targets - 1) * 10, 2000)
     
-    plotOutput("eclipse_plot", height = paste0(height_px, "px"))
+    tagList(
+      plotOutput("eclipse_plot", height = paste0(height_px, "px")),
+      uiOutput("dl_ui_binding")
+    )
   })
   
   
@@ -3345,6 +3888,7 @@ server <- function(input, output, session) {
     input$network_plot_btn
 
     isolate({
+      show_status("Building RBP similarity network \u2014 please wait\u2026")
       layers    <- input$network_layers
       cell      <- input$network_cellline
       btypes    <- input$network_binding_type
@@ -3358,6 +3902,8 @@ server <- function(input, output, session) {
                           label = "Please select at least one data layer.",
                           size = 6, hjust = 0.5) + theme_void())
       }
+
+      withProgress(message = "Building RBP similarity network\u2026", value = 0, {
 
       # ── Cell line mapping ──────────────────────────────────────────────────
       cell_key_binding <- switch(cell, "Both" = "both", "K562" = "K562", "HEPG2" = "HEPG2")
@@ -3384,18 +3930,23 @@ server <- function(input, output, session) {
 
       # ── Build correlation matrices per layer ───────────────────────────────
       cor_matrices <- list()
+      n_layers <- length(layers)
+      step_size <- 0.6 / max(n_layers, 1)
 
       if ("Expression" %in% layers) {
+        incProgress(step_size, message = "Computing expression correlations\u2026")
         cm <- network_cor_matrix(type = "expression", rbp_list = expr_obj)
         if (!is.null(cm) && nrow(cm) >= 3) cor_matrices[["Expression"]] <- cm
       }
 
       if ("Splicing" %in% layers) {
+        incProgress(step_size, message = "Computing splicing correlations\u2026")
         cm <- network_cor_matrix(type = "splicing", rbp_list = charm_obj)
         if (!is.null(cm) && nrow(cm) >= 3) cor_matrices[["Splicing"]] <- cm
       }
 
       if ("Binding" %in% layers) {
+        incProgress(step_size, message = "Computing binding correlations\u2026")
         if (!is.null(btypes) && length(btypes) > 0 &&
             !is.null(dirs)   && length(dirs)   > 0) {
 
@@ -3407,10 +3958,11 @@ server <- function(input, output, session) {
           if ("Decreased" %in% dirs) dir_keys <- c(dir_keys, "dec")
 
           binding_cor_list <- list()
+          cache <- binding_sim_cache()
           for (tk in type_keys) {
             for (dk in dir_keys) {
               obj_name <- paste0("similar_binding_", tk, "_", cell_key_binding, "_", dk)
-              obj <- tryCatch(get(obj_name), error = function(e) NULL)
+              obj <- cache[[obj_name]]
               if (is.null(obj) || is.null(obj$mean_profiles)) next
               mat       <- obj$mean_profiles
               rbp_names <- sub("__.*", "", rownames(mat))
@@ -3478,29 +4030,13 @@ server <- function(input, output, session) {
         has_hl       <- length(hl_valid) > 0
 
         p <- ggplot(df, aes(x = Dim1, y = Dim2)) +
+          # Points: colour and size driven by Highlight column
           geom_point(
             aes(color = Highlight, size = Highlight),
             alpha = 0.8
           ) +
           scale_color_manual(values = c("Highlighted" = "#BA3B46", "Other" = "#2c3e50")) +
           scale_size_manual( values = c("Highlighted" = 4,         "Other" = 2.5)) +
-          # Always label all RBPs — highlighted ones in red, others in dark
-          ggrepel::geom_text_repel(
-            data     = df[df$Highlight == "Other", ],
-            aes(label = RBP),
-            color    = "#2c3e50",
-            fontface = "bold",
-            size     = 3.5,
-            max.overlaps = 20
-          ) +
-          ggrepel::geom_text_repel(
-            data     = df[df$Highlight == "Highlighted", ],
-            aes(label = RBP),
-            color    = "#BA3B46",
-            fontface = "bold",
-            size     = 4,
-            max.overlaps = 30
-          ) +
           labs(title = title, subtitle = subtitle,
                x = xlab, y = ylab, caption = caption_base) +
           theme_bw() +
@@ -3514,10 +4050,33 @@ server <- function(input, output, session) {
             panel.border  = element_blank(),
             legend.position = if (has_hl) "right" else "none"
           )
+
+        if (has_hl) {
+          # Label only the highlighted RBPs, in red
+          p <- p + ggrepel::geom_text_repel(
+            data         = df[df$Highlight == "Highlighted", ],
+            aes(label    = RBP),
+            color        = "#BA3B46",
+            fontface     = "bold",
+            size         = 4,
+            max.overlaps = 30
+          )
+        } else {
+          # No highlights — label every RBP in dark
+          p <- p + ggrepel::geom_text_repel(
+            aes(label    = RBP),
+            color        = "#2c3e50",
+            fontface     = "bold",
+            size         = 3.5,
+            max.overlaps = 20
+          )
+        }
         p
       }
 
       # ── Plot type dispatch ─────────────────────────────────────────────────
+
+      incProgress(0.2, message = "Running ordination\u2026")
 
       if (plot_type == "MDS") {
         fit     <- cmdscale(as.dist(diss_mat), k = 2, eig = TRUE)
@@ -3525,27 +4084,30 @@ server <- function(input, output, session) {
         ve      <- round(eig_pos[1:2] / sum(eig_pos) * 100, 1)
         df <- data.frame(RBP = common_rbps,
                          Dim1 = fit$points[,1], Dim2 = fit$points[,2])
-        return(make_scatter(df,
+        p <- make_scatter(df,
           xlab     = paste0("MDS Dim 1 (", ve[1], "% var.)"),
           ylab     = paste0("MDS Dim 2 (", ve[2], "% var.)"),
           title    = paste0("RBP Similarity — MDS (", cell, ")"),
-          subtitle = weight_str))
+          subtitle = weight_str)
+        dl_store$network(p)
+        hide_status()
+        return(p)
       }
 
       if (plot_type == "PCA") {
-        # PCA runs on the feature matrix, not the dissimilarity matrix.
-        # Use the average correlation matrix as a proxy feature space —
-        # each RBP's row in avg_cor is its "profile" of similarity to all others.
         pca <- prcomp(avg_cor[common_rbps, common_rbps], scale. = TRUE, center = TRUE)
         ve  <- round(summary(pca)$importance[2, 1:2] * 100, 1)
         df  <- data.frame(RBP  = common_rbps,
                           Dim1 = pca$x[, 1],
                           Dim2 = pca$x[, 2])
-        return(make_scatter(df,
+        p <- make_scatter(df,
           xlab     = paste0("PC1 (", ve[1], "% var.)"),
           ylab     = paste0("PC2 (", ve[2], "% var.)"),
           title    = paste0("RBP Similarity — PCA (", cell, ")"),
-          subtitle = weight_str))
+          subtitle = weight_str)
+        dl_store$network(p)
+        hide_status()
+        return(p)
       }
 
       if (plot_type == "t-SNE") {
@@ -3561,11 +4123,14 @@ server <- function(input, output, session) {
         df   <- data.frame(RBP  = common_rbps,
                            Dim1 = tsne$Y[, 1],
                            Dim2 = tsne$Y[, 2])
-        return(make_scatter(df,
+        p <- make_scatter(df,
           xlab     = "t-SNE 1",
           ylab     = "t-SNE 2",
           title    = paste0("RBP Similarity — t-SNE (", cell, ")"),
-          subtitle = weight_str))
+          subtitle = weight_str)
+        dl_store$network(p)
+        hide_status()
+        return(p)
       }
 
       if (plot_type == "Dendrogram") {
@@ -3597,8 +4162,11 @@ server <- function(input, output, session) {
         if (length(hl_valid) > 0)
           legend("topright", legend = "Highlighted RBPs",
                  text.col = "#BA3B46", text.font = 2, bty = "n", cex = 0.9)
+        hide_status()
         return(invisible(NULL))
       }
+
+      }) # end withProgress
     })
   })
 

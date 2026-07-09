@@ -1035,13 +1035,15 @@ plot_gene_logFC_barplot <- function(CharmObj, gene,
   logfc_data <- logfc_data %>%
     mutate(Status = ifelse(logFC > 0, "Upregulated", "Downregulated"))
 
-  # Select top 10 and bottom 10 by LogFC
-  top10 <- logfc_data %>% arrange(desc(logFC)) %>% slice_head(n = 10)
-  bottom10 <- logfc_data %>% arrange(logFC) %>% slice_head(n = 10)
-  selected <- bind_rows(top10, bottom10)
+  # Select top 10 and bottom 10 by LogFC, deduplicate in case of overlap
+  # (can happen when fewer than 20 RBPs have data for this gene)
+  top10    <- logfc_data %>% arrange(desc(logFC)) %>% slice_head(n = 10)
+  bottom10 <- logfc_data %>% arrange(logFC)       %>% slice_head(n = 10)
+  selected <- bind_rows(top10, bottom10) %>% distinct(RBP, .keep_all = TRUE)
 
-  # Order RBPs by LogFC
-  selected$RBP <- factor(selected$RBP, levels = selected$RBP[order(selected$logFC)])
+  # Order RBPs by LogFC — use unique levels to avoid duplicated-factor-level error
+  lvls <- selected$RBP[order(selected$logFC)]
+  selected$RBP <- factor(selected$RBP, levels = unique(lvls))
 
   # Build bar plot (styled like your favorite one)
   ggplot(selected, aes(x = reorder(RBP, logFC), y = logFC, fill = Status)) +
@@ -1102,13 +1104,14 @@ plot_hallmark_nes_barplot <- function(CharmObj, geneset,
   NES_data <- NES_data %>%
     mutate(Status = ifelse(NES > 0, "Upregulated", "Downregulated"))
 
-  # Select top 10 and bottom 10 RBPs by NES
-  top10 <- NES_data %>% arrange(desc(NES)) %>% slice_head(n = 10)
-  bottom10 <- NES_data %>% arrange(NES) %>% slice_head(n = 10)
-  selected <- bind_rows(top10, bottom10)
+  # Select top 10 and bottom 10 RBPs by NES, deduplicate in case of overlap
+  top10    <- NES_data %>% arrange(desc(NES)) %>% slice_head(n = 10)
+  bottom10 <- NES_data %>% arrange(NES)       %>% slice_head(n = 10)
+  selected <- bind_rows(top10, bottom10) %>% distinct(RBP, .keep_all = TRUE)
 
-  # Order RBPs by NES for plotting
-  selected$RBP <- factor(selected$RBP, levels = selected$RBP[order(selected$NES)])
+  # Order RBPs by NES for plotting — unique() guards against duplicated factor levels
+  lvls <- selected$RBP[order(selected$NES)]
+  selected$RBP <- factor(selected$RBP, levels = unique(lvls))
 
   # Create the bar plot (styled like your favourite one)
   ggplot(selected, aes(x = reorder(RBP, NES), y = NES, fill = Status)) +
@@ -1171,13 +1174,14 @@ plot_event_dpsi_barplot <- function(CharmObj, Event.ID,
   dpsi_data <- dpsi_data %>%
     dplyr::mutate(Status = ifelse(dPSI > 0, "Upregulated", "Downregulated"))
 
-  # --- Select top 10 and bottom 10 by dPSI ---
-  top10 <- dpsi_data %>% dplyr::arrange(desc(dPSI)) %>% dplyr::slice_head(n = 10)
-  bottom10 <- dpsi_data %>% dplyr::arrange(dPSI) %>% dplyr::slice_head(n = 10)
-  selected <- dplyr::bind_rows(top10, bottom10)
+  # --- Select top 10 and bottom 10 by dPSI, deduplicate in case of overlap ---
+  top10    <- dpsi_data %>% dplyr::arrange(desc(dPSI)) %>% dplyr::slice_head(n = 10)
+  bottom10 <- dpsi_data %>% dplyr::arrange(dPSI)       %>% dplyr::slice_head(n = 10)
+  selected <- dplyr::bind_rows(top10, bottom10) %>% dplyr::distinct(RBP, .keep_all = TRUE)
 
-  # --- Order RBPs by dPSI value ---
-  selected$RBP <- factor(selected$RBP, levels = selected$RBP[order(selected$dPSI)])
+  # --- Order RBPs by dPSI value — unique() guards against duplicated factor levels ---
+  lvls <- selected$RBP[order(selected$dPSI)]
+  selected$RBP <- factor(selected$RBP, levels = unique(lvls))
 
   # --- Build bar plot ---
   p <- ggplot2::ggplot(selected, ggplot2::aes(x = reorder(RBP, dPSI), y = dPSI, fill = Status)) +
