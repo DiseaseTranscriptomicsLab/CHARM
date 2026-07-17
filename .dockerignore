@@ -1,0 +1,18 @@
+# Data is mounted at runtime via a Docker volume (see README / docker run
+# instructions) -- it must never be baked into the image, both because of
+# its size and so the same image can be reused across data updates.
+data/
+
+# Version control / IDE / OS cruft
+.git/
+.gitignore
+.Rproj.user/
+.Rhistory
+.Rbuildignore
+*.Rproj
+.DS_Store
+
+# Docs and dev-only scripts not needed at runtime
+README.md
+STORAGE_AUDIT.md
+Markdowns/

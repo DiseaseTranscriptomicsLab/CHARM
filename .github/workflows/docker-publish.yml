@@ -1,0 +1,62 @@
+name: Publish Docker image
+
+# Two build triggers, kept apart by which event fired (see the "Docker
+# meta" step below for how each maps to an image tag):
+#   - every push to `dev`      -> rolling `dev` tag (always latest dev build)
+#   - every published release  -> the release's git tag (e.g. "v1.2.0"),
+#                                  never overwritten, plus `latest`
+on:
+  push:
+    branches:
+      - dev
+  release:
+    types: [published]
+
+env:
+  dockerhub-package: ${{ secrets.DOCKERHUB_USERNAME }}/charm
+
+jobs:
+  push_to_registry:
+    name: Push Docker image to Docker Hub and GitHub Packages
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.dockerhub-package }},ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=dev,enable=${{ github.event_name == 'push' }}
+            type=ref,event=branch,enable=${{ github.event_name == 'push' }}
+            type=raw,value=${{ github.event.release.tag_name }},enable=${{ github.event_name == 'release' }}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
