@@ -11,7 +11,7 @@ library(fgsea)
 library(msigdbr)
 library(dplyr)
 library(tidyr)
-library(qs)
+library(qs2)
 library(ggpubr)
 library(png)
 library(grid)
@@ -20,64 +20,123 @@ logo_b64 <- base64enc::dataURI(file = "www/Charm_logo.png", mime = "image/png")
 
 source("helper_functions.R")
 
-# Load CHARM object once when app starts
-#Charm.object <- readRDS("data/Charm.object.RDS")
-Charm.object <- qs::qread("data/QS_Files/Charm.object.qs")
-#sh_effect_vector <- readRDS("data/shRNA_Efficiency.Rds")
-sh_effect_vector <- qs::qread("data/QS_Files/shRNA_Efficiency.qs")
-#Charm.object_K562 <- readRDS("data/Charm.object_K562.RDS")
-Charm.object_K562 <- qs::qread("data/QS_Files/Charm.object_K562.qs")
-#sh_effect_vector_K562 <- readRDS("data/shRNA_Efficiency_K562.Rds")
-sh_effect_vector_K562 <- qs::qread("data/QS_Files/shRNA_Efficiency_K562.qs")
-#Charm.object_HEPG2 <- readRDS("data/Charm.object_HEPG2.RDS")
-Charm.object_HEPG2 <- qs::qread("data/QS_Files/Charm.object_HEPG2.qs")
-#sh_effect_vector_HEPG2 <- readRDS("data/shRNA_Efficiency_HEPG2.Rds")
-sh_effect_vector_HEPG2 <- qs::qread("data/QS_Files/shRNA_Efficiency_HEPG2.qs")
+# --- Data directory -----------------------------------------------------
+# Points at the qs2-serialized, dtype-optimized data store produced by
+# optimize_data.R. Falls back to the legacy QS_Files/ store (old `qs`
+# format) if the optimized store hasn't been generated yet, so the app
+# never fails to start -- NOTE: that fallback path requires the archived
+# `qs` package to still be installed, since qs2 cannot read old .qs files.
+# Once data/QS2_Files/ has been validated in production, delete
+# data/QS_Files/ and this fallback can be removed.
+DATA_DIR <- if (dir.exists("data/QS2_Files")) {
+  "data/QS2_Files"
+} else {
+  "data/QS_Files"
+}
+DATA_EXT <- if (DATA_DIR == "data/QS2_Files") ".qs2" else ".qs"
 
-# Binding Data
-#Charm.object.binding.ES <- readRDS("data/Binding_both.RDS")
-Charm.object.binding.ES <- qs::qread("data/QS_Files/Binding_both.qs")
-#Charm.object.binding.ES_K562 <- readRDS("data/Binding_K562.RDS")
-Charm.object.binding.ES_K562 <- qs::qread("data/QS_Files/Binding_K562.qs")
-#Charm.object.binding.ES_HEPG2 <- readRDS("data/Binding_HEPG2.RDS")
-Charm.object.binding.ES_HEPG2 <- qs::qread("data/QS_Files/Binding_HEPG2.qs")
-#Charm.object.binding.IR <- readRDS("data/Binding_IR_both.RDS")
-Charm.object.binding.IR <- qs::qread("data/QS_Files/Binding_IR_both.qs")
-#Charm.object.binding.IR_K562 <- readRDS("data/Binding_IR_K562.RDS")
-Charm.object.binding.IR_K562 <- qs::qread("data/QS_Files/Binding_IR_K562.qs")
-#Charm.object.binding.IR_HEPG2 <- readRDS("data/Binding_IR_HEPG2.RDS")
-Charm.object.binding.IR_HEPG2 <- qs::qread("data/QS_Files/Binding_IR_HEPG2.qs")
+qload <- function(name) {
+  path <- file.path(DATA_DIR, paste0(name, DATA_EXT))
+  if (DATA_EXT == ".qs2") qs2::qs_read(path) else qs::qread(path)
+}
+
+# --- Lazy, single-instance dataset-family caches ---------------------------
+# Charm.object (3 cell-line variants: Both/K562/HEPG2) and the Binding tables
+# (6 variants: event type x cell line) are the two largest pieces of the data
+# store. Eagerly loading every variant at startup (the old behavior) pulled
+# everything into memory regardless of which single variant a given session
+# was actually looking at -- ~6.7GB compressed on disk was ballooning to
+# ~35GB in R's memory. Since every session runs in its own dedicated
+# container (confirmed: no pooled/shared R process across users), it's safe
+# to keep this cache at app/global scope -- there is exactly one session per
+# process, so evicting the previous variant on a dataset switch can never
+# pull data out from under a different concurrent user.
+#
+# Trade-off: switching cell lines/event types now costs a real (if brief)
+# qs2 decompression instead of being instant. And a handful of features that
+# genuinely compare *across* cell lines in one view (the "Similar RBPs"
+# comparison-with-uploaded-file panels, and the RBP similarity network
+# builder) will still materialize more than one variant at once for the
+# duration of that specific action -- that's inherent to what those features
+# do, not a gap in this cache.
+charm_cache <- new.env(parent = emptyenv())
+
+get_charm_object <- function(dataset) {
+  key <- switch(dataset %||% "Both", "K562" = "K562", "HEPG2" = "HEPG2", "Both")
+  if (is.null(charm_cache$key) || !identical(charm_cache$key, key)) {
+    file <- switch(key, "K562" = "Charm.object_K562", "HEPG2" = "Charm.object_HEPG2", "Charm.object")
+    charm_cache$obj <- qload(file)
+    charm_cache$key <- key
+    gc(FALSE)  # release the evicted variant's memory right away, not at the next scheduled GC
+  }
+  charm_cache$obj
+}
+
+binding_cache <- new.env(parent = emptyenv())
+
+get_binding_object <- function(eventtype, dataset) {
+  is_ir <- grepl("Intron Retention", eventtype %||% "", ignore.case = TRUE)
+  cell  <- switch(dataset %||% "Both Cells", "K562" = "K562", "HEPG2" = "HEPG2", "Both Cells")
+  key   <- paste(if (is_ir) "IR" else "ES", cell)
+  if (is.null(binding_cache$key) || !identical(binding_cache$key, key)) {
+    file <- if (is_ir) {
+      switch(cell, "K562" = "Binding_IR_K562", "HEPG2" = "Binding_IR_HEPG2", "Binding_IR_both")
+    } else {
+      switch(cell, "K562" = "Binding_K562", "HEPG2" = "Binding_HEPG2", "Binding_both")
+    }
+    binding_cache$obj <- qload(file)
+    binding_cache$key <- key
+    gc(FALSE)
+  }
+  binding_cache$obj
+}
+
+`%||%` <- function(a, b) if (is.null(a) || (length(a) == 1 && is.na(a))) b else a
+
+# Load small, always-needed objects once when the app starts (all under
+# ~90MB combined -- not worth swapping).
+sh_effect_vector       <- qload("shRNA_Efficiency")
+sh_effect_vector_K562  <- qload("shRNA_Efficiency_K562")
+sh_effect_vector_HEPG2 <- qload("shRNA_Efficiency_HEPG2")
+
+# Warm the default ("Both Cells", Exon Skipping) variants so the app's
+# default view loads with no extra delay, and capture the RBP/pathway name
+# lists that several static UI dropdowns need regardless of which dataset
+# variant ends up active later. Name sets are identical across all
+# Charm.object / Binding_* variants (confirmed via direct inspection during
+# the qs2 migration), so these lists stay valid even after the cache above
+# evicts the object they were read from.
+.default_charm <- get_charm_object("Both")
+ALL_RBP_NAMES <- names(.default_charm)
+HALLMARK_CHOICES <- sort(unique(.default_charm[["RBFOX2"]]$GSEA$pathway))
+
+.default_binding_es <- get_binding_object("Exon Skipping", "Both Cells")
+ALL_BINDING_RBP_NAMES_ES <- names(.default_binding_es)
+# Intron Retention isn't the default event type, so this read gets evicted
+# again the moment a session actually requests ES data -- that's fine, it's
+# a one-time startup cost just to capture the name list.
+ALL_BINDING_RBP_NAMES_IR <- names(qload("Binding_IR_both"))
+rm(.default_charm, .default_binding_es)
 
 #Similarity stuff
-#similar_expression_all <- readRDS("data/RBPs.t_All.RDS")
-similar_expression_all <- qs::qread("data/QS_Files/RBPs.t_All.qs")
-#similar_expression_K562 <- readRDS("data/RBPs.t_K562.RDS")
-similar_expression_K562 <- qs::qread("data/QS_Files/RBPs.t_K562.qs")
-#similar_expression_HEPG2 <- readRDS("data/RBPs.t_HEPG2.RDS")
-similar_expression_HEPG2 <- qs::qread("data/QS_Files/RBPs.t_HEPG2.qs")
-#similar_gsea_all <- readRDS("data/RBPs.gsea_All.RDS")
-similar_gsea_all <- qs::qread("data/QS_Files/RBPs.gsea_All.qs")
-#similar_gsea_K562 <- readRDS("data/RBPs.gsea_K562.RDS")
-similar_gsea_K562 <- qs::qread("data/QS_Files/RBPs.gsea_K562.qs")
-#similar_gsea_HEPG2 <- readRDS("data/RBPs.gsea_HEPG2.RDS")
-similar_gsea_HEPG2 <- qs::qread("data/QS_Files/RBPs.gsea_HEPG2.qs")
+similar_expression_all    <- qload("RBPs.t_All")
+similar_expression_K562   <- qload("RBPs.t_K562")
+similar_expression_HEPG2  <- qload("RBPs.t_HEPG2")
+similar_gsea_all          <- qload("RBPs.gsea_All")
+similar_gsea_K562         <- qload("RBPs.gsea_K562")
+similar_gsea_HEPG2        <- qload("RBPs.gsea_HEPG2")
 
 #For eCLIPSE
-eCLIPSE_Intron_full <- qs::qread("data/QS_Files/eCLIPSE_INTRONRET.qs")
-eCLIPSE_BigExon_full <- qs::qread("data/QS_Files/eCLIPSE_BIGEXON.qs")
+eCLIPSE_Intron_full  <- qload("eCLIPSE_INTRONRET")
+eCLIPSE_BigExon_full <- qload("eCLIPSE_BIGEXON")
+
 #SearchBarPopulation
-#GenesBoth <- readRDS("data/AvailableGenes_both.RDS")
-GenesBoth <- qs::qread("data/QS_Files/AvailableGenes_both.qs")
-#GenesK562 <- readRDS("data/AvailableGenes_K562.RDS")
-GenesK562 <- qs::qread("data/QS_Files/AvailableGenes_K562.qs")
-#GenesHEPG2 <- readRDS("data/AvailableGenes_HEPG2.RDS")
-GenesHEPG2 <- qs::qread("data/QS_Files/AvailableGenes_HEPG2.qs")
-#EventsBoth <- readRDS("data/AvailableEvents_Both.RDS")
-EventsBoth <- qs::qread("data/QS_Files/AvailableEvents_Both.qs")
-#EventsK562 <- readRDS("data/AvailableEvents_K562.RDS")
-EventsK562 <- qs::qread("data/QS_Files/AvailableEvents_K562.qs")
-#EventsHEPG2 <- readRDS("data/AvailableEvents_HEPG2.RDS")
-EventsHEPG2 <- qs::qread("data/QS_Files/AvailableEvents_HEPG2.qs")
+GenesBoth   <- qload("AvailableGenes_both")
+GenesK562   <- qload("AvailableGenes_K562")
+GenesHEPG2  <- qload("AvailableGenes_HEPG2")
+EventsBoth  <- qload("AvailableEvents_Both")
+EventsK562  <- qload("AvailableEvents_K562")
+EventsHEPG2 <- qload("AvailableEvents_HEPG2")
 
 #Binding similarity stuff — loaded lazily on first Network tab use (see server)
 # similar_binding_* objects are loaded via the binding_sim_cache reactive below
@@ -946,7 +1005,7 @@ ui <- fluidPage(
               selectizeInput(
                 "network_highlight_rbps",
                 label   = NULL,
-                choices = sort(names(Charm.object)),
+                choices = sort(ALL_RBP_NAMES),
                 multiple = TRUE,
                 options  = list(placeholder = "Type to search RBPs...")
               ),
@@ -1151,7 +1210,7 @@ server <- function(input, output, session) {
       "IR_HEPG2_inc", "IR_HEPG2_dec"
     )
     objs <- lapply(keys, function(k) {
-      qs::qread(paste0("data/QS_Files/similar_binding_", k, ".qs"))
+      qload(paste0("similar_binding_", k))
     })
     names(objs) <- paste0("similar_binding_", keys)
     objs
@@ -1183,19 +1242,13 @@ server <- function(input, output, session) {
   # Expression tab
   current_charm_expr <- reactive({
     req(input$expr_dataset)
-    switch(input$expr_dataset,
-           "K562"  = Charm.object_K562,
-           "HEPG2" = Charm.object_HEPG2,
-           Charm.object)
+    get_charm_object(input$expr_dataset)
   })
-  
+
   # Splicing tab
   current_charm_splice <- reactive({
     req(input$splice_dataset)
-    switch(input$splice_dataset,
-           "K562"  = Charm.object_K562,
-           "HEPG2" = Charm.object_HEPG2,
-           Charm.object)
+    get_charm_object(input$splice_dataset)
   })
   
   current_shrna_expr <- reactive({
@@ -1251,11 +1304,10 @@ server <- function(input, output, session) {
     
     req(!is.null(target_to_use))
     binding_nav_trigger(NULL)          # clear so this doesn't re-fire
-    binding_nav_target(target_to_use)  # store target for results() to pick up
-    
-    # Also update the selectize so the UI reflects the chosen target
-    updateSelectizeInput(session, "binding_target", selected = target_to_use)
-    
+    binding_nav_target(target_to_use)  # binding_target_ui reads this to pre-select
+                                        # itself at creation time (see renderUI below);
+                                        # results() also reads it as a fallback.
+
     # Click Search after a delay so results() fires with binding_nav_target set
     session$sendCustomMessage("clickButton", list(id = "search_btn", delay = 500))
   }, ignoreNULL = TRUE, ignoreInit = TRUE)
@@ -1516,12 +1568,13 @@ server <- function(input, output, session) {
       server = TRUE
     )
     
-    # 3️⃣ Hallmark Gene Set search bar (always from RBFOX2)
-    hallmark_choices <- Charm.object[["RBFOX2"]]$GSEA$pathway
+    # 3️⃣ Hallmark Gene Set search bar (always from RBFOX2; precomputed at
+    # startup as HALLMARK_CHOICES so this doesn't force-reload the "Both"
+    # Charm.object variant every time the dataset selector changes)
     updateSelectizeInput(
       session,
       "expr_search_hallmark",
-      choices = sort(unique(hallmark_choices)),
+      choices = HALLMARK_CHOICES,
       server = TRUE
     )
   })
@@ -1671,7 +1724,7 @@ server <- function(input, output, session) {
         selectizeInput(
           inputId = "user_file_compare_expr",
           label = "Compare with specific RBPs (optional)",
-          choices = names(Charm.object),
+          choices = ALL_RBP_NAMES,
           multiple = TRUE,
           options = list(placeholder = "Select one or more RBPs")
         ),
@@ -1716,7 +1769,7 @@ server <- function(input, output, session) {
         selectizeInput(
           inputId = "user_file_compare_gsea",
           label = "Compare with specific RBPs (optional)",
-          choices = names(Charm.object),
+          choices = ALL_RBP_NAMES,
           multiple = TRUE,
           options = list(placeholder = "Select one or more RBPs")
         ),
@@ -1910,7 +1963,7 @@ server <- function(input, output, session) {
       selectizeInput(
         inputId = "user_file_compare_splice",
         label = "Compare with specific RBPs (optional)",
-        choices = names(Charm.object),
+        choices = ALL_RBP_NAMES,
         multiple = TRUE,
         options = list(placeholder = "Select one or more RBPs")
       ),
@@ -2059,10 +2112,14 @@ server <- function(input, output, session) {
     req(user_splice_df())
     selected_rbps <- input$user_file_compare_splice
     
+    # NOTE: this feature compares all 3 cell lines side by side, so it
+    # necessarily materializes all 3 Charm.object variants at once for the
+    # duration of this action -- that's inherent to what it does, not
+    # something the single-instance cache above can avoid.
     datasets <- list(
-      "Both Cells" = Charm.object,
-      "K562" = Charm.object_K562,
-      "HEPG2" = Charm.object_HEPG2
+      "Both Cells" = get_charm_object("Both"),
+      "K562" = get_charm_object("K562"),
+      "HEPG2" = get_charm_object("HEPG2")
     )
     
     output$similar_splice_plots_file <- renderUI({
@@ -2258,9 +2315,9 @@ server <- function(input, output, session) {
   output$binding_disc_target_ui <- renderUI({
     req(upload_ok_binding(), input$binding_eventtype)
     target_choices <- if (grepl("Intron Retention", input$binding_eventtype, ignore.case = TRUE)) {
-      sort(names(Charm.object.binding.IR))
+      sort(ALL_BINDING_RBP_NAMES_IR)
     } else {
-      sort(names(Charm.object.binding.ES))
+      sort(ALL_BINDING_RBP_NAMES_ES)
     }
     selectizeInput(
       "binding_disc_target",
@@ -2291,9 +2348,9 @@ server <- function(input, output, session) {
 
     # Resolve "All" to every available target
     all_rbps <- if (grepl("Intron Retention", event_type, ignore.case = TRUE)) {
-      names(Charm.object.binding.IR)
+      ALL_BINDING_RBP_NAMES_IR
     } else {
-      names(Charm.object.binding.ES)
+      ALL_BINDING_RBP_NAMES_ES
     }
     if ("All" %in% targets_sel) targets_sel <- all_rbps
 
@@ -2572,8 +2629,8 @@ server <- function(input, output, session) {
   
   # ---- Populate Similar RBPs selectize inputs ----
   observe({
-    req(Charm.object)  # make sure Charm.object exists
-    rbp_names <- names(Charm.object)
+    req(ALL_RBP_NAMES)  # make sure the RBP name list exists
+    rbp_names <- ALL_RBP_NAMES
     
     # Expression correlation selectize
     updateSelectizeInput(
@@ -2818,11 +2875,13 @@ server <- function(input, output, session) {
     # Only one mode currently
     mode <- "splice"
     
-    # Choose datasets
+    # Choose datasets. NOTE: compares all 3 cell lines side by side, so this
+    # necessarily materializes all 3 Charm.object variants at once for the
+    # duration of this action -- inherent to the feature, not a cache gap.
     datasets <- list(
-      "Both Cells" = Charm.object,
-      "K562"       = Charm.object_K562,
-      "HEPG2"      = Charm.object_HEPG2
+      "Both Cells" = get_charm_object("Both"),
+      "K562"       = get_charm_object("K562"),
+      "HEPG2"      = get_charm_object("HEPG2")
     )
     
     scatter_fun <- correl_splicing_rbp_plotly
@@ -2944,19 +3003,11 @@ server <- function(input, output, session) {
   # =========================
   binding_data <- reactive({
     req(input$binding_eventtype, input$binding_dataset)
-    
-    if (input$binding_eventtype == "Exon Skipping") {
-      if (input$binding_dataset == "Both Cells") return(Charm.object.binding.ES)
-      if (input$binding_dataset == "K562")       return(Charm.object.binding.ES_K562)
-      if (input$binding_dataset == "HEPG2")      return(Charm.object.binding.ES_HEPG2)
+
+    if (input$binding_eventtype %in% c("Exon Skipping", "Intron Retention")) {
+      return(get_binding_object(input$binding_eventtype, input$binding_dataset))
     }
-    
-    if (input$binding_eventtype == "Intron Retention") {
-      if (input$binding_dataset == "Both Cells") return(Charm.object.binding.IR)
-      if (input$binding_dataset == "K562")       return(Charm.object.binding.IR_K562)
-      if (input$binding_dataset == "HEPG2")      return(Charm.object.binding.IR_HEPG2)
-    }
-    
+
     NULL
   })
   
@@ -2983,11 +3034,23 @@ server <- function(input, output, session) {
     req(input$binding_search)
     data <- binding_data()
     rbp <- input$binding_search
-    
+    all_targets <- sort(names(data[[rbp]]))
+
+    # If we're arriving here via cross-tab navigation, binding_nav_target()
+    # already holds the target to pre-select. Bake it into `selected` at
+    # creation time instead of updating it afterward via
+    # updateSelectizeInput() -- that update message races the client-side
+    # creation of this very widget and gets silently dropped if it arrives
+    # first, which left binding_target (and the binding_dpsi UI that depends
+    # on it) unset and results() never firing.
+    nav_tgt <- binding_nav_target()
+    preselected <- if (!is.null(nav_tgt) && nav_tgt %in% all_targets) nav_tgt else NULL
+
     selectizeInput(
       "binding_target",
       "Target(s):",
-      choices = c("All", sort(names(data[[rbp]]))),
+      choices = c("All", all_targets),
+      selected = preselected,
       multiple = TRUE,
       options = list(placeholder = "Select one or more targets, or 'All'")
     )
@@ -3907,10 +3970,7 @@ server <- function(input, output, session) {
 
       # ── Cell line mapping ──────────────────────────────────────────────────
       cell_key_binding <- switch(cell, "Both" = "both", "K562" = "K562", "HEPG2" = "HEPG2")
-      charm_obj <- switch(cell,
-                          "Both"  = Charm.object,
-                          "K562"  = Charm.object_K562,
-                          "HEPG2" = Charm.object_HEPG2)
+      charm_obj <- get_charm_object(cell)
       expr_obj  <- switch(cell,
                           "Both"  = similar_expression_all,
                           "K562"  = similar_expression_K562,

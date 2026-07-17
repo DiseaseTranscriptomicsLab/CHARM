@@ -63,3 +63,7 @@ po/*~
 # RStudio Connect folder
 rsconnect/
 >>>>>>> fd3c70eb5d5feb719a5aec30589d6f241139b740
+.DS_Store
+cleanup_unused_data.sh
+optimize_data.R
+STORAGE_AUDIT.md
