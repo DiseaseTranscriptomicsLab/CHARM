@@ -67,3 +67,4 @@ rsconnect/
 cleanup_unused_data.sh
 optimize_data.R
 STORAGE_AUDIT.md
+data.zip
