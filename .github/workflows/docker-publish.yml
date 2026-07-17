@@ -2,13 +2,13 @@ name: Publish Docker image
 
 # Two build triggers, kept apart by which event fired (see the "Docker
 # meta" step below for how each maps to an image tag):
-#   - every push to `dev`      -> rolling `dev` tag (always latest dev build)
+#   - every push to `main`     -> rolling `dev` tag (always latest build off main)
 #   - every published release  -> the release's git tag (e.g. "v1.2.0"),
 #                                  never overwritten, plus `latest`
 on:
   push:
     branches:
-      - dev
+      - main
   release:
     types: [published]
 
@@ -36,7 +36,6 @@ jobs:
           images: ${{ env.dockerhub-package }},ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=dev,enable=${{ github.event_name == 'push' }}
-            type=ref,event=branch,enable=${{ github.event_name == 'push' }}
             type=raw,value=${{ github.event.release.tag_name }},enable=${{ github.event_name == 'release' }}
             type=raw,value=latest,enable=${{ github.event_name == 'release' }}
 
