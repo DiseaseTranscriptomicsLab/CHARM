@@ -1057,6 +1057,10 @@ ui <- fluidPage(
       border: 1px solid #2c3e50;
       text-align: center;
     ",
+    tags$div(
+      style = "font-size: 11px; color: #2c3e50; margin-bottom: 4px;",
+      "Version: dev"
+    ),
     tags$a(
       href = "https://github.com/DiseaseTranscriptomicsLab/CHARM",
       target = "_blank",
@@ -1285,15 +1289,27 @@ server <- function(input, output, session) {
   # select the target and click Search. We watch binding_search rather than
   # binding_target because binding_target is NULL until the user interacts
   # with it, so its change never fires when navigating programmatically.
-  observeEvent(input$binding_search, {
+  #
+  # This is a plain observe(), not observeEvent(input$binding_search, ...):
+  # binding_data() itself needs input$binding_eventtype/input$binding_dataset,
+  # which live in the Binding sidebar and only exist once the tab switch +
+  # binding_mode update have round-tripped to the client and back. If
+  # binding_data() wasn't ready yet at the exact moment binding_search
+  # changed, an observeEvent keyed on binding_search's change would abort via
+  # req() and then simply never run again (nothing about binding_search
+  # itself changes afterwards) -- silently killing the whole navigation
+  # with the "Loading binding data..." status stuck up forever. A plain
+  # observe() re-evaluates whenever ANY reactive it reads changes, so it
+  # naturally retries once binding_data() becomes available.
+  observe({
     trigger_rbp <- binding_nav_trigger()
     req(!is.null(trigger_rbp))
-    req(input$binding_search == trigger_rbp)
-    
+    req(!is.null(input$binding_search), input$binding_search == trigger_rbp)
+
     data <- binding_data()
     req(!is.null(data))
     available_targets <- names(data[[trigger_rbp]])
-    
+
     target_to_use <- if (trigger_rbp %in% available_targets) {
       trigger_rbp
     } else if (length(available_targets) > 0) {
@@ -1301,7 +1317,7 @@ server <- function(input, output, session) {
     } else {
       NULL
     }
-    
+
     req(!is.null(target_to_use))
     binding_nav_trigger(NULL)          # clear so this doesn't re-fire
     binding_nav_target(target_to_use)  # binding_target_ui reads this to pre-select
@@ -1310,7 +1326,7 @@ server <- function(input, output, session) {
 
     # Click Search after a delay so results() fires with binding_nav_target set
     session$sendCustomMessage("clickButton", list(id = "search_btn", delay = 500))
-  }, ignoreNULL = TRUE, ignoreInit = TRUE)
+  })
   
   # Helper: render the navigation bar for a given tab
   make_nav_bar <- function(rbp, current_tab) {
@@ -1376,7 +1392,16 @@ server <- function(input, output, session) {
     rbp <- rbp_current(); req(!is.null(rbp))
     updateTabsetPanel(session, "main_tabs", selected = "Binding")
     updateRadioButtons(session, "binding_mode", selected = "Explore")
-    updateSelectizeInput(session, "binding_search", selected = rbp)
+    # binding_search is a server-side selectize (server = TRUE elsewhere) --
+    # updateSelectizeInput(selected = rbp) alone is unreliable once the
+    # widget has already been interacted with, because the client only
+    # knows about options its last search actually fetched from the server.
+    # If rbp was never searched for, the client can't select it and just
+    # clears the field instead (silently -- this is what caused "See in
+    # Binding" to hang forever on any navigation after Binding had already
+    # been used once). Passing it as an explicit choice guarantees the
+    # client has it available to select.
+    updateSelectizeInput(session, "binding_search", choices = setNames(rbp, rbp), selected = rbp, server = TRUE)
     nav_rbp(list(rbp = rbp, from = "Expression", to = "Binding"))
   })
   
@@ -1394,7 +1419,9 @@ server <- function(input, output, session) {
     rbp <- rbp_current(); req(!is.null(rbp))
     updateTabsetPanel(session, "main_tabs", selected = "Binding")
     updateRadioButtons(session, "binding_mode", selected = "Explore")
-    updateSelectizeInput(session, "binding_search", selected = rbp)
+    # See the Expression -> Binding observer above for why choices is passed
+    # here instead of just selected.
+    updateSelectizeInput(session, "binding_search", choices = setNames(rbp, rbp), selected = rbp, server = TRUE)
     nav_rbp(list(rbp = rbp, from = "Splicing", to = "Binding"))
   })
   
@@ -3612,7 +3639,7 @@ server <- function(input, output, session) {
   results <- eventReactive(input$search_btn, {
     withProgress(message = "Generating Plot...", value = 0, {
       incProgress(0.05)
-      
+
       # Use binding_nav_target if set (navigation case), otherwise read from UI
       nav_tgt <- binding_nav_target()
       targets <- if (!is.null(nav_tgt)) {
@@ -3621,8 +3648,20 @@ server <- function(input, output, session) {
       } else {
         input$binding_target
       }
-      
-      req(input$binding_search, targets, input$binding_dpsi, input$binding_metric)
+
+      # Only binding_search/targets are hard requirements. binding_dpsi and
+      # binding_metric both already have graceful fallback handling below
+      # (metric defaults to "FDR"; a missing/invalid dpsi produces a "not
+      # available" message plot via resolve_dpsi_key()) -- req()'ing them
+      # here contradicted that and silently killed this whole reactive
+      # whenever they weren't populated yet, which is exactly what happens
+      # during cross-tab navigation: the simulated Search click can fire
+      # before the Binding sidebar's cascading dpsi/metric inputs have
+      # rendered. When that happened, results() never resolved, so
+      # eclipse_plot's hide_status() (which only runs once results()
+      # succeeds) never ran either -- the "Loading binding data..." status
+      # stayed up forever with nothing to clear it.
+      req(input$binding_search, targets)
       
       data <- binding_data()
       rbp  <- input$binding_search
@@ -3943,7 +3982,13 @@ server <- function(input, output, session) {
     topN        <- input$binding_sim_topN
     n_close     <- input$binding_sim_n_close
     n_far       <- input$binding_sim_n_far
-    
+
+    # If the user left every filter blank, default to the top 10 closest
+    # profiles instead of plotting every profile in the dataset -- matches
+    # the "Explore" mode Similar Profiles panel (binding_explore_sim_plot_btn
+    # above), which had this fallback but this panel didn't.
+    if (is.na(topN) && is.na(n_close) && is.na(n_far)) n_close <- 10
+
     sim_objs <- binding_sim_objects()
     dataset_names <- c("Both Cells", "K562", "HEPG2")
     directions    <- c("inc", "dec")

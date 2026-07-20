@@ -2068,15 +2068,20 @@ binding_profile_correl <- function(sim_obj,
     cor_df <- cor_df[order(-cor_df$Correlation), ]   # restore display order: highest r first
     
   } else {
-    # Separate most-similar (highest r) and most-dissimilar (most negative r) slices
-    close_df <- cor_df                               # already sorted, highest r first
-    far_df   <- cor_df[order(cor_df$Correlation), ]  # most negative r first
-    
+    # Separate most-similar (highest r) and most-dissimilar (most negative r)
+    # slices. Each starts EMPTY, not the full dataset -- previously close_df/
+    # far_df defaulted to *all* profiles and were only trimmed if their N was
+    # set, so e.g. defaulting n_close to 10 with n_far left unset still
+    # pulled in every remaining profile via the untouched far_df, rbind()-ing
+    # it back in and producing a heatmap with hundreds of bars instead of 10.
+    close_df <- cor_df[0, , drop = FALSE]
+    far_df   <- cor_df[0, , drop = FALSE]
+
     if (!is.null(n_close) && !is.na(n_close) && n_close > 0)
-      close_df <- head(close_df, n_close)
+      close_df <- head(cor_df, n_close)                              # already sorted, highest r first
     if (!is.null(n_far)   && !is.na(n_far)   && n_far   > 0)
-      far_df   <- head(far_df,   n_far)
-    
+      far_df   <- head(cor_df[order(cor_df$Correlation), ], n_far)   # most negative r first
+
     cor_df <- unique(rbind(close_df, far_df))
     cor_df <- cor_df[order(-cor_df$Correlation), ]
   }
