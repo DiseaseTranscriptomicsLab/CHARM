@@ -297,7 +297,7 @@ plot_gsea <- function(charmobj, rbp, thresh = 0.05,
   return(list(geneset_table = hallmarks.res.tidy, gsea_plot = gsea_plot_hall))
 }
 
-correl_exp_rbp_plotly <- function(rbp_results, rbp, other_rbp, plot_title = NULL) {
+correl_exp_rbp_hc <- function(rbp_results, rbp, other_rbp, plot_title = NULL) {
 
   # --- Determine if reference is user file or internal RBP ---
   if (is.data.frame(rbp)) {
@@ -324,7 +324,16 @@ correl_exp_rbp_plotly <- function(rbp_results, rbp, other_rbp, plot_title = NULL
   }
 
   # --- Merge by Gene ---
+  # Dedup by Gene before merging: the "Both Cells" datasets concatenate
+  # per-cell-line rows, so the same gene can legitimately appear twice
+  # (once per cell line). merge()'s by-key join is many-to-many for
+  # duplicate keys, so without this a single repeated gene turns into a
+  # combinatorial blowup of merged rows -- harmless for exp_correl's
+  # heatmap (which only reduces to a scalar cor.test per RBP pair) but
+  # enough extra points to make the interactive scatter fail to render.
   other_df <- rbp_results[[other_rbp]]
+  ref_df   <- ref_df[!duplicated(ref_df$Gene), ]
+  other_df <- other_df[!duplicated(other_df$Gene), ]
   merged <- merge(
     ref_df, other_df,
     by = "Gene",
@@ -352,26 +361,32 @@ correl_exp_rbp_plotly <- function(rbp_results, rbp, other_rbp, plot_title = NULL
     ", p = ", signif(pval, 3), ")"
   )
 
-  # --- Plotly scatter ---
-  plotly::plot_ly(
-    merged,
-    x = ~get(paste0("t_", rbp_label)),
-    y = ~get(paste0("t_", other_rbp)),
-    type = "scatter",
-    mode = "markers",
-    text = ~paste("Gene:", Gene),
-    hoverinfo = "text",
-    marker = list(size = 7, color = "#DDDDDD", line = list(width = 1, color = "black"))
+  # --- highcharter scatter ---
+  # Fixed column names (x_val/y_val) sidestep any ambiguity around passing
+  # dynamically-built column names (e.g. "t_<rbp_label>") into hcaes()'s
+  # tidy-eval mapping.
+  plot_df <- data.frame(
+    x_val = merged[[paste0("t_", rbp_label)]],
+    y_val = merged[[paste0("t_", other_rbp)]],
+    gene  = merged$Gene
+  )
+
+  highcharter::hchart(
+    plot_df, "scatter",
+    highcharter::hcaes(x = x_val, y = y_val, gene = gene),
+    fast = TRUE
   ) %>%
-    plotly::layout(
-      title = title_txt,
-      xaxis = list(title = paste0(rbp_label, " t-statistics")),
-      yaxis = list(title = paste0(other_rbp, " t-statistics")),
-      showlegend = FALSE
-    )
+    highcharter::hc_title(text = title_txt) %>%
+    highcharter::hc_xAxis(title = list(text = paste0(rbp_label, " t-statistics"))) %>%
+    highcharter::hc_yAxis(title = list(text = paste0(other_rbp, " t-statistics"))) %>%
+    highcharter::hc_tooltip(pointFormat = "Gene: {point.gene}") %>%
+    highcharter::hc_plotOptions(scatter = list(
+      marker = list(radius = 5, fillColor = "#DDDDDD", lineColor = "black", lineWidth = 1)
+    )) %>%
+    highcharter::hc_legend(enabled = FALSE)
 }
 
-correl_scatter_gsea_plotly <- function(gsea_results, rbp, other_rbp, plot_title = NULL,
+correl_scatter_gsea_hc <- function(gsea_results, rbp, other_rbp, plot_title = NULL,
                                        up_color = "#BA3B46", down_color = "#53A2BE",
                                        show_legend = FALSE) {
 
@@ -403,6 +418,11 @@ correl_scatter_gsea_plotly <- function(gsea_results, rbp, other_rbp, plot_title 
   other_df <- gsea_results[[other_rbp]]
 
   # --- Merge by pathway ---
+  # See correl_exp_rbp_hc() for why this dedups before merge: "Both Cells"
+  # datasets can legitimately repeat a pathway once per cell line, and an
+  # un-deduped merge() blows up combinatorially on repeated keys.
+  ref_df   <- ref_df[!duplicated(ref_df$pathway), ]
+  other_df <- other_df[!duplicated(other_df$pathway), ]
   merged <- merge(
     ref_df %>% dplyr::select(pathway, NES),
     other_df %>% dplyr::select(pathway, NES),
@@ -419,29 +439,26 @@ correl_scatter_gsea_plotly <- function(gsea_results, rbp, other_rbp, plot_title 
   rho <- unname(test$estimate)
   pval <- test$p.value
 
-  # --- Plotly scatter ---
+  # --- Title ---
   title_txt <- paste0(
     if (!is.null(plot_title)) paste0(plot_title, ": ") else "",
     "GSEA correlation between ", rbp_label, " and ", other_rbp,
     " (Spearman ρ = ", round(rho, 2), ", p = ", signif(pval, 3), ")"
   )
 
-  plotly::plot_ly(
-    merged,
-    x = ~NES_ref,
-    y = ~NES_other,
-    type = "scatter",
-    mode = "markers",
-    text = ~paste("Pathway:", pathway),
-    hoverinfo = "text",
-    marker = list(size = 7, color = "#DDDDDD", line = list(width = 1, color = "black"))
+  highcharter::hchart(
+    merged, "scatter",
+    highcharter::hcaes(x = NES_ref, y = NES_other, pathway = pathway),
+    fast = TRUE
   ) %>%
-    plotly::layout(
-      title = title_txt,
-      xaxis = list(title = paste0(rbp_label, " NES")),
-      yaxis = list(title = paste0(other_rbp, " NES")),
-      showlegend = show_legend
-    )
+    highcharter::hc_title(text = title_txt) %>%
+    highcharter::hc_xAxis(title = list(text = paste0(rbp_label, " NES"))) %>%
+    highcharter::hc_yAxis(title = list(text = paste0(other_rbp, " NES"))) %>%
+    highcharter::hc_tooltip(pointFormat = "Pathway: {point.pathway}") %>%
+    highcharter::hc_plotOptions(scatter = list(
+      marker = list(radius = 5, fillColor = "#DDDDDD", lineColor = "black", lineWidth = 1)
+    )) %>%
+    highcharter::hc_legend(enabled = show_legend)
 }
 
 
@@ -531,7 +548,6 @@ exp_correl <- function(rbp_results, rbp, correl_num = NULL,
       axis.text = element_text(face = "bold"),
       axis.title = element_text(face = "bold")
     )
-
   return(list(
     correlation_table = cor_results,
     top_table = top_cor,
@@ -893,7 +909,7 @@ plot_splice_volcano <- function(charmobj, rbp, other_events = NULL) {
   top.table <- top.table %>%
     mutate(highlight = ifelse(Event.ID %in% other_events, "Other", "None"))
 
-  # Tooltip text (this is what plotly will show)
+  # Tooltip text (retained for the downloadable table view)
   top.table <- top.table %>%
     mutate(text = paste0(
       "Gene: ", Gene, "<br>",
@@ -941,7 +957,7 @@ plot_splice_volcano <- function(charmobj, rbp, other_events = NULL) {
 }
 
 
-correl_splicing_rbp_plotly <- function(charmobj, rbp, other_rbp, plot_title = NULL) {
+correl_splicing_rbp_hc <- function(charmobj, rbp, other_rbp, plot_title = NULL) {
 
   # --- Determine reference RBP ---
   if (is.data.frame(rbp)) {
@@ -962,14 +978,19 @@ correl_splicing_rbp_plotly <- function(charmobj, rbp, other_rbp, plot_title = NU
   other_label <- other_rbp
 
   # --- Merge by Event.ID ---
+  # See correl_exp_rbp_hc() for why this dedups before merge: "Both Cells"
+  # datasets can legitimately repeat an event once per cell line, and an
+  # un-deduped merge() blows up combinatorially on repeated keys.
+  ref_df   <- ref_df[!duplicated(ref_df$Event.ID), ]
+  other_df <- other_df[!duplicated(other_df$Event.ID), ]
   merged <- merge(ref_df, other_df, by = "Event.ID", suffixes = c("_ref", "_other"))
   colnames(merged) <- c("Event.ID", "dPSI_ref", "dPSI_other")
 
   if (nrow(merged) < 3) {
-    return(plotly::plotly_empty(
-      type = "scatter", mode = "text",
-      text = paste("Not enough overlapping events between", rbp_label, "and", other_label)
-    ))
+    return(
+      highcharter::highchart() %>%
+        highcharter::hc_title(text = paste("Not enough overlapping events between", rbp_label, "and", other_label))
+    )
   }
 
   # --- Spearman correlation ---
@@ -985,25 +1006,27 @@ correl_splicing_rbp_plotly <- function(charmobj, rbp, other_rbp, plot_title = NU
     ", p = ", signif(pval, 3), ")"
   )
 
-  # --- Plotly scatter ---
-  plotly::plot_ly(
-    merged,
-    x = ~dPSI_ref,
-    y = ~dPSI_other,
-    type = "scatter",
-    mode = "markers",
-    text = ~paste0("Event: ", Event.ID,
-                   "<br>", rbp_label, " dPSI: ", round(dPSI_ref, 3),
-                   "<br>", other_label, " dPSI: ", round(dPSI_other, 3)),
-    hoverinfo = "text",
-    marker = list(size = 7, color = "#DDDDDD", line = list(width = 1, color = "black"))
+  # --- highcharter scatter ---
+  merged$dPSI_ref_r   <- round(merged$dPSI_ref, 3)
+  merged$dPSI_other_r <- round(merged$dPSI_other, 3)
+
+  highcharter::hchart(
+    merged, "scatter",
+    highcharter::hcaes(x = dPSI_ref, y = dPSI_other, event_id = Event.ID,
+                       dpsi_ref_r = dPSI_ref_r, dpsi_other_r = dPSI_other_r),
+    fast = TRUE
   ) %>%
-    plotly::layout(
-      title = title_txt,
-      xaxis = list(title = paste0(rbp_label, " dPSI")),
-      yaxis = list(title = paste0(other_label, " dPSI")),
-      showlegend = FALSE
-    )
+    highcharter::hc_title(text = title_txt) %>%
+    highcharter::hc_xAxis(title = list(text = paste0(rbp_label, " dPSI"))) %>%
+    highcharter::hc_yAxis(title = list(text = paste0(other_label, " dPSI"))) %>%
+    highcharter::hc_tooltip(pointFormat = paste0(
+      "Event: {point.event_id}<br>", rbp_label, " dPSI: {point.dpsi_ref_r}<br>",
+      other_label, " dPSI: {point.dpsi_other_r}"
+    )) %>%
+    highcharter::hc_plotOptions(scatter = list(
+      marker = list(radius = 5, fillColor = "#DDDDDD", lineColor = "black", lineWidth = 1)
+    )) %>%
+    highcharter::hc_legend(enabled = FALSE)
 }
 
 

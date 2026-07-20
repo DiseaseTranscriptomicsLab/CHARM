@@ -2,7 +2,7 @@ library(shiny)
 library(shinythemes)
 library(fontawesome)
 library(DT)
-library(plotly)
+library(highcharter)
 library(ggplot2)
 library(limma)
 library(ggrepel)
@@ -466,7 +466,7 @@ ui <- fluidPage(
               ),
               fluidRow(
                 column(width = 6,
-                  plotlyOutput("volcano_plot", height = "450px"),
+                  highchartOutput("volcano_plot", height = "450px"),
                   uiOutput("dl_ui_volcano")
                 ),
                 column(width = 6,
@@ -674,7 +674,7 @@ ui <- fluidPage(
               ),
               fluidRow(
                 column(width = 6,
-                  plotlyOutput("plot_splice_volcano", height = "450px"),
+                  highchartOutput("plot_splice_volcano", height = "450px"),
                   uiOutput("dl_ui_splice_volcano")
                 ),
                 column(width = 6,
@@ -1432,7 +1432,7 @@ server <- function(input, output, session) {
       expr_top_panel(NULL)
       output$expr_violin    <- renderPlot(NULL)
       output$shrna_plot     <- renderPlot(NULL)
-      output$volcano_plot   <- renderPlotly(NULL)
+      output$volcano_plot   <- renderHighchart(NULL)
       output$volcano_table  <- renderDT(NULL)
       output$gsea_plot      <- renderPlot(NULL)
       output$geneset_table  <- renderDT(NULL)
@@ -1451,10 +1451,10 @@ server <- function(input, output, session) {
       tbl <- tbl[, c("gene", setdiff(colnames(tbl), "gene"))]
       tbl$highlight <- ifelse(tbl$gene == rbp_sel, "RBP", "None")
       display_table(tbl)
-      output$volcano_plot <- renderPlotly({
+      output$volcano_plot <- renderHighchart({
         p <- make_volcano_plot(display_table(), rbp_sel)
         dl_store$volcano(p)
-        ggplotly(p, tooltip = "text", source = "volcano") %>% event_register("plotly_click")
+        make_volcano_plot_hc(display_table(), rbp_sel)
       })
       output$volcano_table <- renderDT({
         datatable(display_table(), filter = "none", selection = "single",
@@ -1480,7 +1480,7 @@ server <- function(input, output, session) {
       splice_top_panel(NULL)
       output$violin_splice_plot  <- renderPlot(NULL)
       output$plot_shrna_effect   <- renderPlot(NULL)
-      output$plot_splice_volcano <- renderPlotly(NULL)
+      output$plot_splice_volcano <- renderHighchart(NULL)
       output$splice_volcano_table <- renderDT(NULL)
       output$violin_splice_plot <- renderPlot({
         p <- violin_splice_plot(charm_obj, rbp_sel)
@@ -1493,7 +1493,7 @@ server <- function(input, output, session) {
       splice_res <- plot_splice_volcano(charm_obj, rbp_sel)
       req(!is.null(splice_res))
       result_splice(splice_res)
-      output$plot_splice_volcano <- renderPlotly({
+      output$plot_splice_volcano <- renderHighchart({
         req(result_splice())
         tbl <- result_splice()$top_table
         p <- ggplot(tbl, aes(x = dPSI, y = Pdiff, key = Event.ID, color = highlight)) +
@@ -1502,7 +1502,7 @@ server <- function(input, output, session) {
           theme_bw() + theme(legend.position = "none") +
           labs(title = paste("Volcano Plot:", rbp_sel), x = "dPSI (shRNA - CTRL)", y = "PDiff")
         dl_store$splice_volcano(p)
-        ggplotly(p, tooltip = "key", source = "splice_volcano") %>% event_register("plotly_click")
+        make_splice_volcano_plot_hc(tbl, rbp_sel)
       })
       output$splice_volcano_table <- DT::renderDataTable({
         req(result_splice())
@@ -1823,7 +1823,7 @@ server <- function(input, output, session) {
         "HEPG2"      = similar_expression_HEPG2
       )
       selected_rbps <- input$user_file_compare_expr
-      scatter_fun <- correl_exp_rbp_plotly
+      scatter_fun <- correl_exp_rbp_hc
       heatmap_fun <- exp_correl
       target_ui <- "userfilesimilar_expr"
     } else {  # mode == "gsea"
@@ -1833,7 +1833,7 @@ server <- function(input, output, session) {
         "HEPG2"      = similar_gsea_HEPG2
       )
       selected_rbps <- input$user_file_compare_gsea
-      scatter_fun <- correl_scatter_gsea_plotly
+      scatter_fun <- correl_scatter_gsea_hc
       heatmap_fun <- gsea_correl
       target_ui <- "userfilesimilar_gsea"
     }
@@ -1849,11 +1849,15 @@ server <- function(input, output, session) {
         
         # Generate all dataset plots dynamically
         lapply(names(datasets), function(ds_name) {
-          plotname <- paste0("userfile_plot_", ds_name)
+          # Sanitize: ds_name can be "Both Cells" (contains a space), which
+          # is an invalid Shiny output ID. plotOutput/renderPlot tolerated
+          # it, but highchartOutput/renderHighchart's widget binding does
+          # not -- the plot silently never appears, no error anywhere.
+          plotname <- paste0("userfile_plot_", gsub("[^A-Za-z0-9_]+", "_", ds_name))
           
           # Dynamic output creation
           if (!is.null(selected_rbps) && length(selected_rbps) == 1) {
-            output[[plotname]] <- renderPlotly({
+            output[[plotname]] <- renderHighchart({
               scatter_fun(
                 datasets[[ds_name]],
                 user_expr_df(),
@@ -1861,7 +1865,7 @@ server <- function(input, output, session) {
                 plot_title = ds_name
               )
             })
-            plot_ui <- plotlyOutput(plotname, height = "500px")
+            plot_ui <- highchartOutput(plotname, height = "500px")
           } else {
             output[[plotname]] <- renderPlot({
               heat_res <- heatmap_fun(
@@ -2126,13 +2130,14 @@ server <- function(input, output, session) {
       tagList(
         tags$div("Generating plots, please wait...", style = "font-weight:bold;color:#A10702;margin-bottom:15px;"),
         lapply(names(datasets), function(ds_name) {
-          plotname <- paste0("userfile_plot_splice_", ds_name)
+          # See the "userfile_plot_" block above for why this is sanitized.
+          plotname <- paste0("userfile_plot_splice_", gsub("[^A-Za-z0-9_]+", "_", ds_name))
           
           if (!is.null(selected_rbps) && length(selected_rbps) == 1) {
-            output[[plotname]] <- renderPlotly({
-              correl_splicing_rbp_plotly(datasets[[ds_name]], user_splice_df(), selected_rbps)
+            output[[plotname]] <- renderHighchart({
+              correl_splicing_rbp_hc(datasets[[ds_name]], user_splice_df(), selected_rbps)
             })
-            plot_ui <- plotlyOutput(plotname, height = "500px")
+            plot_ui <- highchartOutput(plotname, height = "500px")
           } else {
             output[[plotname]] <- renderPlot({
               heat_res <- splicing_correl(
@@ -2439,47 +2444,138 @@ server <- function(input, output, session) {
         )
     }
   }
-  
+
+  # ---- Shared click handler for interactive highcharter scatter/volcano
+  # plots ----
+  # NOTE on the switch from plotly: we deliberately don't use highcharter's
+  # own hc_add_event_point() helper here. Reading its source shows it always
+  # reads `this.category.name`, which is only defined for category-type axes
+  # (e.g. bar charts) -- for continuous numeric axes like ours, `this.category`
+  # is undefined and that line throws a JS TypeError, silently killing the
+  # click handler. This is a minimal replacement that only reads fields we
+  # actually attach via hcaes() (x, y, gene, key), so it can't hit that bug.
+  # Uses Shiny.setInputValue(..., {priority: "event"}) so re-clicking the same
+  # point still fires the observer even when the payload is unchanged.
+  hc_add_click_input <- function(hc, output_id) {
+    hc %>%
+      highcharter::hc_plotOptions(series = list(
+        cursor = "pointer",
+        point = list(events = list(click = htmlwidgets::JS(sprintf(
+          "function() {
+             var pt = {x: this.x, y: this.y, gene: this.gene, key: this.key};
+             if (typeof Shiny !== 'undefined') {
+               Shiny.setInputValue('%s_click', pt, {priority: 'event'});
+             }
+           }", output_id
+        ))))
+      ))
+  }
+
+  # ---- Volcano plot helper (interactive, highcharter) ----
+  # Mirrors make_volcano_plot() above but renders directly with highcharter
+  # instead of wrapping a ggplot with ggplotly(); make_volcano_plot() itself
+  # is left untouched since it still feeds the PNG download handler.
+  make_volcano_plot_hc <- function(tbl, rbp, output_id = "volcano_plot") {
+    if (is.null(tbl) || nrow(tbl) == 0) {
+      return(highcharter::highchart() %>% highcharter::hc_title(text = paste("No results for", rbp)))
+    }
+    # Per-point hex color (rather than group=highlight + hc_colors()) so
+    # coloring is exact regardless of which highlight categories happen to
+    # be present in tbl -- group-based coloring is assigned positionally to
+    # whichever groups survive dplyr::group_by()'s default unused-level
+    # dropping, which can silently misalign if e.g. no row is "RBP" yet.
+    # This also avoids a legend/series-toggle UI that the original
+    # (legend.position = "none") never had.
+    highlight_colors <- c("None" = "#CCCCCC", "RBP" = "#A10702", "Selected" = "#008057")
+    plot_df <- tbl
+    plot_df$point_color <- unname(highlight_colors[plot_df$highlight])
+    plot_df$logfc_r <- round(plot_df$logFC, 2)
+    plot_df$b_r     <- round(plot_df$B, 2)
+    plot_df$p_r     <- signif(plot_df$P.Value, 3)
+
+    highcharter::hchart(
+      plot_df, "scatter",
+      highcharter::hcaes(x = logFC, y = B, color = point_color, gene = gene,
+                         logfc_r = logfc_r, b_r = b_r, p_r = p_r),
+      fast = TRUE
+    ) %>%
+      highcharter::hc_title(text = paste(rbp, "KD")) %>%
+      highcharter::hc_xAxis(title = list(text = "Log2 Fold-Change")) %>%
+      highcharter::hc_yAxis(title = list(text = "B-statistic")) %>%
+      highcharter::hc_tooltip(pointFormat = "Gene: {point.gene}<br>logFC: {point.logfc_r}<br>B: {point.b_r}<br>P: {point.p_r}") %>%
+      highcharter::hc_plotOptions(scatter = list(marker = list(radius = 5, lineWidth = 1, lineColor = "black"))) %>%
+      highcharter::hc_legend(enabled = FALSE) %>%
+      hc_add_click_input(output_id)
+  }
+
+  # ---- Splicing volcano plot helper (interactive, highcharter) ----
+  # Mirrors the ggplot built inline in the "Splicing" server blocks below
+  # (dPSI vs Pdiff, colored by highlight, tooltip keyed by Event.ID).
+  make_splice_volcano_plot_hc <- function(tbl, rbp, output_id = "plot_splice_volcano") {
+    if (is.null(tbl) || nrow(tbl) == 0) {
+      return(highcharter::highchart() %>% highcharter::hc_title(text = paste("No results for", rbp)))
+    }
+    # See make_volcano_plot_hc() above for why this uses per-point hex
+    # color instead of group=highlight + hc_colors().
+    highlight_colors <- c("None" = "#CCCCCC", "RBP" = "#A10702", "Selected" = "#008057")
+    plot_df <- tbl
+    plot_df$point_color <- unname(highlight_colors[plot_df$highlight])
+
+    highcharter::hchart(
+      plot_df, "scatter",
+      highcharter::hcaes(x = dPSI, y = Pdiff, color = point_color, key = Event.ID),
+      fast = TRUE
+    ) %>%
+      highcharter::hc_title(text = paste("Volcano Plot:", rbp)) %>%
+      highcharter::hc_xAxis(title = list(text = "dPSI (shRNA - CTRL)")) %>%
+      highcharter::hc_yAxis(title = list(text = "PDiff")) %>%
+      highcharter::hc_tooltip(pointFormat = "Event: {point.key}") %>%
+      highcharter::hc_plotOptions(scatter = list(marker = list(radius = 5, lineWidth = 1, lineColor = "black"))) %>%
+      highcharter::hc_legend(enabled = FALSE) %>%
+      hc_add_click_input(output_id)
+  }
+
   # ---- React to clicking a point in the volcano ----
-  observeEvent(event_data("plotly_click", source = "volcano"), {
-    ed <- event_data("plotly_click", source = "volcano")
+  # ed$gene comes straight from the clicked point's own data (attached via
+  # hcaes(gene = gene) in make_volcano_plot_hc / hc_add_click_input), so this
+  # is an exact match rather than the old plotly-era nearest-point-by-distance
+  # heuristic.
+  observeEvent(input$volcano_plot_click, {
+    ed <- input$volcano_plot_click
     tbl <- display_table()
-    if (!is.null(ed) && nrow(tbl) > 0) {
-      # Find closest point
-      clicked_gene <- tbl$gene[which.min(abs(tbl$logFC - ed$x) + abs(tbl$B - ed$y))]
-      
+    if (!is.null(ed) && !is.null(ed$gene) && nrow(tbl) > 0) {
+      clicked_gene <- ed$gene
+
       # Update highlights
       tbl$highlight <- ifelse(tbl$gene == clicked_gene, "Selected",
                               ifelse(tbl$gene == rbp_current(), "RBP", "None"))
-      
+
       # Reorder table to bring selected gene on top
       tbl <- rbind(tbl[tbl$gene == clicked_gene, ], tbl[tbl$gene != clicked_gene, ])
       display_table(tbl)
-      
+
       # Re-render volcano plot
-      output$volcano_plot <- renderPlotly({
-        ggplotly(make_volcano_plot(display_table(), rbp_current()), tooltip = "text", source = "volcano") %>%
-          event_register("plotly_click")
+      output$volcano_plot <- renderHighchart({
+        make_volcano_plot_hc(display_table(), rbp_current())
       })
     }
   })
-  
+
   # ---- React to selecting a row in the table ----
   observeEvent(input$volcano_table_rows_selected, {
     sel_row <- input$volcano_table_rows_selected
     if (is.null(sel_row)) return()
     tbl <- display_table()
     sel_gene <- tbl$gene[sel_row]
-    
+
     # Update highlights
     tbl$highlight <- ifelse(tbl$gene == sel_gene, "Selected",
                             ifelse(tbl$gene == rbp_current(), "RBP", "None"))
     display_table(tbl)
-    
+
     # Re-render volcano plot
-    output$volcano_plot <- renderPlotly({
-      ggplotly(make_volcano_plot(display_table(), rbp_current()), tooltip = "text", source = "volcano") %>%
-        event_register("plotly_click")
+    output$volcano_plot <- renderHighchart({
+      make_volcano_plot_hc(display_table(), rbp_current())
     })
   })
   
@@ -2494,7 +2590,7 @@ server <- function(input, output, session) {
     output$expr_violin    <- renderPlot(NULL)
     output$shrna_plot     <- renderPlot(NULL)
     output$shrna_warning  <- renderUI(NULL)
-    output$volcano_plot   <- renderPlotly(NULL)
+    output$volcano_plot   <- renderHighchart(NULL)
     output$volcano_table  <- renderDT(NULL)
     output$gsea_plot      <- renderPlot(NULL)
     output$geneset_table  <- renderDT(NULL)
@@ -2556,11 +2652,10 @@ server <- function(input, output, session) {
                 options = list(pageLength = 10, scrollX = TRUE, searching = TRUE))
     })
     
-    output$volcano_plot <- renderPlotly({
+    output$volcano_plot <- renderHighchart({
       p <- make_volcano_plot(display_table(), rbp_sel)
       dl_store$volcano(p)
-      ggplotly(p, tooltip = "text", source = "volcano") %>%
-        event_register("plotly_click")
+      make_volcano_plot_hc(display_table(), rbp_sel)
     })
     
     gsea_result <- plot_gsea(charm_obj, rbp_sel, thresh = 0.05)
@@ -2667,7 +2762,7 @@ server <- function(input, output, session) {
     )
     
     # Functions
-    scatter_fun <- if(mode == "expr") correl_exp_rbp_plotly else correl_scatter_gsea_plotly
+    scatter_fun <- if(mode == "expr") correl_exp_rbp_hc else correl_scatter_gsea_hc
     heatmap_fun <- if(mode == "expr") exp_correl else gsea_correl
     
     # Inputs
@@ -2683,13 +2778,14 @@ server <- function(input, output, session) {
       # Use lapply and wrap columns in tagList() properly
       tagList(
         lapply(names(datasets), function(ds_name) {
-          plotname <- paste0("similar_plot_", ds_name)
+          # See the "userfile_plot_" block above for why this is sanitized.
+          plotname <- paste0("similar_plot_", gsub("[^A-Za-z0-9_]+", "_", ds_name))
           
           if (!is.null(selected_rbps) && length(selected_rbps) == 1) {
-            output[[plotname]] <- renderPlotly({
+            output[[plotname]] <- renderHighchart({
               scatter_fun(datasets[[ds_name]], rbp1, selected_rbps[1], plot_title = ds_name)
             })
-            plot_ui <- plotlyOutput(plotname, height = "500px")
+            plot_ui <- highchartOutput(plotname, height = "500px")
           } else {
             output[[plotname]] <- renderPlot({
               heat_res <- heatmap_fun(
@@ -2726,7 +2822,7 @@ server <- function(input, output, session) {
     output$violin_splice_plot   <- renderPlot(NULL)
     output$plot_shrna_effect    <- renderPlot(NULL)
     output$shrna_warning_splice <- renderUI(NULL)
-    output$plot_splice_volcano  <- renderPlotly(NULL)
+    output$plot_splice_volcano  <- renderHighchart(NULL)
     output$splice_volcano_table <- renderDT(NULL)
     
     # Searching the main RBP plot brings it back to the top: hide Event ID panel
@@ -2797,12 +2893,11 @@ server <- function(input, output, session) {
         theme(legend.position = "none") +
         labs(title = paste("Volcano Plot:", rbp_sel), x = "dPSI (shRNA - CTRL)", y = "PDiff")
       dl_store$splice_volcano(p)
-      ggplotly(p, tooltip = "key", source = "splice_volcano") %>%
-        event_register("plotly_click")
+      make_splice_volcano_plot_hc(tbl, rbp_sel)
     }
-    
+
     # ---- Render volcano plot ----
-    output$plot_splice_volcano <- renderPlotly({
+    output$plot_splice_volcano <- renderHighchart({
       req(result_splice())
       render_volcano(result_splice()$top_table)
     })
@@ -2842,8 +2937,8 @@ server <- function(input, output, session) {
     })
     
     # ---- React to clicking a point in the volcano plot ----
-    observeEvent(event_data("plotly_click", source = "splice_volcano"), {
-      click <- event_data("plotly_click", source = "splice_volcano")
+    observeEvent(input$plot_splice_volcano_click, {
+      click <- input$plot_splice_volcano_click
       if (is.null(click) || is.null(click$key)) return()
       clicked_event <- click$key
       update_highlight(clicked_event)
@@ -2884,7 +2979,7 @@ server <- function(input, output, session) {
       "HEPG2"      = get_charm_object("HEPG2")
     )
     
-    scatter_fun <- correl_splicing_rbp_plotly
+    scatter_fun <- correl_splicing_rbp_hc
     heatmap_fun <- splicing_correl
     
     selected_rbps <- input$similar_rbps_select_splice
@@ -2897,13 +2992,14 @@ server <- function(input, output, session) {
     output$similar_splice_plots <- renderUI({
       tagList(
         lapply(names(datasets), function(ds_name) {
-          plotname <- paste0("similar_splice_plot_", ds_name)
+          # See the "userfile_plot_" block above for why this is sanitized.
+          plotname <- paste0("similar_splice_plot_", gsub("[^A-Za-z0-9_]+", "_", ds_name))
           
           if (!is.null(selected_rbps) && length(selected_rbps) == 1) {
-            output[[plotname]] <- renderPlotly({
+            output[[plotname]] <- renderHighchart({
               scatter_fun(datasets[[ds_name]], rbp1, selected_rbps)
             })
-            plot_ui <- plotlyOutput(plotname, height = "500px")
+            plot_ui <- highchartOutput(plotname, height = "500px")
           } else {
             output[[plotname]] <- renderPlot({
               heat_res <- heatmap_fun(
@@ -2949,7 +3045,7 @@ server <- function(input, output, session) {
     output$expr_violin    <- renderPlot(NULL)
     output$shrna_plot     <- renderPlot(NULL)
     output$shrna_warning  <- renderUI(NULL)
-    output$volcano_plot   <- renderPlotly(NULL)
+    output$volcano_plot   <- renderHighchart(NULL)
     output$volcano_table  <- renderDT(NULL)
     output$gsea_plot      <- renderPlot(NULL)
     output$geneset_table  <- renderDT(NULL)
@@ -2982,7 +3078,7 @@ server <- function(input, output, session) {
     output$violin_splice_plot    <- renderPlot(NULL)
     output$plot_shrna_effect     <- renderPlot(NULL)
     output$shrna_warning_splice  <- renderUI(NULL)
-    output$plot_splice_volcano   <- renderPlotly(NULL)
+    output$plot_splice_volcano   <- renderHighchart(NULL)
     output$splice_volcano_table  <- renderDT(NULL)
     result_splice(NULL)
     rbp_current(NULL)

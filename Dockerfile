@@ -9,8 +9,13 @@ RUN echo "r <- getOption('repos'); r['CRAN'] <- 'https://cloud.r-project.org'; o
 # referenced via pkg::fn() (Rtsne, reshape2, qs, purrr, scales, tibble),
 # which install.packages() only guarantees for packages actually requested
 # here, not arbitrary code elsewhere that happens to call into them.
+#
+# Interactive plots use highcharter, not plotly/ggplotly -- CHARM was
+# migrated off plotly because its large JS bundle was the most likely
+# casualty of the httpuv keep-alive bug patched below, and highcharter is
+# also what the lab's other ShinyProxy-deployed apps (betAS, voyAGEr) use.
 RUN Rscript -e "install.packages(c( \
-      'shiny', 'shinythemes', 'fontawesome', 'DT', 'plotly', 'ggplot2', \
+      'shiny', 'shinythemes', 'fontawesome', 'DT', 'highcharter', 'ggplot2', \
       'ggrepel', 'shinycssloaders', 'dplyr', 'tidyr', 'ggpubr', 'png', \
       'base64enc', 'cowplot', 'msigdbr', 'qs2', 'qs', 'Rtsne', 'reshape2', \
       'purrr', 'scales', 'tibble' \
@@ -22,11 +27,12 @@ RUN Rscript -e "BiocManager::install(c('limma', 'fgsea'), update = FALSE, ask = 
 # Rebuild shiny with a raised HTTP header-size limit. httpuv's underlying
 # http-parser has a bug that intermittently 503s requests when a keep-alive
 # connection is reused for several sequential requests -- exactly what
-# happens loading a page's static assets, and large bundles like plotly.js
-# are the most likely casualty (manifesting client-side as "Plotly is not
-# defined", which then aborts Shiny's output-update batch and takes down
-# whichever other outputs were queued alongside it). Documented at
-# https://www.shinyproxy.io/documentation/troubleshooting/ and already
+# happens loading a page's static assets. This is what originally broke
+# CHARM's plotly-based plots in production (client-side "Plotly is not
+# defined", which aborted Shiny's output-update batch and took down
+# whichever other outputs were queued alongside it) before the move to
+# highcharter. Kept as general hardening regardless of widget library,
+# per https://www.shinyproxy.io/documentation/troubleshooting/ -- also
 # applied in voyAGEr's Dockerfile for the same reason.
 RUN Rscript -e "install.packages(c('withr'), repos='https://cloud.r-project.org/')"
 RUN Rscript -e "withr::with_makevars(c(PKG_CPPFLAGS='-DHTTP_MAX_HEADER_SIZE=0x7fffffff'), {install.packages(c('shiny'), repos='https://cloud.r-project.org/')}, assignment = '+=')"
