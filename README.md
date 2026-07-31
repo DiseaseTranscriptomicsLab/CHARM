@@ -1,5 +1,7 @@
 # CHARM <a href="https://diseasetranscriptomicslab.github.io/CHARM/"><img src="Charm_logo.png" align="right" height="139"/></a>
 
+[![DOI](https://zenodo.org/badge/1040091867.svg)](https://doi.org/10.5281/zenodo.21724194)
+
 **Comprehensive Hub for Alternative Regulatory Mapping (CHARM)**  
 
 CHARM is an R Shiny web application for exploring the regulatory roles of RNA-binding proteins (RBPs) in **gene expression, splicing regulation, and direct RNA binding**.  
