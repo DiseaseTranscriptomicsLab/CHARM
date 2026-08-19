@@ -1089,7 +1089,8 @@ server <- function(input, output, session) {
     shrna_splice   = reactiveVal(NULL),
     splice_volcano = reactiveVal(NULL),
     binding        = reactiveVal(NULL),
-    network        = reactiveVal(NULL)
+    network        = reactiveVal(NULL),
+    event_dpsi     = reactiveVal(NULL)
   )
   
   # ── Status bar helpers ────────────────────────────────────────────────────
@@ -1114,6 +1115,8 @@ server <- function(input, output, session) {
                  input$splice_search
                else if (!is.null(input$binding_search) && nchar(input$binding_search) > 0)
                  input$binding_search
+               else if (!is.null(input$splice_search_event) && nchar(input$splice_search_event) > 0)
+                 input$splice_search_event
                else "plot"
         paste0(filename_prefix, "_", rbp, "_", Sys.Date(), ".png")
       },
@@ -1133,6 +1136,17 @@ server <- function(input, output, session) {
       content  = function(file) {
         df <- data_fn()
         req(!is.null(df) && nrow(df) > 0)
+        # Some tables (e.g. fgsea's geneset_table) carry list-columns
+        # (leadingEdge is a vector-per-row). write.csv() doesn't error on
+        # these, but it writes each cell as an R-syntax dump like
+        # 'c("GENE1", "GENE2")', which reads as garbage/HTML-looking noise
+        # in the CSV. Flatten any list-column to a clean "; "-joined string.
+        list_cols <- vapply(df, is.list, logical(1))
+        if (any(list_cols)) {
+          df[list_cols] <- lapply(df[list_cols], function(col) {
+            vapply(col, function(x) paste(x, collapse = "; "), character(1))
+          })
+        }
         write.csv(df, file, row.names = FALSE)
       }
     )
@@ -1147,7 +1161,62 @@ server <- function(input, output, session) {
                      style = "margin-top:5px;")
     })
   }
-  
+
+  # Helper: which RBPs in a *loaded* charm-object variant actually have
+  # usable expression data. An RBP can be present as a *name* in a given
+  # dataset variant (e.g. CPEB4 shows up in the "Both Cells"/"HEPG2"
+  # Charm.object) while its per-RBP entry is missing/degenerate there --
+  # CPEB4 only has real corcounts/SampleType data in the K562 variant, for
+  # instance. Rather than let users pick a name that's guaranteed to hit
+  # the "no data" fallback, filter the search choices down to RBPs that
+  # will actually work for violinplotter()/plot_rbp_volcano()/plot_gsea()
+  # on the currently selected dataset: a corcounts matrix plus a SampleType
+  # vector that includes both "Control" and the RBP's own label.
+  valid_expr_rbp_names <- function(charm_obj) {
+    if (is.null(charm_obj)) return(character(0))
+    keep <- vapply(names(charm_obj), function(rbp) {
+      entry <- charm_obj[[rbp]]
+      if (is.null(entry)) return(FALSE)
+      grp <- entry$SampleType
+      !is.null(entry$corcounts) && !is.null(grp) && length(grp) > 0 &&
+        "Control" %in% grp && rbp %in% grp
+    }, logical(1), USE.NAMES = FALSE)
+    names(charm_obj)[keep]
+  }
+
+  # Same idea for the Splicing tab: violin_splice_plot()/plot_splice_volcano()
+  # need a non-empty VulcanTable for the RBP.
+  valid_splice_rbp_names <- function(charm_obj) {
+    if (is.null(charm_obj)) return(character(0))
+    keep <- vapply(names(charm_obj), function(rbp) {
+      entry <- charm_obj[[rbp]]
+      !is.null(entry) && !is.null(entry$VulcanTable) && nrow(entry$VulcanTable) > 0
+    }, logical(1), USE.NAMES = FALSE)
+    names(charm_obj)[keep]
+  }
+
+  # Helper: turn plot_rbp_volcano()'s top_table into the display-ready table
+  # with "gene"/"highlight" columns. plot_rbp_volcano() deliberately returns
+  # an empty data.frame() (0 rows, 0 cols) when an RBP has no usable DE
+  # results (missing/degenerate design, no Control level, etc. -- e.g. this
+  # is what happens for some RBPs' data, such as CPEB4). Building tbl$gene
+  # on that produces a 1-column data.frame, and `tbl[, "gene"]` then
+  # collapses (drop = TRUE) to a bare character vector -- so the *next* line
+  # (`tbl$highlight <- ...`) crashed with "$ operator is invalid for atomic
+  # vectors". Detect the empty case up front and hand callers back a
+  # zero-row table with the right column names instead of ever reaching
+  # that collapse.
+  build_volcano_table <- function(result, rbp_sel) {
+    tbl <- as.data.frame(result$top_table)
+    if (nrow(tbl) == 0) {
+      return(data.frame(gene = character(0), highlight = character(0)))
+    }
+    if (!"gene" %in% colnames(tbl)) tbl$gene <- rownames(tbl)
+    tbl <- tbl[, c("gene", setdiff(colnames(tbl), "gene")), drop = FALSE]
+    tbl$highlight <- ifelse(tbl$gene == rbp_sel, "RBP", "None")
+    tbl
+  }
+
   # ── Plot download handlers ─────────────────────────────────────────────────
   output$dl_expr_violin   <- make_dl_handler("expr_violin",   "expression_violin",   width = 8,  height = 6)
   output$dl_shrna         <- make_dl_handler("shrna",         "shrna_efficiency",    width = 8,  height = 6)
@@ -1160,6 +1229,7 @@ server <- function(input, output, session) {
   output$dl_splice_volcano<- make_dl_handler("splice_volcano","splicing_volcano",    width = 8,  height = 7)
   output$dl_binding       <- make_dl_handler("binding",       "binding_map",         width = 12, height = 9)
   output$dl_network       <- make_dl_handler("network",       "network",             width = 12, height = 9)
+  output$dl_event_dpsi    <- make_dl_handler("event_dpsi",    "splicing_event_dpsi", width = 10, height = 8)
   
   # ── Conditional download button UIs (appear only after plot is rendered) ──
   make_dl_ui("expr_violin",   "dl_expr_violin")
@@ -1173,12 +1243,22 @@ server <- function(input, output, session) {
   make_dl_ui("splice_volcano","dl_splice_volcano")
   make_dl_ui("binding",       "dl_binding")
   make_dl_ui("network",       "dl_network")
+  make_dl_ui("event_dpsi",    "dl_event_dpsi")
   
   # ── Table download handlers ────────────────────────────────────────────────
   output$dl_volcano_table        <- make_table_dl_handler(display_table,  "expression_volcano_table")
   output$dl_geneset_table        <- make_table_dl_handler(gsea_table_rv,  "expression_gsea_table")
   output$dl_splice_volcano_table <- make_table_dl_handler(
-    reactive({ res <- result_splice(); if (!is.null(res)) res$top_table else NULL }),
+    reactive({
+      res <- result_splice()
+      if (is.null(res)) return(NULL)
+      # Drop the internal "text" column: it holds an HTML-formatted tooltip
+      # string (e.g. "Gene: ...<br>Event: ...<br>") used only for the volcano
+      # plot's hover text. Leaving it in wrote raw <br> tags into the CSV --
+      # the on-screen table already excludes it the same way (see splice_volcano_table
+      # renderDT above), so the download should match what the user sees.
+      res$top_table %>% dplyr::select(-dplyr::any_of("text"))
+    }),
     "splicing_volcano_table"
   )
   
@@ -1454,7 +1534,7 @@ server <- function(input, output, session) {
       rbp_sel   <- nav$rbp
       charm_obj <- current_charm_expr()
       shrna_obj <- current_shrna_expr()
-      req(rbp_sel %in% names(charm_obj))
+      req(rbp_sel %in% valid_expr_rbp_names(charm_obj))
       rbp_current(rbp_sel)
       expr_top_panel(NULL)
       output$expr_violin    <- renderPlot(NULL)
@@ -1473,10 +1553,16 @@ server <- function(input, output, session) {
         dl_store$shrna(p); p
       })
       result <- plot_rbp_volcano(charm_obj, rbp_sel)
-      tbl <- as.data.frame(result$top_table)
-      if (!"gene" %in% colnames(tbl)) tbl$gene <- rownames(tbl)
-      tbl <- tbl[, c("gene", setdiff(colnames(tbl), "gene"))]
-      tbl$highlight <- ifelse(tbl$gene == rbp_sel, "RBP", "None")
+      tbl <- build_volcano_table(result, rbp_sel)
+      if (nrow(tbl) == 0) {
+        showModal(modalDialog(
+          title = "No data",
+          paste("No differential expression results are available for", rbp_sel,
+                "in this cell line — its data may be incomplete."),
+          easyClose = TRUE, footer = NULL
+        ))
+        return(NULL)
+      }
       display_table(tbl)
       output$volcano_plot <- renderHighchart({
         p <- make_volcano_plot(display_table(), rbp_sel)
@@ -1502,7 +1588,7 @@ server <- function(input, output, session) {
       rbp_sel   <- nav$rbp
       charm_obj <- current_charm_splice()
       shrna_obj <- current_shrna_splice()
-      req(rbp_sel %in% names(charm_obj))
+      req(rbp_sel %in% valid_splice_rbp_names(charm_obj))
       rbp_current(rbp_sel)
       splice_top_panel(NULL)
       output$violin_splice_plot  <- renderPlot(NULL)
@@ -1572,8 +1658,11 @@ server <- function(input, output, session) {
   observe({
     req(current_charm_expr(), input$expr_dataset)
     
-    # 1️⃣ RBP search bar (depends on selected dataset)
-    rbp_choices <- names(current_charm_expr())
+    # 1️⃣ RBP search bar (depends on selected dataset) -- only offer RBPs
+    # that actually have usable data in *this* dataset variant (see
+    # valid_expr_rbp_names()), so users can't pick one guaranteed to hit
+    # the "no data" fallback (e.g. CPEB4 outside the K562 variant).
+    rbp_choices <- valid_expr_rbp_names(current_charm_expr())
     updateSelectizeInput(
       session,
       "expr_search_rbp",
@@ -1611,16 +1700,17 @@ server <- function(input, output, session) {
   observe({
     req(current_charm_splice())
     
-    rbp_choices_splice <- names(current_charm_splice())
+    # Only offer RBPs with a usable (non-empty) VulcanTable in this dataset
+    # variant -- see valid_splice_rbp_names() / valid_expr_rbp_names().
+    rbp_choices_splice <- valid_splice_rbp_names(current_charm_splice())
     updateSelectizeInput(
       session,
       "splice_search",
       choices = rbp_choices_splice,
       server = TRUE
     )
-    
-    rbp_choices_similar <- names(current_charm_splice())
-    updateSelectizeInput(session, "similar_rbps_select_splice", choices = rbp_choices_similar)
+
+    updateSelectizeInput(session, "similar_rbps_select_splice", choices = rbp_choices_splice)
   })
   
   # ---- Populate Event ID choices based on dataset ----
@@ -1652,7 +1742,10 @@ server <- function(input, output, session) {
     panel <- splice_top_panel()
     if (is.null(panel)) return(NULL)
     if (panel == "event") {
-      fluidRow(column(width = 12, plotOutput("heatmap_splicing_dpsi", height = "600px")))
+      fluidRow(column(width = 12,
+        plotOutput("heatmap_splicing_dpsi", height = "600px"),
+        uiOutput("dl_ui_event_dpsi")
+      ))
     } else {
       NULL
     }
@@ -1668,10 +1761,12 @@ server <- function(input, output, session) {
     splice_top_panel("event")
     
     output$heatmap_splicing_dpsi <- renderPlot({
-      plot_event_dpsi_barplot(charm_obj, event_id)
+      p <- plot_event_dpsi_barplot(charm_obj, event_id)
+      dl_store$event_dpsi(p)
+      p
     })
   })
-  
+
   ###EXPRESSION (user File)
   upload_ok <- reactiveVal(FALSE)
   user_expr_df <- reactiveVal(NULL)
@@ -2629,11 +2724,20 @@ server <- function(input, output, session) {
     charm_obj <- current_charm_expr()
     shrna_obj <- current_shrna_expr()
     
-    exp_list <- names(charm_obj)
+    # Checks data *validity*, not just name presence -- see
+    # valid_expr_rbp_names(). An RBP can exist as a name in this dataset
+    # variant while its corcounts/SampleType are missing/degenerate (e.g.
+    # CPEB4 outside the K562 variant), which used to sail past a plain
+    # names(charm_obj) check and crash further down.
+    exp_list <- valid_expr_rbp_names(charm_obj)
+    # (Also fixes a stale reference: this used to read input$cell_line,
+    # an input ID that doesn't exist anywhere in the UI -- the dataset
+    # selector's real ID is expr_dataset -- so the message always printed
+    # blank.)
     if (is.null(exp_list) || !(rbp_sel %in% exp_list)) {
       showModal(modalDialog(
         title = "Warning",
-        paste("This RBP has no information available for", input$cell_line),
+        paste("This RBP has no information available for", input$expr_dataset),
         easyClose = TRUE,
         footer = NULL
       ))
@@ -2654,10 +2758,18 @@ server <- function(input, output, session) {
       p
     })
     output$shrna_warning <- renderUI({
+      # Indexing a data.frame by a row name that isn't present (e.g. an RBP
+      # with no shRNA-efficiency data, such as CPEB4) silently returns a row
+      # of NAs rather than erroring -- so guard explicitly via %in% and check
+      # for NA before the if(), otherwise "if (NA || NA)" throws "missing
+      # value where TRUE/FALSE needed" and crashes this render (and, since it
+      # ran inline, can take the whole session down with it).
+      if (is.null(shrna_obj) || !(rbp_sel %in% rownames(shrna_obj))) return(NULL)
       stats <- shrna_obj[rbp_sel,,drop=FALSE]
       if (is.null(stats) || nrow(stats)==0) return(NULL)
       logFC <- stats$logFC
       pval <- stats$P.Value
+      if (is.na(pval) || is.na(logFC)) return(NULL)
       if (pval > 0.05 || logFC > -0.5) {
         div(style="margin-top:10px;font-size:16px;font-weight:bold;color:red;",
             "WARNING: The efficiency of this knockdown is uncertain. Proceed with caution.")
@@ -2665,12 +2777,19 @@ server <- function(input, output, session) {
     })
     
     result <- plot_rbp_volcano(charm_obj, rbp_sel)
-    tbl <- as.data.frame(result$top_table)
-    if (!"gene" %in% colnames(tbl)) tbl$gene <- rownames(tbl)
-    tbl <- tbl[, c("gene", setdiff(colnames(tbl),"gene"))]
-    tbl$highlight <- ifelse(tbl$gene==rbp_sel,"RBP","None")
+    tbl <- build_volcano_table(result, rbp_sel)
+    if (nrow(tbl) == 0) {
+      hide_status()
+      showModal(modalDialog(
+        title = "No data",
+        paste("No differential expression results are available for", rbp_sel,
+              "in this cell line — its data may be incomplete."),
+        easyClose = TRUE, footer = NULL
+      ))
+      return(NULL)
+    }
     display_table(tbl)
-    
+
     output$volcano_table <- renderDT({
       datatable(display_table(),
                 filter = "none",
@@ -2858,7 +2977,7 @@ server <- function(input, output, session) {
     charm_obj <- current_charm_splice()
     shrna_obj <- current_shrna_splice()
     
-    splice_list <- names(charm_obj)
+    splice_list <- valid_splice_rbp_names(charm_obj)
     if (is.null(splice_list) || !(rbp_sel %in% splice_list)) {
       showModal(modalDialog(
         title = "Warning",
@@ -3118,7 +3237,9 @@ server <- function(input, output, session) {
   # Reset Event heatmap
   observeEvent(input$splice_event_reset_btn, {
     output$heatmap_splicing_dpsi <- renderPlot(NULL)  # clear plot
-    updateSelectizeInput(session, "splice_event_search", selected = "")  # clear search
+    dl_store$event_dpsi(NULL)
+    splice_top_panel(NULL)  # hides the panel (and its now-stale download button)
+    updateSelectizeInput(session, "splice_search_event", selected = "")  # clear search (matches the actual input ID)
   })
   
   # =========================

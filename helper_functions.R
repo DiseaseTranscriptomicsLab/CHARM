@@ -5,14 +5,44 @@ violinplotter <- function(charmobj, rbp,
   # Normalize RBP name
   rbp <- trimws(as.character(rbp))
 
-  # --- Get expression matrix ---
-  expr <- charmobj[[rbp]]$corcounts
-  expr <- expr[rbp, ]
+  na_plot <- function(msg) {
+    ggplot() + annotate("text", x = 0, y = 0, label = msg) + theme_void()
+  }
+
+  if (is.null(charmobj) || is.null(charmobj[[rbp]])) {
+    return(na_plot(paste("No data for", rbp)))
+  }
+
+  expr_mat <- charmobj[[rbp]]$corcounts
+  group    <- charmobj[[rbp]]$SampleType
+
+  if (is.null(expr_mat) || is.null(group) || length(group) == 0) {
+    return(na_plot(paste("Expression data missing for", rbp)))
+  }
+
+  # --- Get this RBP's own expression row ---
+  # corcounts is expected to be a genes x samples numeric matrix, but the
+  # row for at least one RBP (CPEB4) has been observed to come back in a
+  # shape that the old `t(expr[rbp, ])` transpose choked on ("argument is
+  # not a matrix"). Locate the row by index (robust to duplicate row names,
+  # unlike `expr[rbp, ]`) and unlist() it -- unlist() flattens a matrix row,
+  # a data.frame row, or a plain vector alike, so this can't be tripped up
+  # by whatever concrete type corcounts turns out to be for a given RBP.
+  row_idx <- which(rownames(expr_mat) == rbp)
+  if (length(row_idx) == 0) {
+    return(na_plot(paste(rbp, "not found in its own expression matrix")))
+  }
+
+  expr_row <- suppressWarnings(as.numeric(unlist(expr_mat[row_idx[1], ], use.names = FALSE)))
+
+  if (length(expr_row) != length(group)) {
+    return(na_plot(paste("Expression data for", rbp, "doesn't match its sample annotations")))
+  }
 
   # --- Build dataframe for ggplot ---
   df <- data.frame(
-    Expression = as.numeric(t(expr)),
-    Group = charmobj[[rbp]]$SampleType
+    Expression = expr_row,
+    Group = group
   )
 
   # Force Control first in the x-axis
@@ -221,34 +251,109 @@ plot_gsea <- function(charmobj, rbp, thresh = 0.05,
   rbp <- trimws(as.character(rbp))
   message(paste0("Calculating GSEA for ", rbp))
 
-  expr <- charmobj[[rbp]]$corcounts
+  empty_result <- function(msg) {
+    message(msg)
+    list(
+      geneset_table = data.frame(),
+      gsea_plot = ggplot() +
+        annotate("text", x = 0, y = 0, label = paste("GSEA unavailable for", rbp)) +
+        theme_void()
+    )
+  }
+
+  # Basic sanity checks -- mirrors the guards in plot_rbp_volcano() so a
+  # single RBP with degenerate/missing data (e.g. no Control samples, or a
+  # design that can't be fit) can't take down the whole GSEA reactive/session.
+  if (is.null(charmobj) || is.null(rbp) || is.null(charmobj[[rbp]])) {
+    return(empty_result(sprintf("No entry for %s in charm object", rbp)))
+  }
+
+  expr  <- charmobj[[rbp]]$corcounts
   group <- charmobj[[rbp]]$SampleType
 
-  # Design matrix
-  mm <- model.matrix(~0 + group)
+  if (is.null(expr) || is.null(group) || length(group) == 0) {
+    return(empty_result("Expression or group information missing/empty."))
+  }
+
+  mm <- tryCatch(model.matrix(~0 + group), error = function(e) NULL)
+  if (is.null(mm) || ncol(mm) == 0) {
+    return(empty_result("Design matrix has zero columns."))
+  }
   colnames(mm) <- gsub("group", "", colnames(mm))
 
-  # Fit linear model
-  fitted <- limma::lmFit(expr, mm)
+  fitted <- tryCatch(limma::lmFit(expr, mm), error = function(e) NULL)
+  if (is.null(fitted)) {
+    return(empty_result("lmFit failed."))
+  }
+
+  if (!("Control" %in% colnames(coef(fitted)))) {
+    return(empty_result("Control column not found in fitted coefficients."))
+  }
+
   contrast_formula <- paste0(rbp, " - Control")
-  contr <- limma::makeContrasts(contrasts = contrast_formula, levels = colnames(coef(fitted)))
-  tmp_contr <- limma::contrasts.fit(fitted, contr)
-  tmp <- limma::eBayes(tmp_contr)
+  contr <- tryCatch(
+    limma::makeContrasts(contrasts = contrast_formula, levels = colnames(coef(fitted))),
+    error = function(e) NULL
+  )
+  if (is.null(contr)) {
+    return(empty_result("Could not create contrasts (check that RBP and Control are valid levels)."))
+  }
+
+  tmp <- tryCatch({
+    tmp_contr <- limma::contrasts.fit(fitted, contr)
+    limma::eBayes(tmp_contr)
+  }, error = function(e) NULL)
+  if (is.null(tmp)) {
+    return(empty_result("contrasts.fit/eBayes failed."))
+  }
 
   # Get results for all genes
-  top.table <- limma::topTable(tmp, sort.by = "none", n = Inf)
-
+  top.table <- tryCatch(limma::topTable(tmp, sort.by = "none", n = Inf), error = function(e) data.frame())
+  if (nrow(top.table) == 0) {
+    return(empty_result(paste("No differential expression results for", rbp)))
+  }
 
   DEGenes <- top.table[order(top.table$t, decreasing = TRUE), ]
   vectorranks <- DEGenes$t
   names(vectorranks) <- rownames(DEGenes)
 
-  hallmarks.gs <- msigdbr(species = species, collection = collection, subcollection = subcollection)
+  # fgsea() errors out (not just warns) if the ranking stats contain NA/Inf
+  # or duplicate gene names -- both of which can legitimately happen for a
+  # given RBP (e.g. a gene with zero variance in one group yields t = NA/Inf).
+  # Drop those defensively rather than letting a single bad value crash the
+  # whole GSEA call.
+  finite <- is.finite(vectorranks)
+  if (any(!finite)) {
+    message(sprintf("Dropping %d non-finite t-statistic(s) before GSEA for %s.",
+                     sum(!finite), rbp))
+    vectorranks <- vectorranks[finite]
+  }
+  vectorranks <- vectorranks[!duplicated(names(vectorranks))]
+
+  if (length(vectorranks) == 0) {
+    return(empty_result(paste("No usable ranking statistics for", rbp)))
+  }
+
+  hallmarks.gs <- tryCatch(
+    msigdbr(species = species, collection = collection, subcollection = subcollection),
+    error = function(e) NULL
+  )
+  if (is.null(hallmarks.gs) || nrow(hallmarks.gs) == 0) {
+    return(empty_result("Could not retrieve gene sets from msigdbr."))
+  }
   hallmarks.gsets <- split(hallmarks.gs$gene_symbol, hallmarks.gs$gs_name)
   hallmarks.gsets <- lapply(hallmarks.gsets, toupper)
 
-
-  hallmarks.res <- fgsea::fgsea(pathways = hallmarks.gsets, stats = vectorranks)
+  hallmarks.res <- tryCatch(
+    fgsea::fgsea(pathways = hallmarks.gsets, stats = vectorranks),
+    error = function(e) {
+      message(paste("fgsea failed for", rbp, "-", conditionMessage(e)))
+      NULL
+    }
+  )
+  if (is.null(hallmarks.res) || nrow(hallmarks.res) == 0) {
+    return(empty_result(paste("fgsea returned no results for", rbp)))
+  }
 
   hallmarks.res.tidy <- hallmarks.res %>%
     as_tibble() %>%
