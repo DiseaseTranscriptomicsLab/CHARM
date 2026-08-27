@@ -80,7 +80,7 @@ violinplotter <- function(charmobj, rbp,
     labs(
       title = paste("Expression of", rbp, "KD vs Control"),
       subtitle = paste0("Log2 Fold-Change: ", round(logFC, 2),
-                        "  |  Cohen's D: ", round(cohens_d, 2))
+                        "  |  Cohen's d: ", round(cohens_d, 2))
     ) +
     theme_bw() +
     theme(
@@ -402,6 +402,74 @@ plot_gsea <- function(charmobj, rbp, thresh = 0.05,
   return(list(geneset_table = hallmarks.res.tidy, gsea_plot = gsea_plot_hall))
 }
 
+# ============================================================
+# run_user_gsea
+# Computes REAL GSEA (fgsea against MSigDB gene sets, same
+# pathway-naming convention as plot_gsea() above -- HALLMARK_ prefix
+# stripped) directly from a user-uploaded ranked gene list (first
+# column = Gene symbol, second column = t-statistic / ranking
+# metric). This replaces the old "pseudo-GSEA" shortcut that used to
+# fabricate NES values with rnorm() instead of actually running GSEA
+# on the user's data -- that shortcut made the Discovery-mode GSEA
+# comparison correlate against random noise instead of a real result.
+# Returns a data.frame with pathway/NES/padj columns matching the
+# shape of the precomputed RBPs.gsea_All/K562/HEPG2 objects, so it
+# can be merged/correlated against them directly.
+# ============================================================
+run_user_gsea <- function(user_df, species = "Homo sapiens",
+                          collection = "H", subcollection = NULL) {
+  if (is.null(user_df) || nrow(user_df) == 0 || ncol(user_df) < 2) {
+    return(data.frame())
+  }
+
+  genes  <- as.character(user_df[[1]])
+  tvals  <- suppressWarnings(as.numeric(user_df[[2]]))
+  vectorranks <- tvals
+  names(vectorranks) <- toupper(trimws(genes))
+
+  finite <- is.finite(vectorranks)
+  if (any(!finite)) {
+    message(sprintf("Dropping %d non-finite ranking value(s) before user-file GSEA.",
+                     sum(!finite)))
+    vectorranks <- vectorranks[finite]
+  }
+  vectorranks <- vectorranks[!duplicated(names(vectorranks))]
+  if (length(vectorranks) == 0) {
+    message("No usable ranking statistics in uploaded file for GSEA.")
+    return(data.frame())
+  }
+
+  hallmarks.gs <- tryCatch(
+    msigdbr(species = species, collection = collection, subcollection = subcollection),
+    error = function(e) NULL
+  )
+  if (is.null(hallmarks.gs) || nrow(hallmarks.gs) == 0) {
+    message("Could not retrieve gene sets from msigdbr for user-file GSEA.")
+    return(data.frame())
+  }
+  hallmarks.gsets <- split(hallmarks.gs$gene_symbol, hallmarks.gs$gs_name)
+  hallmarks.gsets <- lapply(hallmarks.gsets, toupper)
+
+  res <- tryCatch(
+    fgsea::fgsea(pathways = hallmarks.gsets, stats = vectorranks),
+    error = function(e) {
+      message(paste("fgsea failed for uploaded file -", conditionMessage(e)))
+      NULL
+    }
+  )
+  if (is.null(res) || nrow(res) == 0) {
+    message("fgsea returned no results for uploaded file.")
+    return(data.frame())
+  }
+
+  res %>%
+    as_tibble() %>%
+    mutate(Status = ifelse(NES > 0, "Upregulated", "Downregulated"),
+           pathway = gsub("^HALLMARK_", "", pathway)) %>%
+    arrange(padj) %>%
+    as.data.frame()
+}
+
 correl_exp_rbp_hc <- function(rbp_results, rbp, other_rbp, plot_title = NULL) {
 
   # --- Determine if reference is user file or internal RBP ---
@@ -488,7 +556,8 @@ correl_exp_rbp_hc <- function(rbp_results, rbp, other_rbp, plot_title = NULL) {
     highcharter::hc_plotOptions(scatter = list(
       marker = list(radius = 5, fillColor = "#DDDDDD", lineColor = "black", lineWidth = 1)
     )) %>%
-    highcharter::hc_legend(enabled = FALSE)
+    highcharter::hc_legend(enabled = FALSE) %>%
+    highcharter::hc_exporting(enabled = TRUE)
 }
 
 correl_scatter_gsea_hc <- function(gsea_results, rbp, other_rbp, plot_title = NULL,
@@ -496,18 +565,16 @@ correl_scatter_gsea_hc <- function(gsea_results, rbp, other_rbp, plot_title = NU
                                        show_legend = FALSE) {
 
   if (is.data.frame(rbp)) {
-    ref_df <- rbp
-    colnames(ref_df)[1:2] <- c("Gene", "t")
+    user_df <- rbp
+    colnames(user_df)[1:2] <- c("Gene", "t")
     rbp_label <- "UserFile"
 
-    message("Detected user expression file: generating pseudo-GSEA NES vector for comparison.")
+    message("Detected user expression file: running GSEA on the uploaded ranks for comparison.")
 
-    # Create pseudo-GSEA representation (similar to above)
-    pathways <- unique(unlist(lapply(gsea_results, function(df) df$pathway)))
-    ref_df <- data.frame(
-      pathway = pathways,
-      NES = rnorm(length(pathways), mean(ref_df$t, na.rm = TRUE), sd(ref_df$t, na.rm = TRUE))
-    )
+    ref_df <- run_user_gsea(user_df)
+    if (nrow(ref_df) == 0) {
+      stop("GSEA on the uploaded file returned no results (check that the second column is a numeric ranking statistic).")
+    }
   } else if (rbp %in% names(gsea_results)) {
     ref_df <- gsea_results[[rbp]]
     rbp_label <- rbp
@@ -563,7 +630,8 @@ correl_scatter_gsea_hc <- function(gsea_results, rbp, other_rbp, plot_title = NU
     highcharter::hc_plotOptions(scatter = list(
       marker = list(radius = 5, fillColor = "#DDDDDD", lineColor = "black", lineWidth = 1)
     )) %>%
-    highcharter::hc_legend(enabled = show_legend)
+    highcharter::hc_legend(enabled = show_legend) %>%
+    highcharter::hc_exporting(enabled = TRUE)
 }
 
 
@@ -677,38 +745,28 @@ gsea_correl <- function(gsea_df, rbp, correl_num = NULL,
     x_int
   }
 
-  # If rbp is a user data.frame, convert it to a pseudo-GSEA table and insert as "UserFile"
+  # If rbp is a user data.frame, run REAL GSEA on the uploaded ranks and
+  # insert the result as "UserFile" so it can be correlated against the
+  # precomputed all-RBP GSEA tables below. (Previously this fabricated NES
+  # values with a deterministic-looking but still made-up formula instead
+  # of actually running GSEA on the user's data -- the comparison never
+  # reflected the uploaded file's real biology.)
   if (is.data.frame(rbp)) {
-    ref_df <- rbp
+    user_df <- rbp
     # assume first two columns are Gene and t (like your expression files)
-    if (ncol(ref_df) >= 2) colnames(ref_df)[1:2] <- c("Gene", "t")
+    if (ncol(user_df) >= 2) colnames(user_df)[1:2] <- c("Gene", "t")
     rbp_label <- "UserFile"
-    message("Detected user expression file: converting to pseudo-GSEA enrichment scores.")
+    message("Detected user expression file: running GSEA on the uploaded ranks.")
+
+    ref_gsea <- run_user_gsea(user_df)
+    if (nrow(ref_gsea) == 0) {
+      stop("GSEA on the uploaded file returned no results (check that the second column is a numeric ranking statistic).")
+    }
 
     # Ensure gsea_df is a list of data.frames
     if (is.data.frame(gsea_df)) gsea_df <- list(All = gsea_df)
 
-    # collect pathways from the provided GSEA datasets (only those that are data.frames)
-    pathways <- unique(unlist(lapply(gsea_df, function(x) {
-      if (is.data.frame(x) && "pathway" %in% colnames(x)) x$pathway else NULL
-    })))
-    # Fallback if none found
-    if (length(pathways) == 0) {
-      stop("No pathways found in provided GSEA datasets to map the user file onto.")
-    }
-
-    # Create deterministic pseudo-NES values from t-statistics.
-    # Use mean t per file as center and sd as spread (deterministic: not random)
-    center <- mean(ref_df$t, na.rm = TRUE)
-    spread <- sd(ref_df$t, na.rm = TRUE)
-    if (!is.finite(spread) || spread == 0) spread <- 1
-    ref_gsea <- data.frame(
-      pathway = pathways,
-      NES = (seq_along(pathways) - mean(seq_along(pathways))) / length(pathways) * spread + center,
-      stringsAsFactors = FALSE
-    )
-
-    # Prepend the user pseudo-GSEA to the gsea_df list (ensure existing entries remain data.frames)
+    # Prepend the user's real GSEA result to the gsea_df list (ensure existing entries remain data.frames)
     gsea_df <- c(list(UserFile = ref_gsea), gsea_df)
     rbp <- "UserFile"
   }
@@ -856,15 +914,32 @@ splicing_correl <- function(charmobj, rbp, correl_num = NULL,
 
   rbp_list <- setdiff(names(charmobj), rbp_label)
 
+  # Dedup + index the reference once, outside the loop. This used to call
+  # merge() (a full data.frame join, with sorting/validity overhead) once
+  # PER OTHER RBP against VulcanTables that can have tens of thousands of
+  # rows -- with 300+ RBPs to compare against, that made this function take
+  # minutes (reading as "stuck loading forever" in the UI), unlike
+  # correl_splicing_rbp_hc's single-comparison scatter, which only does this
+  # once and stays fast. A named vector keyed by Event.ID plus intersect()
+  # does the same "match by shared event" job without repeated
+  # data.frame-join overhead. (Dedup-before-lookup mirrors the same
+  # duplicate-Event.ID handling already used in correl_splicing_rbp_hc for
+  # "Both Cells" datasets.)
+  ref_df  <- ref_df[!duplicated(ref_df$Event.ID), ]
+  ref_vec <- stats::setNames(ref_df$dPSI, ref_df$Event.ID)
+
   # --- Loop over other RBPs ---
   for (other_rbp in rbp_list) {
     if (!is.null(other_rbps) && !(other_rbp %in% other_rbps)) next
-    other_df <- charmobj[[other_rbp]]$VulcanTable[, c("Event.ID", "dPSI")]
+    other_tbl <- charmobj[[other_rbp]]$VulcanTable
+    if (is.null(other_tbl) || nrow(other_tbl) == 0) next
+    other_tbl <- other_tbl[!duplicated(other_tbl$Event.ID), ]
+    other_vec <- stats::setNames(other_tbl$dPSI, other_tbl$Event.ID)
 
-    merged <- merge(ref_df, other_df, by = "Event.ID", suffixes = c("_ref", "_other"))
-    if (nrow(merged) < 3) next
+    common <- intersect(names(ref_vec), names(other_vec))
+    if (length(common) < 3) next
 
-    test <- suppressWarnings(cor.test(merged$dPSI_ref, merged$dPSI_other, method = "spearman"))
+    test <- suppressWarnings(cor.test(ref_vec[common], other_vec[common], method = "spearman"))
 
     cor_results <- rbind(
       cor_results,
@@ -1131,7 +1206,8 @@ correl_splicing_rbp_hc <- function(charmobj, rbp, other_rbp, plot_title = NULL) 
     highcharter::hc_plotOptions(scatter = list(
       marker = list(radius = 5, fillColor = "#DDDDDD", lineColor = "black", lineWidth = 1)
     )) %>%
-    highcharter::hc_legend(enabled = FALSE)
+    highcharter::hc_legend(enabled = FALSE) %>%
+    highcharter::hc_exporting(enabled = TRUE)
 }
 
 
@@ -1685,12 +1761,37 @@ eCLIPSE_raw_user <- function(rnamapfile,
   }
   
   mat_to_colsums <- function(mat, drop = NULL) {
-    # Select numeric columns by type - robust regardless of RBP/EVENTS column position
-    num_idx <- which(vapply(mat, is.numeric, logical(1)))
+    # Select numeric OR logical columns by type - robust regardless of
+    # RBP/EVENTS column position. The 1000 (or 500, for IR) position
+    # columns in the precomputed eCLIPSE maps (e.g. eCLIPSE_BIGEXON.qs2)
+    # are stored as TRUE/FALSE *logical* columns, not numeric 0/1 -- a
+    # plain is.numeric() check treats every one of them as "not numeric"
+    # and returns zero columns selected, which silently fell through to
+    # the empty-return branch below for every single call regardless of
+    # which RBP was chosen. That produced all-zero comp/incomp vectors for
+    # every position, which is exactly what caused the RNA binding map's
+    # top plot to render blank (dividing by an all-zero incomp) and the
+    # bottom FDR/EffectSize plot to sit flat at zero (every chi-squared
+    # matrix cell landing on the safe_chisq negative-value fallback).
+    num_idx <- which(vapply(mat, function(x) is.numeric(x) || is.logical(x), logical(1)))
     if (length(num_idx) == 0) {
       return(list(comp = rep(0, n_pos), incomp = rep(0L, n_pos)))
     }
-    mat <- as.matrix(mat[, ..num_idx, drop = FALSE])
+    # NOTE: `..num_idx` (data.table's "look this up as a variable, not a
+    # column name" prefix) doesn't do anything special on a plain
+    # data.frame -- `[.data.frame` just evaluates it as ordinary R code, and
+    # since no variable named literally "..num_idx" was ever defined, this
+    # failed every single call with "object '..num_idx' not found". This
+    # helper (and everything downstream of it, i.e. the whole Binding
+    # Discovery map) never actually ran.
+    # `mat` here is typically a data.table (the eCLIPSE maps are built with
+    # data.table::fread + setDT and qsaved as such), so `mat[, num_idx]`
+    # makes data.table try to look up a *column* literally named "num_idx"
+    # and fails with "column name 'num_idx' is not found ... try DT[, ..num_idx]".
+    # Coerce to a plain data.frame first so positional column indexing
+    # behaves like base R regardless of the map's class (data.table or
+    # data.frame). This is what was blocking every Binding Discovery RNA map.
+    mat <- as.matrix(as.data.frame(mat)[, num_idx, drop = FALSE])
     nr  <- nrow(mat)
     if (is.null(nr) || nr == 0) {
       return(list(comp = rep(0, ncol(mat)), incomp = rep(0L, ncol(mat))))
@@ -1701,7 +1802,7 @@ eCLIPSE_raw_user <- function(rnamapfile,
       incomp = colSums(!is.na(mat_num))
     )
   }
-  
+
   cs_inc   <- mat_to_colsums(rnamapfile_inc,   drop_cols)
   cs_dec   <- mat_to_colsums(rnamapfile_dec,   drop_cols)
   cs_maint <- mat_to_colsums(rnamapfile_maint, drop_cols)
@@ -1719,31 +1820,62 @@ eCLIPSE_raw_user <- function(rnamapfile,
   oddsratio_dec <- numeric(n_pos)
   
   for (i in seq_len(n_pos)) {
-    
+
+    # This block now matches the author's original (pre-Shiny) reference
+    # implementation of eCLIPSE_full exactly: the "_rev"/"_vs_rev" cells and
+    # the sign-flip ratios below are computed from dfforvis's already
+    # +1-pseudo-counted columns, NOT the raw comp values. A prior revision
+    # here "corrected" this to use raw comp (based on a separate offline
+    # Python precompute script that turned out to use a different
+    # convention), which introduced a NEW crash: with raw comp, the
+    # sign-flip ratio's numerator can legitimately be 0 (comp[i] itself, no
+    # pseudo-count), so a position with zero coverage (incomp[i] == 0)
+    # divides 0/0 = NaN, and `if (NaN <= NaN)` throws "Error in if: missing
+    # value where TRUE/FALSE needed". The +1 pseudo-count guarantees the
+    # numerator is always >= 1, so the ratio is a finite number or Inf, but
+    # never NaN -- restoring it fixes that crash.
     inc_fish     <- dfforvis[i, 2]
     inc_fish_rev <- cs_inc$incomp[i]   - dfforvis[i, 2]
     inc_vs       <- dfforvis[i, 4]
     inc_vs_rev   <- cs_maint$incomp[i] - dfforvis[i, 4]
-    
+
     dec_fish     <- dfforvis[i, 3]
     dec_fish_rev <- cs_dec$incomp[i]   - dfforvis[i, 3]
     dec_vs       <- dfforvis[i, 4]
     dec_vs_rev   <- cs_maint$incomp[i] - dfforvis[i, 4]
-    
+
     inc_mat <- matrix(c(inc_fish, inc_fish_rev, inc_vs, inc_vs_rev), nrow = 2)
     dec_mat <- matrix(c(dec_fish, dec_fish_rev, dec_vs, dec_vs_rev), nrow = 2)
-    
-    inc_res  <- suppressWarnings(chisq.test(inc_mat))
-    dec_res  <- suppressWarnings(chisq.test(dec_mat))
+
+    # The original reference calls chisq.test() with no guard at all, and
+    # that's fine for its normal (large, curated) datasets. But the "_rev"
+    # cells above CAN legitimately go to exactly -1 (whenever every
+    # observation at a position happens to be RBP-bound, i.e.
+    # comp[i] == incomp[i]) -- rare on the large Explore-mode datasets but
+    # more likely on a smaller/sparser user-uploaded file, and chisq.test()
+    # crashes outright on a negative cell ("all entries of 'x' must be
+    # nonnegative and finite"). Guard against just that one degenerate case
+    # -- NOT against zero cells, which chisq.test() handles fine and the
+    # reference never treats specially -- so this stays numerically
+    # identical to the reference on every input where it would have worked.
+    safe_chisq <- function(mat) {
+      if (any(!is.finite(mat)) || any(mat < 0)) {
+        return(list(p.value = 1, statistic = 0))
+      }
+      suppressWarnings(chisq.test(mat))
+    }
+
+    inc_res  <- safe_chisq(inc_mat)
+    dec_res  <- safe_chisq(dec_mat)
     inc_p    <- inc_res$p.value
     inc_odds <- inc_res$statistic
     dec_p    <- dec_res$p.value
     dec_odds <- dec_res$statistic
-    
+
     inc_p <- -log10(p.adjust(inc_p, method = "BH", n = n_pos))
     dec_p <- -log10(p.adjust(dec_p, method = "BH", n = n_pos))
-    
-    # Sign flip: negative = RBP binding depleted relative to maintained
+
+    # Sign flip: negative = RBP binding depleted relative to maintained.
     # IR uses combined increased+maintained as denominator (original IR logic)
     if (is_IR) {
       if ((inc_fish / cs_inc$incomp[i]) <=
@@ -1766,7 +1898,7 @@ eCLIPSE_raw_user <- function(rnamapfile,
         dec_odds <- dec_odds * -1
       }
     }
-    
+
     pval_inc[i]      <- inc_p
     pval_dec[i]      <- dec_p
     oddsratio_inc[i] <- inc_odds
@@ -2117,7 +2249,22 @@ binding_profile_correl <- function(sim_obj,
                                    down_color    = "#53A2BE") {
   
   mean_profiles <- sim_obj$mean_profiles
-  
+
+  # "Both Cells" datasets can legitimately contain the same RBP__Target
+  # profile row twice (once contributed by each cell line) -- the same
+  # duplicate pattern documented and deduped throughout this app (see
+  # correl_exp_rbp_hc/splicing_correl/correl_splicing_rbp_hc). Left as-is
+  # here, it roughly doubles the row count that the query-vs-all-others
+  # correlation and its t() transpose below have to process for "Both
+  # Cells" specifically (K562/HEPG2 have no such duplication), which is
+  # almost certainly why only "Both Cells" was extremely slow/appeared to
+  # hang while the other two rendered normally -- and if query_id itself
+  # is one of the duplicated rows, the lookup below silently returns a
+  # 2-row matrix instead of a single profile vector.
+  if (anyDuplicated(rownames(mean_profiles))) {
+    mean_profiles <- mean_profiles[!duplicated(rownames(mean_profiles)), , drop = FALSE]
+  }
+
   # ── 1. Check query exists ──────────────────────────────────────────────────
   if (!query_id %in% rownames(mean_profiles)) {
     empty_plot <- ggplot2::ggplot() +

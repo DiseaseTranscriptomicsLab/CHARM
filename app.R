@@ -72,6 +72,27 @@ get_charm_object <- function(dataset) {
   charm_cache$obj
 }
 
+# A few features (the splicing "compare all 3 cell lines" panels, and the
+# RBP similarity network builder) genuinely need Both/K562/HEPG2 all loaded
+# at the same time. Routing that through get_charm_object() one call at a
+# time is actively counterproductive: get_charm_object() is a single-slot
+# cache, so calling it 3x in a row for "Both" -> "K562" -> "HEPG2" evicts
+# and re-decompresses from disk on every single call (no variant is ever
+# still in the cache by the time the next call asks for a different one),
+# which showed up as the "Both Cells" panel of these multi-way comparisons
+# being the slowest/most likely to look hung -- it's always loaded (and
+# evicted) first. This loads all 3 directly, independent of charm_cache, so
+# each variant is read from disk exactly once per call regardless of order,
+# and doesn't disturb whatever single variant get_charm_object() has cached
+# for the rest of the session.
+load_all_charm_variants <- function() {
+  list(
+    "Both Cells" = qload("Charm.object"),
+    "K562"       = qload("Charm.object_K562"),
+    "HEPG2"      = qload("Charm.object_HEPG2")
+  )
+}
+
 binding_cache <- new.env(parent = emptyenv())
 
 get_binding_object <- function(eventtype, dataset) {
@@ -92,6 +113,48 @@ get_binding_object <- function(eventtype, dataset) {
 }
 
 `%||%` <- function(a, b) if (is.null(a) || (length(a) == 1 && is.na(a))) b else a
+
+# Flexible reader for the three Discovery-mode file uploads (Expression,
+# Splicing, Binding). Previously each upload handler called
+# read.table(path, sep = "\t") directly, which is unforgiving in two ways
+# that real user files hit in practice:
+#   1. Delimiter: users frequently export from Excel with commas or
+#      semicolons rather than tabs.
+#   2. Line endings: a file using old Mac-style bare "\r" line terminators
+#      (no "\n" at all) reads back as a single giant "line" under a plain
+#      read.table() call -- confirmed via the user-supplied example file
+#      example_data/AllwSG.txt, which is exactly what broke the Binding
+#      Discovery upload.
+# This normalizes line endings up front and auto-detects the delimiter from
+# the header row (tab > comma > semicolon > whitespace, by whichever splits
+# the header into the most fields) before handing off to read.table().
+read_user_table <- function(path) {
+  raw_bytes <- readBin(path, what = "raw", n = file.info(path)$size)
+  txt <- rawToChar(raw_bytes)
+  txt <- gsub("\r\n", "\n", txt, fixed = TRUE)
+  txt <- gsub("\r",   "\n", txt, fixed = TRUE)
+
+  lines <- strsplit(txt, "\n", fixed = TRUE)[[1]]
+  lines <- lines[nzchar(trimws(lines))]
+  if (length(lines) < 2) stop("File has no data rows.")
+  header <- lines[1]
+
+  candidates <- list(tab = "\t", comma = ",", semicolon = ";")
+  field_counts <- vapply(candidates, function(d) {
+    length(strsplit(header, d, fixed = TRUE)[[1]])
+  }, integer(1))
+  best_delim <- names(which.max(field_counts))
+
+  if (field_counts[[best_delim]] > 1) {
+    read.table(text = txt, header = TRUE, sep = candidates[[best_delim]],
+               stringsAsFactors = FALSE, strip.white = TRUE, check.names = FALSE)
+  } else {
+    # No delimiter produced more than one field -- fall back to
+    # whitespace-separated parsing (read.table's default sep = "").
+    read.table(text = txt, header = TRUE, sep = "",
+               stringsAsFactors = FALSE, check.names = FALSE)
+  }
+}
 
 # Load small, always-needed objects once when the app starts (all under
 # ~90MB combined -- not worth swapping).
@@ -430,7 +493,7 @@ ui <- fluidPage(
                 condition = "input.expr_mode == 'Discovery'",
                 hr(),
                 tags$p("Alternatively, upload your own table with differential expression values. Data must have a header, and the first column must be the HGNC gene symbol, and the second column the t-stats."),
-                fileInput("user_file_expr", "Upload your file:", accept = c(".txt")),
+                fileInput("user_file_expr", "Upload your file:", accept = c(".txt", ".csv", ".tsv")),
                 uiOutput("file_warning_expr"),
                 uiOutput("user_file_options")
               )
@@ -635,15 +698,9 @@ ui <- fluidPage(
                     "."
                   )
                 ),
-                fileInput("user_file_splice", "Upload your file:", accept = c(".txt")),
+                fileInput("user_file_splice", "Upload your file:", accept = c(".txt", ".csv", ".tsv")),
                 uiOutput("file_warning_splice"),
-                uiOutput("user_file_options_splice"),
-                
-                # ---- eCLIPSE binding map section (appears after successful upload) ----
-                conditionalPanel(
-                  condition = "input.splice_mode == 'Discovery'",
-                  uiOutput("eclipse_raw_options_ui")
-                )
+                uiOutput("user_file_options_splice")
               )
             )
           ),
@@ -697,10 +754,9 @@ ui <- fluidPage(
                 plotOutput("user_file_initial_plot_splice", height = "420px"),
                 type = 6
               ),
+              uiOutput("dl_ui_splice_initial"),
               br(),
-              uiOutput("similar_splice_plots_file"),
-              br(),
-              uiOutput("eclipse_raw_plot_ui")   # <-- new
+              uiOutput("similar_splice_plots_file")
             )
           )
         )
@@ -768,59 +824,18 @@ ui <- fluidPage(
                               selected = "FDR")
                 ),
                 
-                # Show only when "Similar Profiles" is selected
+                # Show only when "Similar Profiles" is selected.
+                # NOTE: the query-profile UI (free-text "RBP__Target" query
+                # selector, "compare with specific profiles" list, and the
+                # 6-panel Both Cells/K562/HEPG2 x inc/dec results) used to
+                # live under Discovery mode (behind the file-upload gate),
+                # even though it needs no uploaded file at all -- it only
+                # reads the same precomputed binding-similarity objects this
+                # Explore-mode panel already uses. It belongs here instead;
+                # see output$binding_similar_profiles_options below.
                 conditionalPanel(
                   condition = "input.binding_dataset == 'Similar Profiles'",
-                  
-                  hr(),
-                  tags$h5("Similar Profiles"),
-                  tags$p(
-                    "Find RBP\u2013Target binding profiles that are most similar to a chosen query pair, in terms of increased or decreased events.",
-                    style = "font-size: 12px; color: #666; margin-top: -5px;"
-                  ),
-                  
-                  uiOutput("binding_explore_sim_target_ui"),
-                  
-                  radioButtons(
-                    "binding_explore_sim_direction",
-                    "Direction:",
-                    choices  = c("Increased" = "inc", "Decreased" = "dec"),
-                    selected = "inc",
-                    inline   = TRUE
-                  ),
-                  
-                  numericInput(
-                    "binding_explore_sim_topN",
-                    "Show top N most similar profiles (optional):",
-                    value = NA, min = 1
-                  ),
-                  helpText("Tip: selecting a number here takes precedence over the two below."),
-                  numericInput(
-                    "binding_explore_sim_n_close",
-                    "Show top N closest profiles (optional):",
-                    value = NA, min = 1
-                  ),
-                  numericInput(
-                    "binding_explore_sim_n_far",
-                    "Show top N most dissimilar profiles (optional):",
-                    value = NA, min = 1
-                  ),
-                  
-                  div(
-                    style = "display: flex; align-items: center; margin-top: 15px;",
-                    actionButton(
-                      "binding_explore_sim_plot_btn",
-                      tagList(fa("chart-line"), " Plot"),
-                      class = "btn btn-primary",
-                      style = "margin-right: 10px; border-radius: 20px;"
-                    ),
-                    actionButton(
-                      "binding_explore_sim_reset_btn",
-                      tagList(fa("redo"), " Reset"),
-                      class = "btn btn-secondary",
-                      style = "border-radius: 20px;"
-                    )
-                  )
+                  uiOutput("binding_similar_profiles_options")
                 )
               ),
               
@@ -842,10 +857,9 @@ ui <- fluidPage(
                     "."
                   )
                 ),
-                fileInput("user_file_binding", "Upload your file:", accept = c(".txt")),
+                fileInput("user_file_binding", "Upload your file:", accept = c(".txt", ".csv", ".tsv")),
                 uiOutput("file_warning_binding"),
-                uiOutput("binding_discovery_options"),
-                uiOutput("binding_similar_profiles_options")
+                uiOutput("binding_discovery_options")
               )
             )
           ),
@@ -882,14 +896,13 @@ ui <- fluidPage(
             # Explore Mode — Similar Profiles plot
             conditionalPanel(
               condition = "input.binding_mode == 'Explore' && input.binding_dataset == 'Similar Profiles'",
-              uiOutput("binding_explore_similar_plot_ui")
+              uiOutput("binding_similar_profiles_plot_ui")
             ),
-            
+
             # Discovery Mode plot
             conditionalPanel(
               condition = "input.binding_mode == 'Discovery'",
-              uiOutput("binding_discovery_plot_ui"),
-              uiOutput("binding_similar_profiles_plot_ui")
+              uiOutput("binding_discovery_plot_ui")
             )
             
           )
@@ -947,7 +960,7 @@ ui <- fluidPage(
                            font-size:11px; color:#856404;",
                   tags$b("\u26a0 Note:"),
                   " Expression and Splicing layers build large feature matrices
-                    and may take 10\u201330 seconds to compute depending on the
+                    and may take a few minutes to compute depending on the
                     number of RBPs. Please be patient after clicking Plot."
                 )
               ),
@@ -1059,7 +1072,7 @@ ui <- fluidPage(
     ",
     tags$div(
       style = "font-size: 11px; color: #2c3e50; margin-bottom: 4px;",
-      "Version: dev"
+      "Version: 0.9.2"
     ),
     tags$a(
       href = "https://github.com/DiseaseTranscriptomicsLab/CHARM",
@@ -1090,8 +1103,30 @@ server <- function(input, output, session) {
     splice_volcano = reactiveVal(NULL),
     binding        = reactiveVal(NULL),
     network        = reactiveVal(NULL),
-    event_dpsi     = reactiveVal(NULL)
+    event_dpsi     = reactiveVal(NULL),
+    # Discovery-mode plots (user-uploaded-file tabs) -- these previously had
+    # no save option at all.
+    splice_initial = reactiveVal(NULL),
+    binding_disc   = reactiveVal(NULL)
   )
+
+  # Generic download-button counter for Discovery-mode plots that are
+  # rendered dynamically (one per dataset variant, e.g. "Both Cells" /
+  # "K562" / "HEPG2"), so each gets its own reactiveVal + downloadHandler +
+  # downloadButton with a unique id built from the plot's own output name.
+  dyn_dl_store <- reactiveValues()
+  make_dyn_dl_handler <- function(plotname, filename_prefix,
+                                  width = 10, height = 7, dpi = 300) {
+    downloadHandler(
+      filename = function() paste0(filename_prefix, "_", Sys.Date(), ".png"),
+      content  = function(file) {
+        p <- dyn_dl_store[[plotname]]
+        req(p)
+        ggplot2::ggsave(file, plot = p, device = "png",
+                        width = width, height = height, dpi = dpi, bg = "white")
+      }
+    )
+  }
   
   # ── Status bar helpers ────────────────────────────────────────────────────
   show_status <- function(msg = "Loading\u2026") {
@@ -1227,10 +1262,84 @@ server <- function(input, output, session) {
   output$dl_splice_violin <- make_dl_handler("splice_violin", "splicing_violin",     width = 8,  height = 6)
   output$dl_shrna_splice  <- make_dl_handler("shrna_splice",  "shrna_efficiency_splice", width = 8, height = 6)
   output$dl_splice_volcano<- make_dl_handler("splice_volcano","splicing_volcano",    width = 8,  height = 7)
-  output$dl_binding       <- make_dl_handler("binding",       "binding_map",         width = 12, height = 9)
+  # dl_binding is NOT built via make_dl_handler(): the Binding "All targets"
+  # heatmap can have 100+ rows, and a fixed 12x9in export crammed every row
+  # label on top of the next -- unreadable, even though the same heatmap
+  # looks fine on screen because binding_plot_ui() scales the plotOutput's
+  # pixel height with the row count. Mirror that exact scaling formula here
+  # (900 + (n-1)*10 px, capped at 2000px, translated to inches at the
+  # standard 96px/in CSS reference) so the saved file matches what's on screen.
+  output$dl_binding <- downloadHandler(
+    filename = function() {
+      rbp <- if (!is.null(input$binding_search) && nchar(input$binding_search) > 0)
+               input$binding_search else "plot"
+      paste0("binding_map_", rbp, "_", Sys.Date(), ".png")
+    },
+    content = function(file) {
+      p <- dl_store$binding()
+      req(p)
+      targets <- input$binding_target
+      n_targets <- tryCatch({
+        if (!is.null(targets) && "All" %in% targets) {
+          data <- binding_data()
+          rbp  <- input$binding_search
+          if (!is.null(data) && !is.null(rbp) && rbp %in% names(data)) {
+            length(names(data[[rbp]]))
+          } else 1
+        } else {
+          length(targets)
+        }
+      }, error = function(e) 1)
+      if (is.null(n_targets) || length(n_targets) == 0 || is.na(n_targets) || n_targets < 1) n_targets <- 1
+      height_px <- min(900 + (n_targets - 1) * 10, 2000)
+      # The saved PNG mirrors the on-screen pixel height exactly, but a
+      # static raster render needs a little extra breathing room around each
+      # row label than the live, scrollable browser view does -- without
+      # this the bottom-most row labels on a big "All targets" heatmap come
+      # out just slightly cramped. 12% extra height fixes that without
+      # touching the (already-correct) on-screen sizing.
+      height_in <- (height_px / 96) * 1.12
+      ggplot2::ggsave(file, plot = p, device = "png",
+                      width = 12, height = height_in, dpi = 300, bg = "white",
+                      limitsize = FALSE)
+    }
+  )
   output$dl_network       <- make_dl_handler("network",       "network",             width = 12, height = 9)
   output$dl_event_dpsi    <- make_dl_handler("event_dpsi",    "splicing_event_dpsi", width = 10, height = 8)
-  
+
+  # Discovery-mode (user-uploaded-file) plots -- previously not saveable.
+  output$dl_splice_initial <- make_dl_handler("splice_initial", "splicing_discovery_overview", width = 8,  height = 6)
+  output$dl_binding_disc   <- downloadHandler(
+    filename = function() paste0("binding_discovery_", Sys.Date(), ".png"),
+    content  = function(file) {
+      p <- dl_store$binding_disc()
+      req(p)
+      # Mirror the same on-screen scaling logic used for the Binding tab's
+      # Explore-mode heatmap (see dl_binding above) -- Discovery mode's
+      # multi-target heatmap has the exact same "readable on screen, garbled
+      # once saved at a fixed size" problem as more targets are selected,
+      # including "All" needing to be expanded to its real count first.
+      targets <- input$binding_disc_target
+      n_targets <- tryCatch({
+        if (!is.null(targets) && "All" %in% targets) {
+          if (grepl("Intron Retention", input$binding_eventtype, ignore.case = TRUE)) {
+            length(ALL_BINDING_RBP_NAMES_IR)
+          } else {
+            length(ALL_BINDING_RBP_NAMES_ES)
+          }
+        } else {
+          length(targets)
+        }
+      }, error = function(e) 1)
+      if (is.null(n_targets) || length(n_targets) == 0 || is.na(n_targets) || n_targets < 1) n_targets <- 1
+      height_px <- min(900 + (n_targets - 1) * 10, 2000)
+      height_in <- height_px / 96
+      ggplot2::ggsave(file, plot = p, device = "png",
+                      width = 12, height = height_in, dpi = 300, bg = "white",
+                      limitsize = FALSE)
+    }
+  )
+
   # ── Conditional download button UIs (appear only after plot is rendered) ──
   make_dl_ui("expr_violin",   "dl_expr_violin")
   make_dl_ui("shrna",         "dl_shrna")
@@ -1244,6 +1353,8 @@ server <- function(input, output, session) {
   make_dl_ui("binding",       "dl_binding")
   make_dl_ui("network",       "dl_network")
   make_dl_ui("event_dpsi",    "dl_event_dpsi")
+  make_dl_ui("splice_initial","dl_splice_initial")
+  make_dl_ui("binding_disc",  "dl_binding_disc")
   
   # ── Table download handlers ────────────────────────────────────────────────
   output$dl_volcano_table        <- make_table_dl_handler(display_table,  "expression_volcano_table")
@@ -1398,7 +1509,16 @@ server <- function(input, output, session) {
       NULL
     }
 
-    req(!is.null(target_to_use))
+    if (is.null(target_to_use)) {
+      # No usable target for this RBP -- without this, req() below would
+      # silently abort and, since nothing else about this RBP ever changes,
+      # this observer would just never run again: binding_nav_trigger stays
+      # set and the "Loading binding data..." status banner (shown right
+      # before this was triggered) would stay up forever.
+      hide_status()
+      binding_nav_trigger(NULL)
+      return(invisible(NULL))
+    }
     binding_nav_trigger(NULL)          # clear so this doesn't re-fire
     binding_nav_target(target_to_use)  # binding_target_ui reads this to pre-select
                                         # itself at creation time (see renderUI below);
@@ -1776,14 +1896,14 @@ server <- function(input, output, session) {
     file_path <- input$user_file_expr$datapath
     
     df <- tryCatch(
-      read.table(file_path, header = TRUE, sep = "\t", stringsAsFactors = FALSE),
+      read_user_table(file_path),
       error = function(e) NULL
     )
     
     if (is.null(df)) {
       upload_ok(FALSE)
       user_expr_df(NULL)
-      error_msg <- "Could not read the file. Make sure it is tab-delimited."
+      error_msg <- "Could not read the file. Please check that it is a plain text table (tab, comma, or semicolon separated)."
     } else if (ncol(df) != 2) {
       upload_ok(FALSE)
       user_expr_df(NULL)
@@ -1935,8 +2055,10 @@ server <- function(input, output, session) {
   # ---- User File Similarity Plots ----
   observeEvent(input$user_file_plot_btn, {
     req(user_expr_df())
+    show_status("Generating comparison plots — please wait…")
+    on.exit(hide_status(), add = TRUE)
     mode <- input$user_file_mode_expr
-    
+
     # Choose datasets and plotting functions
     if (mode == "expr") {
       datasets <- list(
@@ -1964,11 +2086,6 @@ server <- function(input, output, session) {
     
     output[[target_ui]] <- renderUI({
       tagList(
-        tags$div(
-          "Generating plots, please wait...",
-          style = "font-weight:bold;color:#A10702;margin-bottom:15px;"
-        ),
-        
         # Generate all dataset plots dynamically
         lapply(names(datasets), function(ds_name) {
           # Sanitize: ds_name can be "Both Cells" (contains a space), which
@@ -1976,7 +2093,8 @@ server <- function(input, output, session) {
           # it, but highchartOutput/renderHighchart's widget binding does
           # not -- the plot silently never appears, no error anywhere.
           plotname <- paste0("userfile_plot_", gsub("[^A-Za-z0-9_]+", "_", ds_name))
-          
+          dl_ui <- NULL
+
           # Dynamic output creation
           if (!is.null(selected_rbps) && length(selected_rbps) == 1) {
             output[[plotname]] <- renderHighchart({
@@ -1998,16 +2116,22 @@ server <- function(input, output, session) {
                 n_neg      = if (mode == "expr") input$user_file_n_neg_expr else input$user_file_n_neg_gsea,
                 other_rbps = if (!is.null(selected_rbps) && length(selected_rbps) > 1) selected_rbps else NULL
               )
+              dyn_dl_store[[plotname]] <- heat_res$heatmap
               heat_res$heatmap   # ✅ FIXED
             })
             plot_ui <- plotOutput(plotname, height = "500px")
+            dl_id <- paste0("dl_", plotname)
+            output[[dl_id]] <- make_dyn_dl_handler(plotname, paste0("expression_discovery_", plotname))
+            dl_ui <- downloadButton(dl_id, "↓ Download plot",
+                                    class = "btn btn-sm btn-default", style = "margin-top:5px;")
           }
-          
+
           # Return UI element for each dataset
           column(
             width = 12,
             tags$h4(ds_name, style = "text-align:center;"),
-            shinycssloaders::withSpinner(plot_ui)
+            shinycssloaders::withSpinner(plot_ui),
+            dl_ui
           )
         }) %>% tagList()  # flatten
       )
@@ -2031,14 +2155,14 @@ server <- function(input, output, session) {
     file_path <- input$user_file_splice$datapath
     
     df <- tryCatch(
-      read.table(file_path, header = TRUE, sep = "\t", stringsAsFactors = FALSE),
+      read_user_table(file_path),
       error = function(e) NULL
     )
     
     if (is.null(df)) {
       upload_ok_splice(FALSE)
       user_splice_df(NULL)
-      error_msg <- "Could not read the file. Make sure it is tab-delimited."
+      error_msg <- "Could not read the file. Please check that it is a plain text table (tab, comma, or semicolon separated)."
     } else if (ncol(df) != 4) {
       upload_ok_splice(FALSE)
       user_splice_df(NULL)
@@ -2127,62 +2251,6 @@ server <- function(input, output, session) {
     )
   })
   
-  # ---- eCLIPSE binding map controls (Discovery Mode, shown after upload) ----
-  output$eclipse_raw_options_ui <- renderUI({
-    if (!upload_ok_splice()) return(NULL)
-    
-    tagList(
-      hr(),
-      tags$h5("eCLIPSE Binding Map"),
-      tags$p("Visualise where the RBP binds relative to splicing events in your uploaded data.",
-             style = "font-size: 12px; color: #666; margin-top: -5px;"),
-      
-      selectInput(
-        "eclipse_raw_event_type",
-        "Event type:",
-        choices  = c("Exon Skipping", "Intron Retention"),
-        selected = "Exon Skipping"
-      ),
-      
-      selectizeInput(
-        "eclipse_raw_rbp",
-        "RBP to visualise binding for:",
-        choices = sort(unique(eCLIPSE_BigExon_full$RBP)),  # or a shared RBP list
-        options = list(placeholder = "Select an RBP")
-      ),
-      
-      numericInput(
-        "eclipse_raw_psi_thresh",
-        "dPSI threshold:",
-        value = 0.05, min = 0, max = 1, step = 0.01
-      ),
-      
-      selectInput(
-        "eclipse_raw_metric",
-        "Metric:",
-        choices  = c("FDR", "EffectSize"),
-        selected = "FDR"
-      ),
-      
-      div(
-        style = "display: flex; align-items: center; margin-top: 15px;",
-        actionButton(
-          "eclipse_raw_plot_btn",
-          tagList(fa("chart-line"), " Plot"),
-          class = "btn btn-primary",
-          style = "margin-right: 10px; border-radius: 20px;"
-        ),
-        actionButton(
-          "eclipse_raw_reset_btn",
-          tagList(fa("redo"), " Reset"),
-          class = "btn btn-secondary",
-          style = "border-radius: 20px;"
-        )
-      )
-    )
-  })
-  
-  
   # Auto-preview violin plot for uploaded file
   output$user_file_initial_plot_splice <- renderPlot({
     req(upload_ok_splice())          # only plot after successful upload
@@ -2200,6 +2268,7 @@ server <- function(input, output, session) {
     
     # If no ES/IR events present, show a message plot
     if (nrow(dpsi_table) == 0) {
+      dl_store$splice_initial(NULL)
       plot.new()
       title(main = "No ES or IR events detected in uploaded file")
       return(invisible(NULL))
@@ -2217,7 +2286,7 @@ server <- function(input, output, session) {
     subtitle_text <- paste0("Mean dPSI — ES: ", mean_ES, " | IR: ", mean_IR)
     
     # Violin + jitter plot similar to your function
-    ggplot(dpsi_table, aes(x = Type, y = dPSI)) +
+    p <- ggplot(dpsi_table, aes(x = Type, y = dPSI)) +
       geom_jitter(width = 0.2, alpha = 0.6, size = 1.5) +
       geom_violin(alpha = .7) +
       theme_minimal() +
@@ -2231,31 +2300,46 @@ server <- function(input, output, session) {
         text = element_text(size = 20, family = "Arial MS"),
         plot.subtitle = element_text(hjust = 0.5)
       )
+    dl_store$splice_initial(p)
+    p
   })
   
   # ---- Render similarity plots ----
   observeEvent(input$user_file_plot_btn_splice, {
     req(user_splice_df())
+    # This feature loads all 3 Charm.object variants from disk before it can
+    # build any of the comparison plots below, which is the actual slow part
+    # (the plots themselves render quickly once the placeholders exist) --
+    # show the global status banner for that load instead of leaving the
+    # user staring at nothing until everything pops in at once.
+    show_status("Loading comparison datasets — please wait…")
+    on.exit(hide_status(), add = TRUE)
     selected_rbps <- input$user_file_compare_splice
-    
+
     # NOTE: this feature compares all 3 cell lines side by side, so it
     # necessarily materializes all 3 Charm.object variants at once for the
-    # duration of this action -- that's inherent to what it does, not
-    # something the single-instance cache above can avoid.
-    datasets <- list(
-      "Both Cells" = get_charm_object("Both"),
-      "K562" = get_charm_object("K562"),
-      "HEPG2" = get_charm_object("HEPG2")
-    )
-    
+    # duration of this action -- that's inherent to what it does. Loaded via
+    # load_all_charm_variants() (direct qload(), bypassing the single-slot
+    # get_charm_object() cache) so requesting all 3 back-to-back doesn't
+    # evict-and-reload each one out from under the next.
+    datasets <- load_all_charm_variants()
+
     output$similar_splice_plots_file <- renderUI({
       tagList(
-        tags$div("Generating plots, please wait...", style = "font-weight:bold;color:#A10702;margin-bottom:15px;"),
         lapply(names(datasets), function(ds_name) {
           # See the "userfile_plot_" block above for why this is sanitized.
-          plotname <- paste0("userfile_plot_splice_", gsub("[^A-Za-z0-9_]+", "_", ds_name))
-          
-          if (!is.null(selected_rbps) && length(selected_rbps) == 1) {
+          # Include the plot TYPE in the output id. The same id must never be
+          # reused across renderHighchart (scatter, 1 RBP) and renderPlot (bar,
+          # 0/>1 RBPs): Shiny keeps the previous type's client-side binding and
+          # the new plot won't appear until the UI is torn down -- that was the
+          # "have to click Reset after a scatter" symptom. Distinct ids fix it.
+          is_scatter <- !is.null(selected_rbps) && length(selected_rbps) == 1
+          plotname <- paste0("userfile_plot_splice_",
+                             if (is_scatter) "scatter_" else "bar_",
+                             gsub("[^A-Za-z0-9_]+", "_", ds_name))
+          dl_ui <- NULL
+
+          if (is_scatter) {
             output[[plotname]] <- renderHighchart({
               correl_splicing_rbp_hc(datasets[[ds_name]], user_splice_df(), selected_rbps)
             })
@@ -2270,15 +2354,21 @@ server <- function(input, output, session) {
                 n_neg = input$user_file_n_neg_splice,
                 other_rbps = if (!is.null(selected_rbps) && length(selected_rbps) > 1) selected_rbps else NULL
               )
+              dyn_dl_store[[plotname]] <- heat_res$heatmap
               heat_res$heatmap  # <-- make sure to return $heatmap, not $plot
             })
             plot_ui <- plotOutput(plotname, height = "500px")
+            dl_id <- paste0("dl_", plotname)
+            output[[dl_id]] <- make_dyn_dl_handler(plotname, paste0("splicing_discovery_", plotname))
+            dl_ui <- downloadButton(dl_id, "↓ Download plot",
+                                    class = "btn btn-sm btn-default", style = "margin-top:5px;")
           }
-          
+
           column(
             width = 12,
             tags$h4(ds_name, style = "text-align:center;"),
-            shinycssloaders::withSpinner(plot_ui)
+            shinycssloaders::withSpinner(plot_ui),
+            dl_ui
           )
         }) %>% tagList()
       )
@@ -2298,66 +2388,29 @@ server <- function(input, output, session) {
     updateNumericInput(session, "user_file_n_neg_splice", value = NA)
   })
   
-  # ---- eCLIPSE raw: plot button ----
-  observeEvent(input$eclipse_raw_plot_btn, {
-    req(upload_ok_splice(), user_splice_df())
-    
-    event_type   <- input$eclipse_raw_event_type
-    psi_thresh   <- input$eclipse_raw_psi_thresh
-    metric       <- input$eclipse_raw_metric
-    
-    # Pick the correct pre-loaded eCLIPSE map
-    rnamapfile <- if (grepl("Intron Retention", event_type, ignore.case = TRUE)) {
-      eCLIPSE_Intron_full
-    } else {
-      eCLIPSE_BigExon_full
-    }
-    
-    output$eclipse_raw_plot_ui <- renderUI({
-      shinycssloaders::withSpinner(
-        plotOutput("eclipse_raw_plot", height = "600px"),
-        type = 6
-      )
-    })
-    
-    output$eclipse_raw_plot <- renderPlot({
-      withProgress(message = "Generating eCLIPSE binding map...", value = 0.1, {
-        eCLIPSE_raw_user(
-          rnamapfile   = rnamapfile,
-          ASfile       = user_splice_df(),
-          rnaBP        = "user",          # label for the map title
-          event_type   = event_type,
-          PSIthreshold = psi_thresh,
-          metric       = metric,
-          plot         = TRUE,
-          title        = "Uploaded data"
-        )
-      })
-    })
-  })
-  
-  # ---- eCLIPSE raw: reset button ----
-  observeEvent(input$eclipse_raw_reset_btn, {
-    output$eclipse_raw_plot_ui <- renderUI(NULL)
-  })
-  
   #BINDING (Discovery Mode)
   upload_ok_binding <- reactiveVal(FALSE)
   user_binding_df   <- reactiveVal(NULL)
 
   observeEvent(input$user_file_binding, {
     req(input$user_file_binding)
+    # Unlike the Expression/Splicing upload handlers, this one had no status
+    # feedback at all -- the user just sees nothing happen until the file
+    # preview AND the Discovery options panel both pop in together, which
+    # reads as "this takes forever" even when the actual parsing is quick.
+    show_status("Reading uploaded file — please wait…")
+    on.exit(hide_status(), add = TRUE)
     file_path <- input$user_file_binding$datapath
 
     df <- tryCatch(
-      read.table(file_path, header = TRUE, sep = "\t", stringsAsFactors = FALSE),
+      read_user_table(file_path),
       error = function(e) NULL
     )
 
     error_msg <- NULL
 
     if (is.null(df)) {
-      error_msg <- "Could not read the file. Make sure it is tab-delimited."
+      error_msg <- "Could not read the file. Please check that it is a plain text table (tab, comma, or semicolon separated)."
     } else if (ncol(df) != 4) {
       error_msg <- "File must have exactly 4 columns (Event.ID, Gene, dPSI, PDiff)."
     } else if (!is.character(df[[1]])) {
@@ -2400,14 +2453,37 @@ server <- function(input, output, session) {
   })
 
   # ---- Binding Discovery Mode: dynamic options shown after successful upload ----
+  # NOTE: this used to nest uiOutput("binding_disc_target_ui") inside this
+  # renderUI, with the target selectizeInput built in a SEPARATE renderUI
+  # keyed off the same upload_ok_binding()/input$binding_eventtype. That
+  # extra layer of dynamic UI costs a full additional client<->server
+  # round-trip (render this panel -> browser requests the nested uiOutput ->
+  # server responds) on top of the one this panel itself already needs --
+  # the exact round-trip Splicing Discovery's single flat renderUI
+  # (user_file_options_splice) doesn't pay, which is why upload options
+  # there appear noticeably faster despite parsing an identical file.
+  # Flattening into one renderUI (matching the Splicing pattern) removes
+  # that extra round-trip.
   output$binding_discovery_options <- renderUI({
     if (!upload_ok_binding()) return(NULL)
+    req(input$binding_eventtype)
+    target_choices <- if (grepl("Intron Retention", input$binding_eventtype, ignore.case = TRUE)) {
+      sort(ALL_BINDING_RBP_NAMES_IR)
+    } else {
+      sort(ALL_BINDING_RBP_NAMES_ES)
+    }
     tagList(
       hr(),
       tags$h5("eCLIPSE Binding Map"),
       tags$p("Visualise where an RBP (or multiple RBPs) binds relative to splicing events in your uploaded data. Select one target for a full binding map, or multiple targets for a heatmap overview.",
              style = "font-size: 12px; color: #666; margin-top: -5px;"),
-      uiOutput("binding_disc_target_ui"),
+      selectizeInput(
+        "binding_disc_target",
+        "Target(s) — RBP binding profile to visualise:",
+        choices  = c("All", target_choices),
+        multiple = TRUE,
+        options  = list(placeholder = "Select one or more targets, or \'All\'")
+      ),
       selectInput(
         "binding_disc_psi_thresh",
         "\u0394PSI threshold:",
@@ -2435,23 +2511,6 @@ server <- function(input, output, session) {
           style = "border-radius: 20px;"
         )
       )
-    )
-  })
-
-  # Target (RBP whose binding profile to visualise) — Discovery Mode only needs this
-  output$binding_disc_target_ui <- renderUI({
-    req(upload_ok_binding(), input$binding_eventtype)
-    target_choices <- if (grepl("Intron Retention", input$binding_eventtype, ignore.case = TRUE)) {
-      sort(ALL_BINDING_RBP_NAMES_IR)
-    } else {
-      sort(ALL_BINDING_RBP_NAMES_ES)
-    }
-    selectizeInput(
-      "binding_disc_target",
-      "Target(s) — RBP binding profile to visualise:",
-      choices  = c("All", target_choices),
-      multiple = TRUE,
-      options  = list(placeholder = "Select one or more targets, or \'All\'")
     )
   })
 
@@ -2486,14 +2545,27 @@ server <- function(input, output, session) {
     if (n_targets == 1) {
       # Single target: full eCLIPSE line-plot
       output$binding_discovery_plot_ui <- renderUI({
-        shinycssloaders::withSpinner(
-          plotOutput("binding_disc_plot", height = "600px"),
-          type = 6
+        tagList(
+          shinycssloaders::withSpinner(
+            plotOutput("binding_disc_plot", height = "600px"),
+            type = 6
+          ),
+          uiOutput("dl_ui_binding_disc")
         )
       })
 
       output$binding_disc_plot <- renderPlot({
-        withProgress(message = "Generating eCLIPSE binding map...", value = 0.1, {
+        # Guard (Issue #4): confirm the uploaded betAS table still carries the
+        # columns eCLIPSE_raw_user reads. The upload handler positionally maps
+        # and renames the 4 columns to Event.ID/Gene/dPSI/PDiff, so the AllwSG
+        # example (bare-\r line endings normalised by read_user_table) lands
+        # here in the right shape; this surfaces a readable message if a
+        # malformed file ever slips through instead of erroring in the analysis.
+        validate(
+          need(all(c("Event.ID", "dPSI") %in% names(user_binding_df())),
+               "Uploaded file is missing required columns (Event.ID, dPSI).")
+        )
+        p <- withProgress(message = "Generating eCLIPSE binding map...", value = 0.1, {
           eCLIPSE_raw_user(
             rnamapfile   = rnamapfile,
             ASfile       = user_binding_df(),
@@ -2505,6 +2577,8 @@ server <- function(input, output, session) {
             title        = targets_sel
           )
         })
+        dl_store$binding_disc(p)
+        p
       })
 
     } else {
@@ -2512,14 +2586,27 @@ server <- function(input, output, session) {
       height_px <- min(900 + (n_targets - 1) * 10, 2000)
 
       output$binding_discovery_plot_ui <- renderUI({
-        shinycssloaders::withSpinner(
-          plotOutput("binding_disc_plot", height = paste0(height_px, "px")),
-          type = 6
+        tagList(
+          shinycssloaders::withSpinner(
+            plotOutput("binding_disc_plot", height = paste0(height_px, "px")),
+            type = 6
+          ),
+          uiOutput("dl_ui_binding_disc")
         )
       })
 
       output$binding_disc_plot <- renderPlot({
-        withProgress(message = "Generating heatmap...", value = 0.1, {
+        # Guard (Issue #4): confirm the uploaded betAS table still carries the
+        # columns eCLIPSE_raw_user reads. The upload handler positionally maps
+        # and renames the 4 columns to Event.ID/Gene/dPSI/PDiff, so the AllwSG
+        # example (bare-\r line endings normalised by read_user_table) lands
+        # here in the right shape; this surfaces a readable message if a
+        # malformed file ever slips through instead of erroring in the analysis.
+        validate(
+          need(all(c("Event.ID", "dPSI") %in% names(user_binding_df())),
+               "Uploaded file is missing required columns (Event.ID, dPSI).")
+        )
+        p <- withProgress(message = "Generating heatmap...", value = 0.1, {
           build_binding_heatmap_user(
             rnamapfile   = rnamapfile,
             ASfile       = user_binding_df(),
@@ -2529,12 +2616,15 @@ server <- function(input, output, session) {
             metric       = metric
           )
         })
+        dl_store$binding_disc(p)
+        p
       })
     }
   })
   # ---- Binding Discovery Mode: reset button ----
   observeEvent(input$binding_disc_reset_btn, {
     output$binding_discovery_plot_ui <- renderUI(NULL)
+    dl_store$binding_disc(NULL)
   })
   
   # ---- Volcano plot helper ----
@@ -2807,9 +2897,12 @@ server <- function(input, output, session) {
     gsea_result <- plot_gsea(charm_obj, rbp_sel, thresh = 0.05)
     gsea_table_rv(gsea_result$geneset_table)
     output$gsea_plot <- renderPlot({
+      # on.exit guarantees the "generating plots" banner clears even if
+      # something in this render throws -- a plain hide_status() call at the
+      # end never runs if an earlier line errors.
+      on.exit(hide_status(), add = TRUE)
       p <- gsea_result$gsea_plot
       dl_store$gsea(p)
-      hide_status()
       p
     })
     output$geneset_table <- renderDT({
@@ -2828,13 +2921,16 @@ server <- function(input, output, session) {
     expr_top_panel("gene")
     
     output$expr_gene_plot <- renderPlot({
+      # on.exit fires even when validate()/need() below stops execution (an
+      # unrecognized gene) -- the plain hide_status() call after it would
+      # never run in that case, leaving the status banner stuck up.
+      on.exit(hide_status(), add = TRUE)
       validate(
         need(gene %in% unlist(lapply(charm_obj, function(x) rownames(x$DEGenes))),
              paste("Gene", gene, "not found in any RBP DEGenes tables."))
       )
       p <- plot_gene_logFC_barplot(charm_obj, gene)
       dl_store$expr_gene(p)
-      hide_status()
       p
     })
     
@@ -2849,13 +2945,13 @@ server <- function(input, output, session) {
     expr_top_panel("hallmark")
     
     output$expr_hallmark_plot <- renderPlot({
+      on.exit(hide_status(), add = TRUE)
       validate(
         need(geneset %in% unlist(lapply(charm_obj, function(x) x$GSEA$pathway)),
              paste0("Geneset '", geneset, "' not found in any RBP GSEA tables."))
       )
       p <- plot_hallmark_nes_barplot(charm_obj, geneset)
       dl_store$expr_hallmark(p)
-      hide_status()
       p
     })
     
@@ -2994,9 +3090,9 @@ server <- function(input, output, session) {
     
     # ---- Top row: Violin + shRNA knockdown plots ----
     output$violin_splice_plot <- renderPlot({
+      on.exit(hide_status(), add = TRUE)
       p <- violin_splice_plot(charm_obj, rbp_sel)
       dl_store$splice_violin(p)
-      hide_status()
       p
     })
     
@@ -3007,10 +3103,15 @@ server <- function(input, output, session) {
     })
     
     output$shrna_warning_splice <- renderUI({
+      # Same NA-crash guard as the Expression tab's shrna_warning (see there
+      # for the full explanation): an RBP absent from shrna_obj's rownames
+      # returns a row of NAs, not an error, and if(NA || NA) is fatal.
+      if (is.null(shrna_obj) || !(rbp_sel %in% rownames(shrna_obj))) return(NULL)
       stats <- shrna_obj[rbp_sel,,drop=FALSE]
       if (is.null(stats) || nrow(stats) == 0) return(NULL)
       logFC <- stats$logFC
       pval <- stats$P.Value
+      if (is.na(pval) || is.na(logFC)) return(NULL)
       if (pval > 0.05 || logFC > -0.5) {
         div(style="margin-top:10px;font-size:16px;font-weight:bold;color:red;",
             "WARNING: The efficiency of this knockdown is uncertain. Proceed with caution.")
@@ -3109,7 +3210,15 @@ server <- function(input, output, session) {
     if (input$splice_dataset != "Similar RBPs") return(NULL)
     req(input$splice_search)
     rbp1 <- input$splice_search
-    
+
+    # Loading feedback for the slow part: load_all_charm_variants() below reads
+    # all 3 Charm.object variants from disk before any plot placeholder exists,
+    # so without this the Similar RBPs panels show nothing during the wait (the
+    # per-plot withSpinner only covers the fast render once the outputs exist).
+    # Mirrors the Discovery-mode Similar RBPs observer.
+    show_status("Loading comparison datasets — please wait…")
+    on.exit(hide_status(), add = TRUE)
+
     # Auto-clear previous output
     output$similar_splice_plots <- renderUI(NULL)
     
@@ -3118,12 +3227,11 @@ server <- function(input, output, session) {
     
     # Choose datasets. NOTE: compares all 3 cell lines side by side, so this
     # necessarily materializes all 3 Charm.object variants at once for the
-    # duration of this action -- inherent to the feature, not a cache gap.
-    datasets <- list(
-      "Both Cells" = get_charm_object("Both"),
-      "K562"       = get_charm_object("K562"),
-      "HEPG2"      = get_charm_object("HEPG2")
-    )
+    # duration of this action. Loaded via load_all_charm_variants() (direct
+    # qload(), bypassing the single-slot get_charm_object() cache) so the 3
+    # back-to-back loads don't evict-and-reload each other -- see its
+    # definition for why that mattered.
+    datasets <- load_all_charm_variants()
     
     scatter_fun <- correl_splicing_rbp_hc
     heatmap_fun <- splicing_correl
@@ -3139,15 +3247,41 @@ server <- function(input, output, session) {
       tagList(
         lapply(names(datasets), function(ds_name) {
           # See the "userfile_plot_" block above for why this is sanitized.
-          plotname <- paste0("similar_splice_plot_", gsub("[^A-Za-z0-9_]+", "_", ds_name))
-          
-          if (!is.null(selected_rbps) && length(selected_rbps) == 1) {
+          # Type-specific id (see the discovery observer above): never reuse one
+          # output id across the scatter (highchart) and bar (plot) render types.
+          is_scatter <- !is.null(selected_rbps) && length(selected_rbps) == 1
+          plotname <- paste0("similar_splice_plot_",
+                             if (is_scatter) "scatter_" else "bar_",
+                             gsub("[^A-Za-z0-9_]+", "_", ds_name))
+
+          if (is_scatter) {
             output[[plotname]] <- renderHighchart({
+              # Guard: the searched reference RBP and the single comparison
+              # RBP must both exist in THIS cell line's Charm object -- an
+              # RBP profiled in one line can be absent from another, which
+              # would otherwise throw a hard error in just that panel.
+              # validate() turns that into a readable message instead.
+              validate(
+                need(rbp1 %in% names(datasets[[ds_name]]),
+                     paste0(rbp1, " is not available in ", ds_name, ".")),
+                need(all(selected_rbps %in% names(datasets[[ds_name]])),
+                     paste0("Selected RBP(s) not available in ", ds_name, "."))
+              )
               scatter_fun(datasets[[ds_name]], rbp1, selected_rbps)
             })
             plot_ui <- highchartOutput(plotname, height = "500px")
           } else {
             output[[plotname]] <- renderPlot({
+              # Same cross-cell-line guard as the scatter branch above.
+              validate(
+                need(rbp1 %in% names(datasets[[ds_name]]),
+                     paste0(rbp1, " is not available in ", ds_name, "."))
+              )
+              # selected_rbps is a character vector here (multiple = TRUE)
+              # and is passed straight through as other_rbps whenever >1 was
+              # chosen, so splicing_correl receives a proper vector and the
+              # multi-RBP comparison renders instead of collapsing to the
+              # single-RBP path.
               heat_res <- heatmap_fun(
                 datasets[[ds_name]], rbp1,
                 correl_num = correl_num,
@@ -3155,7 +3289,7 @@ server <- function(input, output, session) {
                 n_neg = n_neg,
                 other_rbps = if (!is.null(selected_rbps) && length(selected_rbps) > 1) selected_rbps else NULL
               )
-              heat_res$heatmap   # ✅ FIXED LINE
+              heat_res$heatmap
             })
             plot_ui <- plotOutput(plotname, height = "500px")
           }
@@ -3869,8 +4003,19 @@ server <- function(input, output, session) {
   
   # ─────────────────────────────────────────────────────────────────────────────
   # EXPLORE MODE — Similar Profiles (binding_dataset == "Similar Profiles")
+  #
+  # SUPERSEDED: this original implementation (query auto-derived from the
+  # currently-searched RBP+target, single direction, 3 result panels) has
+  # been replaced in the UI by the more flexible query-profile picker below
+  # (output$binding_similar_profiles_options / the "PATCH 8/9" plot+reset
+  # observers, 6 result panels) -- that UI used to live under Discovery mode
+  # by mistake and has been moved into this Explore-mode panel instead. The
+  # inputs below (binding_explore_sim_target_ui/_plot_btn/_reset_btn) no
+  # longer have any UI element bound to them, so this code is inert; left
+  # in place rather than deleted in case any of the plotting logic is
+  # wanted again later.
   # ─────────────────────────────────────────────────────────────────────────────
-  
+
   # ---- Target selector: targets available for the chosen RBP, current event type ----
   output$binding_explore_sim_target_ui <- renderUI({
     req(input$binding_search, input$binding_dataset == "Similar Profiles")
@@ -3973,11 +4118,14 @@ server <- function(input, output, session) {
   # Render plot
   # -------------------------------
   output$eclipse_plot <- renderPlot({
+    # on.exit fires even when req() below silently aborts this render (e.g.
+    # results() isn't ready yet) -- a hide_status() placed only after the
+    # req() would otherwise never run, leaving the status banner stuck up.
+    on.exit(hide_status(), add = TRUE)
     req(results())
     p <- results()
     if (inherits(p, "ggplot") || inherits(p, "ggarrange")) {
       dl_store$binding(p)
-      hide_status()
       print(p)
     }
   })
@@ -4020,13 +4168,16 @@ server <- function(input, output, session) {
   
   
   output$binding_similar_profiles_options <- renderUI({
-    if (!upload_ok_binding()) return(NULL)
-    
-    # Determine available profile IDs from the inc object (Both Cells, current event type)
-    sim_objs <- binding_sim_objects()
-    all_profile_ids <- rownames(sim_objs[["Both Cells"]]$inc$mean_profiles)
-    if (is.null(all_profile_ids)) all_profile_ids <- character(0)
-    
+    # Explore mode's "Similar Profiles" option. Built UNCONDITIONALLY (no
+    # longer gated on input$binding_dataset) and rendered eagerly via
+    # outputOptions(suspendWhenHidden = FALSE) just below, so the query /
+    # compare selectizes exist in the DOM from app startup. That is what
+    # lets the server-side updateSelectizeInput() populate step (the
+    # observe() below) reliably land its choices: when this panel was
+    # (re)built lazily on switching to "Similar Profiles", the populate
+    # observe raced the input creation and the dropdowns came up empty.
+    # Visibility is handled by the conditionalPanel that wraps
+    # uiOutput("binding_similar_profiles_options") in the Binding UI.
     tagList(
       hr(),
       tags$h5("Similar Profiles"),
@@ -4034,21 +4185,32 @@ server <- function(input, output, session) {
         "Find RBP–Target binding profiles that are most similar to a chosen query profile.",
         style = "font-size: 12px; color: #666; margin-top: -5px;"
       ),
-      
-      # Query profile selector
+
+      # Query profile selector. Each profile ID is "<shRNA-knockdown
+      # RBP>__<CLIP-profiled target RBP>" -- NOT an RBP paired with a
+      # splicing event ID, which the previous placeholder wrongly implied.
+      #
+      # choices start empty and are filled in server-side (see the
+      # binding_sim_query_id/binding_sim_compare observe() below) -- there
+      # are 20,000+ profile IDs for "Both Cells", and handing that whole
+      # vector to a client-side selectize (as this used to do) makes the
+      # browser build a 20k-option dropdown DOM on every render of this
+      # panel, which can lock up the tab for a long time. This mirrors the
+      # server=TRUE pattern already used for expr_search_rbp/splice_search/
+      # binding_search elsewhere in the app.
       selectizeInput(
         "binding_sim_query_id",
-        "Query profile (RBP__Target):",
-        choices  = all_profile_ids,
+        "Query profile (shRNA RBP__Target RBP):",
+        choices  = NULL,
         multiple = FALSE,
-        options  = list(placeholder = "e.g. HNRNPC__HsaEX0001234")
+        options  = list(placeholder = "e.g. RBFOX2__HNRNPC")
       ),
-      
+
       # Compare with specific profiles (optional)
       selectizeInput(
         "binding_sim_compare",
         "Compare with specific profiles (optional):",
-        choices  = all_profile_ids,
+        choices  = NULL,
         multiple = TRUE,
         options  = list(placeholder = "Select one or more profiles")
       ),
@@ -4087,17 +4249,42 @@ server <- function(input, output, session) {
       )
     )
   })
-  
-  
+  # Render this panel even while the conditionalPanel is hiding it, so its
+  # inputs are registered client-side before the populate observe() fires.
+  outputOptions(output, "binding_similar_profiles_options", suspendWhenHidden = FALSE)
+
+  # ---- Server-side choices for the Similar Profiles query/compare pickers ----
+  # Populates binding_sim_query_id / binding_sim_compare AFTER they're created
+  # by the renderUI above, using server=TRUE so selectize only ever sends the
+  # matches for what the user has typed so far instead of the full 20k+-item
+  # profile list to the browser in one shot.
+  observe({
+    req(identical(input$binding_dataset, "Similar Profiles"), input$binding_eventtype)
+
+    sim_objs <- binding_sim_objects()
+    all_profile_ids <- rownames(sim_objs[["Both Cells"]]$inc$mean_profiles)
+    if (is.null(all_profile_ids)) all_profile_ids <- character(0)
+
+    updateSelectizeInput(session, "binding_sim_query_id", choices = all_profile_ids, server = TRUE)
+    updateSelectizeInput(session, "binding_sim_compare",  choices = all_profile_ids, server = TRUE)
+  })
+
+
   # ─────────────────────────────────────────────────────────────────────────────
   # PATCH 8 — SERVER: plot button for Similar Profiles (6 plots)
   # ─────────────────────────────────────────────────────────────────────────────
   
   observeEvent(input$binding_sim_plot_btn, {
-    req(upload_ok_binding(),
+    req(input$binding_dataset == "Similar Profiles",
         input$binding_sim_query_id,
         input$binding_eventtype)
-    
+    # This can trigger the first (lazy) load of all 12 similar_binding_*
+    # objects via binding_sim_cache() below, which had no loading feedback
+    # at all -- give the user something while that (and the "Both Cells"
+    # correlation, the larger of the three) computes.
+    show_status("Computing similar binding profiles — please wait…")
+    on.exit(hide_status(), add = TRUE)
+
     query_id    <- input$binding_sim_query_id
     compare_ids <- if (length(input$binding_sim_compare) > 0) input$binding_sim_compare else NULL
     topN        <- input$binding_sim_topN
@@ -4170,7 +4357,13 @@ server <- function(input, output, session) {
         local({
           ds_local  <- ds
           dir_local <- dir
-          plot_id   <- paste0("binding_sim_plot_", gsub(" ", "", ds_local), "_", dir_local)
+          # The UI (plotOutput ids above) uses the key "both" for "Both Cells",
+          # but gsub(" ", "", "Both Cells") yields "BothCells" -- so the two
+          # Both Cells outputs were bound to ids the UI never rendered, leaving
+          # their spinners running forever while K562/HEPG2 (no spaces, exact
+          # case) matched fine. Map each dataset name to the exact UI key.
+          ds_key    <- c("Both Cells" = "both", "K562" = "K562", "HEPG2" = "HEPG2")[[ds_local]]
+          plot_id   <- paste0("binding_sim_plot_", ds_key, "_", dir_local)
           
           output[[plot_id]] <- renderPlot({
             sim_obj <- sim_objs[[ds_local]][[dir_local]]
@@ -4209,26 +4402,76 @@ server <- function(input, output, session) {
   # NETWORK TAB — MDS of RBP binding-profile similarity
   # ─────────────────────────────────────────────────────────────────────────────
 
-  output$network_mds_plot <- renderPlot({
-    input$network_plot_btn
+  # ── Helper: base scatter ggplot ────────────────────────────────────────
+  # hl_valid is passed in from the (cheap, un-isolated) render step below
+  # rather than computed here, so restyling for a highlight change never
+  # needs to re-run the expensive stuff above this point.
+  make_scatter <- function(df, xlab, ylab, title, subtitle, caption, hl_valid) {
+    df$Highlight <- ifelse(df$RBP %in% hl_valid, "Highlighted", "Other")
+    df$Fontface  <- ifelse(df$Highlight == "Highlighted", "bold", "plain")
+    has_hl       <- length(hl_valid) > 0
 
-    isolate({
-      show_status("Building RBP similarity network \u2014 please wait\u2026")
-      layers    <- input$network_layers
-      cell      <- input$network_cellline
-      btypes    <- input$network_binding_type
-      dirs      <- input$network_binding_dir
-      plot_type <- input$network_plot_type
-      hl_rbps   <- input$network_highlight_rbps
+    p <- ggplot(df, aes(x = Dim1, y = Dim2)) +
+      # Points: colour and size driven by Highlight column
+      geom_point(
+        aes(color = Highlight, size = Highlight),
+        alpha = 0.8
+      ) +
+      scale_color_manual(values = c("Highlighted" = "#BA3B46", "Other" = "#2c3e50")) +
+      scale_size_manual( values = c("Highlighted" = 4,         "Other" = 2.5)) +
+      labs(title = title, subtitle = subtitle,
+           x = xlab, y = ylab, caption = caption) +
+      theme_bw() +
+      theme(
+        plot.title    = element_text(hjust = 0.5, face = "bold", size = 15),
+        plot.subtitle = element_text(hjust = 0.5, size = 11, color = "#555555"),
+        plot.caption  = element_text(hjust = 0.5, size = 9,  color = "#888888"),
+        text          = element_text(size = 12),
+        panel.grid    = element_blank(),
+        axis.line     = element_line(colour = "black"),
+        panel.border  = element_blank(),
+        legend.position = if (has_hl) "right" else "none"
+      )
 
-      if (is.null(layers) || length(layers) == 0) {
-        return(ggplot() +
-                 annotate("text", x = 0.5, y = 0.5,
-                          label = "Please select at least one data layer.",
-                          size = 6, hjust = 0.5) + theme_void())
-      }
+    # Label every RBP regardless of highlight status (highlighting should
+    # only recolor points red, not remove everyone else's labels) --
+    # color/weight the text the same way as its point via the Highlight
+    # aesthetic instead of only repelling a filtered subset.
+    p <- p + ggrepel::geom_text_repel(
+      aes(label = RBP, color = Highlight, fontface = Fontface),
+      size         = 3.5,
+      max.overlaps = 30,
+      show.legend  = FALSE
+    )
+    p
+  }
 
-      withProgress(message = "Building RBP similarity network\u2026", value = 0, {
+  # \u2500\u2500 Heavy computation: correlation matrices + ordination \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  # This used to live directly inside output$network_mds_plot's renderPlot,
+  # gated only by `input$network_plot_btn; isolate({...})`. Highlighting
+  # (input$network_highlight_rbps) was read inside that same isolate(), so it
+  # could only ever take effect by the user clicking "Plot" again -- which
+  # re-ran this ENTIRE expensive block (rebuilding every correlation matrix
+  # from scratch, re-running MDS/PCA/t-SNE/hclust) just to recolor some
+  # points. Splitting the expensive part into its own eventReactive (still
+  # gated on the Plot button) and applying highlighting afterwards in a
+  # separate, cheap render step means changing the highlight selection no
+  # longer forces a full recompute -- see output$network_mds_plot below.
+  network_result <- eventReactive(input$network_plot_btn, {
+    show_status("Building RBP similarity network \u2014 please wait\u2026")
+    on.exit(hide_status(), add = TRUE)  # guarantee the status banner clears
+                                         # even if something below errors
+    layers    <- input$network_layers
+    cell      <- input$network_cellline
+    btypes    <- input$network_binding_type
+    dirs      <- input$network_binding_dir
+    plot_type <- input$network_plot_type
+
+    if (is.null(layers) || length(layers) == 0) {
+      return(list(error = "Please select at least one data layer."))
+    }
+
+    withProgress(message = "Building RBP similarity network\u2026", value = 0, {
 
       # ── Cell line mapping ──────────────────────────────────────────────────
       cell_key_binding <- switch(cell, "Both" = "both", "K562" = "K562", "HEPG2" = "HEPG2")
@@ -4309,20 +4552,14 @@ server <- function(input, output, session) {
       }
 
       if (length(cor_matrices) == 0) {
-        return(ggplot() +
-                 annotate("text", x = 0.5, y = 0.5,
-                          label = "No data available for the selected combination.",
-                          size = 6, hjust = 0.5) + theme_void())
+        return(list(error = "No data available for the selected combination."))
       }
 
       # ── Common RBPs ───────────────────────────────────────────────────────
       common_rbps <- Reduce(intersect, lapply(cor_matrices, rownames))
       if (length(common_rbps) < 3) {
-        return(ggplot() +
-                 annotate("text", x = 0.5, y = 0.5,
-                          label = paste0("Only ", length(common_rbps),
-                                         " RBP(s) shared across all layers. Need \u2265 3."),
-                          size = 5, hjust = 0.5) + theme_void())
+        return(list(error = paste0("Only ", length(common_rbps),
+                                    " RBP(s) shared across all layers. Need \u2265 3.")))
       }
 
       # ── Weighted average correlation → dissimilarity ───────────────────────
@@ -4335,10 +4572,6 @@ server <- function(input, output, session) {
       ))
       diss_mat <- 1 - avg_cor   # dissimilarity in [0, 2]
 
-      # ── Highlight setup ───────────────────────────────────────────────────
-      hl_valid  <- intersect(hl_rbps, common_rbps)
-      highlight <- common_rbps %in% hl_valid
-
       weight_str <- paste(
         sapply(active_layers, function(l) sprintf("%s (%.0f%%)", l, w[l] * 100)),
         collapse = " | "
@@ -4346,55 +4579,6 @@ server <- function(input, output, session) {
       caption_base <- paste0("Dissimilarity = 1 \u2212 weighted Spearman r  |  n = ",
                              length(common_rbps), " RBPs")
 
-      # ── Helper: base scatter ggplot ────────────────────────────────────────
-      make_scatter <- function(df, xlab, ylab, title, subtitle) {
-        df$Highlight <- ifelse(highlight, "Highlighted", "Other")
-        has_hl       <- length(hl_valid) > 0
-
-        p <- ggplot(df, aes(x = Dim1, y = Dim2)) +
-          # Points: colour and size driven by Highlight column
-          geom_point(
-            aes(color = Highlight, size = Highlight),
-            alpha = 0.8
-          ) +
-          scale_color_manual(values = c("Highlighted" = "#BA3B46", "Other" = "#2c3e50")) +
-          scale_size_manual( values = c("Highlighted" = 4,         "Other" = 2.5)) +
-          labs(title = title, subtitle = subtitle,
-               x = xlab, y = ylab, caption = caption_base) +
-          theme_bw() +
-          theme(
-            plot.title    = element_text(hjust = 0.5, face = "bold", size = 15),
-            plot.subtitle = element_text(hjust = 0.5, size = 11, color = "#555555"),
-            plot.caption  = element_text(hjust = 0.5, size = 9,  color = "#888888"),
-            text          = element_text(size = 12),
-            panel.grid    = element_blank(),
-            axis.line     = element_line(colour = "black"),
-            panel.border  = element_blank(),
-            legend.position = if (has_hl) "right" else "none"
-          )
-
-        if (has_hl) {
-          # Label only the highlighted RBPs, in red
-          p <- p + ggrepel::geom_text_repel(
-            data         = df[df$Highlight == "Highlighted", ],
-            aes(label    = RBP),
-            color        = "#BA3B46",
-            fontface     = "bold",
-            size         = 4,
-            max.overlaps = 30
-          )
-        } else {
-          # No highlights — label every RBP in dark
-          p <- p + ggrepel::geom_text_repel(
-            aes(label    = RBP),
-            color        = "#2c3e50",
-            fontface     = "bold",
-            size         = 3.5,
-            max.overlaps = 20
-          )
-        }
-        p
-      }
 
       # ── Plot type dispatch ─────────────────────────────────────────────────
 
@@ -4406,14 +4590,14 @@ server <- function(input, output, session) {
         ve      <- round(eig_pos[1:2] / sum(eig_pos) * 100, 1)
         df <- data.frame(RBP = common_rbps,
                          Dim1 = fit$points[,1], Dim2 = fit$points[,2])
-        p <- make_scatter(df,
-          xlab     = paste0("MDS Dim 1 (", ve[1], "% var.)"),
-          ylab     = paste0("MDS Dim 2 (", ve[2], "% var.)"),
-          title    = paste0("RBP Similarity — MDS (", cell, ")"),
-          subtitle = weight_str)
-        dl_store$network(p)
-        hide_status()
-        return(p)
+        return(list(
+          plot_type = "MDS", df = df, common_rbps = common_rbps,
+          xlab = paste0("MDS Dim 1 (", ve[1], "% var.)"),
+          ylab = paste0("MDS Dim 2 (", ve[2], "% var.)"),
+          title = paste0("RBP Similarity — MDS (", cell, ")"),
+          weight_str = weight_str,
+          caption_base = caption_base
+        ))
       }
 
       if (plot_type == "PCA") {
@@ -4422,22 +4606,19 @@ server <- function(input, output, session) {
         df  <- data.frame(RBP  = common_rbps,
                           Dim1 = pca$x[, 1],
                           Dim2 = pca$x[, 2])
-        p <- make_scatter(df,
-          xlab     = paste0("PC1 (", ve[1], "% var.)"),
-          ylab     = paste0("PC2 (", ve[2], "% var.)"),
-          title    = paste0("RBP Similarity — PCA (", cell, ")"),
-          subtitle = weight_str)
-        dl_store$network(p)
-        hide_status()
-        return(p)
+        return(list(
+          plot_type = "PCA", df = df, common_rbps = common_rbps,
+          xlab = paste0("PC1 (", ve[1], "% var.)"),
+          ylab = paste0("PC2 (", ve[2], "% var.)"),
+          title = paste0("RBP Similarity — PCA (", cell, ")"),
+          weight_str = weight_str,
+          caption_base = caption_base
+        ))
       }
 
       if (plot_type == "t-SNE") {
         if (!requireNamespace("Rtsne", quietly = TRUE)) {
-          return(ggplot() +
-                   annotate("text", x = 0.5, y = 0.5, size = 5, hjust = 0.5,
-                            label = "Package 'Rtsne' is required for t-SNE.\nInstall it with: install.packages('Rtsne')") +
-                   theme_void())
+          return(list(error = "Package 'Rtsne' is required for t-SNE.\nInstall it with: install.packages('Rtsne')"))
         }
         set.seed(42)
         tsne <- Rtsne::Rtsne(as.dist(diss_mat), is_distance = TRUE,
@@ -4445,51 +4626,78 @@ server <- function(input, output, session) {
         df   <- data.frame(RBP  = common_rbps,
                            Dim1 = tsne$Y[, 1],
                            Dim2 = tsne$Y[, 2])
-        p <- make_scatter(df,
-          xlab     = "t-SNE 1",
-          ylab     = "t-SNE 2",
-          title    = paste0("RBP Similarity — t-SNE (", cell, ")"),
-          subtitle = weight_str)
-        dl_store$network(p)
-        hide_status()
-        return(p)
+        return(list(
+          plot_type = "t-SNE", df = df, common_rbps = common_rbps,
+          xlab = "t-SNE 1", ylab = "t-SNE 2",
+          title = paste0("RBP Similarity — t-SNE (", cell, ")"),
+          weight_str = weight_str,
+          caption_base = caption_base
+        ))
       }
 
       if (plot_type == "Dendrogram") {
-        hc  <- hclust(as.dist(diss_mat), method = "ward.D2")
+        hc   <- hclust(as.dist(diss_mat), method = "ward.D2")
         dend <- as.dendrogram(hc)
-
-        # Colour highlighted leaves
-        if (length(hl_valid) > 0) {
-          color_leaf <- function(node) {
-            if (is.leaf(node)) {
-              lbl <- attr(node, "label")
-              if (lbl %in% hl_valid) {
-                attr(node, "nodePar") <- list(lab.col = "#BA3B46",
-                                              lab.font = 2, pch = NA)
-              }
-            }
-            node
-          }
-          dend <- dendrapply(dend, color_leaf)
-        }
-
-        par(mar = c(12, 4, 4, 2))
-        plot(dend, main = paste0("RBP Similarity — Dendrogram (", cell, ")"),
-             sub  = weight_str,
-             ylab = "Height (1 \u2212 Spearman r)",
-             cex.main = 1.3, font.main = 2,
-             cex.sub  = 0.9, col.sub  = "#555555",
-             cex.lab  = 1.0, cex.axis = 0.9)
-        if (length(hl_valid) > 0)
-          legend("topright", legend = "Highlighted RBPs",
-                 text.col = "#BA3B46", text.font = 2, bty = "n", cex = 0.9)
-        hide_status()
-        return(invisible(NULL))
+        return(list(
+          plot_type = "Dendrogram", dend = dend, common_rbps = common_rbps,
+          cell = cell, weight_str = weight_str
+        ))
       }
 
+      list(error = paste("Unknown plot type:", plot_type))
+
       }) # end withProgress
-    })
+  })
+
+  # Cheap render step: apply the CURRENT highlight selection to whatever
+  # network_result() last computed. input$network_highlight_rbps is read
+  # here directly (not isolate()'d), so changing it re-triggers only this
+  # lightweight restyle -- not the whole correlation/ordination pipeline.
+  output$network_mds_plot <- renderPlot({
+    res <- network_result()
+    req(res)
+    on.exit(hide_status(), add = TRUE)
+
+    if (!is.null(res$error)) {
+      return(ggplot() +
+               annotate("text", x = 0.5, y = 0.5, label = res$error,
+                        size = 6, hjust = 0.5) + theme_void())
+    }
+
+    hl_valid <- intersect(input$network_highlight_rbps, res$common_rbps)
+
+    if (res$plot_type == "Dendrogram") {
+      dend <- res$dend
+      if (length(hl_valid) > 0) {
+        color_leaf <- function(node) {
+          if (is.leaf(node)) {
+            lbl <- attr(node, "label")
+            if (lbl %in% hl_valid) {
+              attr(node, "nodePar") <- list(lab.col = "#BA3B46",
+                                            lab.font = 2, pch = NA)
+            }
+          }
+          node
+        }
+        dend <- dendrapply(dend, color_leaf)
+      }
+
+      par(mar = c(12, 4, 4, 2))
+      plot(dend, main = paste0("RBP Similarity \u2014 Dendrogram (", res$cell, ")"),
+           sub  = res$weight_str,
+           ylab = "Height (1 \u2212 Spearman r)",
+           cex.main = 1.3, font.main = 2,
+           cex.sub  = 0.9, col.sub  = "#555555",
+           cex.lab  = 1.0, cex.axis = 0.9)
+      if (length(hl_valid) > 0)
+        legend("topright", legend = "Highlighted RBPs",
+               text.col = "#BA3B46", text.font = 2, bty = "n", cex = 0.9)
+      return(invisible(NULL))
+    }
+
+    p <- make_scatter(res$df, res$xlab, res$ylab, res$title, res$weight_str, res$caption_base, hl_valid)
+    dl_store$network(p)
+    p
   })
 
 }
