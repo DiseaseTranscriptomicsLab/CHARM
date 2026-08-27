@@ -1,41 +1,10 @@
-FROM rocker/r-ver:latest
+FROM bioconductor/bioconductor_docker:latest
 MAINTAINER Disease Transcriptomics Lab <diseasetranscriptomicslab@gmail.com>
-# rocker/r-ver is the same lineage as bioconductor/bioconductor_docker
-# (which this Dockerfile used before) but WITHOUT RStudio Server bolted on
-# top - this app is a headless Shiny app and never uses it, so skipping it
-# saves close to 1.7GB. The trade-off: bioconductor_docker also came with
-# BiocManager and various system libraries pre-installed for building
-# Bioconductor/CRAN packages from source; both are added explicitly below
-# since rocker/r-ver doesn't include them.
-RUN apt-get update && apt-get -y upgrade && apt-get install -y --no-install-recommends \
-      build-essential \
-      gfortran \
-      pkg-config \
-      libcurl4-openssl-dev \
-      libssl-dev \
-      libxml2-dev \
-      libgit2-dev \
-      libuv1-dev \
-      zlib1g-dev \
-      libpng-dev \
-      liblapack-dev \
-      libblas-dev \
-      libglpk-dev \
-    && apt-get -y autoremove && rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update && apt-get -y upgrade && apt-get -y autoremove && rm -rf /var/lib/apt/lists/*
+
 RUN echo "r <- getOption('repos'); r['CRAN'] <- 'https://cloud.r-project.org'; options(repos = r);" > ~/.Rprofile
-# install.packages() does NOT raise an error or give a non-zero exit code
-# just because a package failed to install - it only prints a warning, so
-# a transient mirror/network hiccup here would previously be cached by
-# Docker as a "successful" layer even though BiocManager was never
-# actually installed, surfacing as a confusing failure several steps
-# later (at BiocManager::install()) instead of right here. This
-# explicitly checks that it's actually present afterwards and fails the
-# build immediately and clearly if not.
-RUN Rscript -e '\
-  install.packages("BiocManager"); \
-  if (!"BiocManager" %in% rownames(installed.packages())) { \
-    stop("Failed to install: BiocManager") \
-  }'
+
 # CRAN packages used by app.R / helper_functions.R -- includes packages only
 # referenced via pkg::fn() (Rtsne, reshape2, qs, purrr, scales, tibble),
 # which install.packages() only guarantees for packages actually requested
@@ -51,8 +20,10 @@ RUN Rscript -e "install.packages(c( \
       'base64enc', 'cowplot', 'msigdbr', 'qs2', 'qs', 'Rtsne', 'reshape2', \
       'purrr', 'scales', 'tibble' \
     ))"
+
 # Bioconductor packages used by app.R
 RUN Rscript -e "BiocManager::install(c('limma', 'fgsea'), update = FALSE, ask = FALSE)"
+
 # Rebuild shiny with a raised HTTP header-size limit. httpuv's underlying
 # http-parser has a bug that intermittently 503s requests when a keep-alive
 # connection is reused for several sequential requests -- exactly what
@@ -65,11 +36,14 @@ RUN Rscript -e "BiocManager::install(c('limma', 'fgsea'), update = FALSE, ask = 
 # applied in voyAGEr's Dockerfile for the same reason.
 RUN Rscript -e "install.packages(c('withr'), repos='https://cloud.r-project.org/')"
 RUN Rscript -e "withr::with_makevars(c(PKG_CPPFLAGS='-DHTTP_MAX_HEADER_SIZE=0x7fffffff'), {install.packages(c('shiny'), repos='https://cloud.r-project.org/')}, assignment = '+=')"
+
 # Copy app source code (the data/ directory is excluded via .dockerignore;
 # it is supplied at runtime through a mounted volume, see below)
 WORKDIR /home/app
 COPY . .
+
 EXPOSE 3838
+
 # Launch the CHARM Shiny app when the container starts, listening on all
 # interfaces so it's reachable from outside the container. Shiny sets its
 # working directory to the app directory, so app.R's relative
