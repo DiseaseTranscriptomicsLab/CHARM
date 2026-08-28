@@ -10,6 +10,7 @@ MAINTAINER Disease Transcriptomics Lab <diseasetranscriptomicslab@gmail.com>
 RUN apt-get update && apt-get -y upgrade && apt-get install -y --no-install-recommends \
       build-essential \
       gfortran \
+      cmake \
       pkg-config \
       libcurl4-openssl-dev \
       libssl-dev \
@@ -22,6 +23,13 @@ RUN apt-get update && apt-get -y upgrade && apt-get install -y --no-install-reco
       libblas-dev \
       libglpk-dev \
     && apt-get -y autoremove && rm -rf /var/lib/apt/lists/*
+# cmake: nloptr (a transitive dependency of ggpubr, via rstatix -> car ->
+# pbkrtest -> lme4 -> nloptr) has required cmake to build its bundled
+# NLopt C library from source since nloptr 2.0. bioconductor_docker ships
+# a much broader build toolchain (cmake included) for compiling
+# genomics/Bioconductor packages from source; rocker/r-ver doesn't, so
+# this needs to be added back explicitly, same reasoning as the other
+# system libraries above.
 RUN echo "r <- getOption('repos'); r['CRAN'] <- 'https://cloud.r-project.org'; options(repos = r);" > ~/.Rprofile
 # install.packages() does NOT raise an error or give a non-zero exit code
 # just because a package failed to install - it only prints a warning, so
@@ -37,9 +45,17 @@ RUN Rscript -e '\
     stop("Failed to install: BiocManager") \
   }'
 # CRAN packages used by app.R / helper_functions.R -- includes packages only
-# referenced via pkg::fn() (Rtsne, reshape2, qs, purrr, scales, tibble),
-# which install.packages() only guarantees for packages actually requested
-# here, not arbitrary code elsewhere that happens to call into them.
+# referenced via pkg::fn() (Rtsne, reshape2, purrr, scales, tibble), which
+# install.packages() only guarantees for packages actually requested here,
+# not arbitrary code elsewhere that happens to call into them. `qs` (the
+# legacy serializer) is deliberately NOT installed anywhere in this
+# Dockerfile: app.R's DATA_DIR / DATA_EXT logic picks data/QS2_Files (and
+# therefore qs2::qs_read()) for the whole session whenever that directory
+# exists, and only falls back to qs::qread() on data/QS_Files if it
+# doesn't -- our deployed data volume only has data/QS2_Files, so the old
+# `qs` package is never actually called and isn't worth installing (it's
+# also been archived on CRAN, since superseded by qs2, which would
+# otherwise need a CRAN-Archive workaround for no benefit).
 #
 # Interactive plots use highcharter, not plotly/ggplotly -- CHARM was
 # migrated off plotly because its large JS bundle was the most likely
@@ -60,7 +76,7 @@ RUN Rscript -e '\
   cran_pkgs <- c( \
       "shiny", "shinythemes", "fontawesome", "DT", "highcharter", "ggplot2", \
       "ggrepel", "shinycssloaders", "dplyr", "tidyr", "ggpubr", "png", \
-      "base64enc", "cowplot", "msigdbr", "qs2", "qs", "Rtsne", "reshape2", \
+      "base64enc", "cowplot", "msigdbr", "qs2", "Rtsne", "reshape2", \
       "purrr", "scales", "tibble" \
     ); \
   install.packages(cran_pkgs); \
