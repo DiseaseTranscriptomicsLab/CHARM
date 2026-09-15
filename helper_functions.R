@@ -73,8 +73,18 @@ violinplotter <- function(charmobj, rbp,
     # Violin
     geom_violin(trim = FALSE, alpha = 0.6) +
 
-    # Fill colors
-    scale_fill_manual(values = c("Control" = control_color, rbp = other_color)) +
+    # Fill colors. NOTE: `rbp = other_color` here was previously an unquoted
+    # literal name (the string "rbp"), not the RBP variable's actual value --
+    # so it never matched the real factor level (e.g. "RBM5") and that violin
+    # silently fell back to ggplot's default grey instead of other_color.
+    # setNames() builds the name from the variable's value instead.
+    scale_fill_manual(values = stats::setNames(c(control_color, other_color), c("Control", rbp))) +
+
+    # X-axis tick labels only (the axis title itself stays blank -- see
+    # xlab("") below). Relabels the RBP group's tick from just "RBM5" to
+    # "RBM5 KD"; "Control" keeps its own tick unchanged. Same setNames()
+    # approach as above, so this works for whichever RBP is plotted.
+    scale_x_discrete(labels = stats::setNames(c("Control", paste(rbp, "KD")), c("Control", rbp))) +
 
     # Titles and theme
     labs(
@@ -470,6 +480,22 @@ run_user_gsea <- function(user_df, species = "Homo sapiens",
     as.data.frame()
 }
 
+# Formats a Spearman-correlation p-value for display in scatter-plot titles.
+# cor.test()'s asymptotic p-value calculation (via pt()) can genuinely
+# underflow to an exact 0.0 in double precision for very large sample sizes
+# with extreme correlations (below .Machine$double.eps ~= 2.22e-16) -- "p = 0"
+# is not a real p-value, so below that threshold this reports "p < 2.22e-16"
+# instead, matching the convention base R itself uses (e.g. format.pval(),
+# summary.lm()).
+pval_display <- function(pval, digits = 3) {
+  if (is.na(pval)) return("p = NA")
+  if (pval < .Machine$double.eps) {
+    paste0("p < ", format(.Machine$double.eps, digits = 2, scientific = TRUE))
+  } else {
+    paste0("p = ", signif(pval, digits))
+  }
+}
+
 correl_exp_rbp_hc <- function(rbp_results, rbp, other_rbp, plot_title = NULL) {
 
   # --- Determine if reference is user file or internal RBP ---
@@ -513,8 +539,16 @@ correl_exp_rbp_hc <- function(rbp_results, rbp, other_rbp, plot_title = NULL) {
     suffixes = c(paste0("_", rbp_label), paste0("_", other_rbp))
   )
 
+  # Discovery mode (an uploaded file, not a named RBP) reaches this via the
+  # is.data.frame(rbp) branch above, which sets rbp_label to the "UserFile"
+  # sentinel -- "UserFile KD" doesn't mean anything, so that case displays as
+  # "your uploaded data" instead of getting the " KD" suffix. other_rbp is
+  # always a real named RBP (validated above), so it always gets " KD".
+  ref_display   <- if (identical(rbp_label, "UserFile")) "your uploaded data" else paste0(rbp_label, " KD")
+  other_display <- paste0(other_rbp, " KD")
+
   if (nrow(merged) < 3) {
-    stop(paste("Not enough overlapping genes between", rbp_label, "and", other_rbp))
+    stop(paste("Not enough overlapping genes between", ref_display, "and", other_display))
   }
 
   # --- Spearman correlation ---
@@ -529,9 +563,9 @@ correl_exp_rbp_hc <- function(rbp_results, rbp, other_rbp, plot_title = NULL) {
   # --- Title ---
   title_txt <- paste0(
     if (!is.null(plot_title)) paste0(plot_title, ": ") else "",
-    "Correlation between ", rbp_label, " and ", other_rbp,
+    "Correlation between ", ref_display, " and ", other_display, " (t-statistic)",
     " (Spearman ρ = ", round(rho, 2),
-    ", p = ", signif(pval, 3), ")"
+    ", ", pval_display(pval), ")"
   )
 
   # --- highcharter scatter ---
@@ -550,8 +584,8 @@ correl_exp_rbp_hc <- function(rbp_results, rbp, other_rbp, plot_title = NULL) {
     fast = TRUE
   ) %>%
     highcharter::hc_title(text = title_txt) %>%
-    highcharter::hc_xAxis(title = list(text = paste0(rbp_label, " t-statistics"))) %>%
-    highcharter::hc_yAxis(title = list(text = paste0(other_rbp, " t-statistics"))) %>%
+    highcharter::hc_xAxis(title = list(text = paste0(ref_display, " t-statistics"), style = list(fontSize = "16px", fontWeight = "bold"))) %>%
+    highcharter::hc_yAxis(title = list(text = paste0(other_display, " t-statistics"), style = list(fontSize = "16px", fontWeight = "bold"))) %>%
     highcharter::hc_tooltip(pointFormat = "Gene: {point.gene}") %>%
     highcharter::hc_plotOptions(scatter = list(
       marker = list(radius = 5, fillColor = "#DDDDDD", lineColor = "black", lineWidth = 1)
@@ -606,6 +640,14 @@ correl_scatter_gsea_hc <- function(gsea_results, rbp, other_rbp, plot_title = NU
     stop("Not enough overlapping pathways between RBPs")
   }
 
+  # Discovery mode (an uploaded file, not a named RBP) reaches this via the
+  # is.data.frame(rbp) branch above, which sets rbp_label to the "UserFile"
+  # sentinel -- "UserFile KD" doesn't mean anything, so that case displays as
+  # "your uploaded data" instead of getting the " KD" suffix. other_rbp is
+  # always a real named RBP (validated above), so it always gets " KD".
+  ref_display   <- if (identical(rbp_label, "UserFile")) "your uploaded data" else paste0(rbp_label, " KD")
+  other_display <- paste0(other_rbp, " KD")
+
   # --- Spearman correlation ---
   test <- suppressWarnings(cor.test(merged$NES_ref, merged$NES_other, method = "spearman"))
   rho <- unname(test$estimate)
@@ -614,8 +656,8 @@ correl_scatter_gsea_hc <- function(gsea_results, rbp, other_rbp, plot_title = NU
   # --- Title ---
   title_txt <- paste0(
     if (!is.null(plot_title)) paste0(plot_title, ": ") else "",
-    "GSEA correlation between ", rbp_label, " and ", other_rbp,
-    " (Spearman ρ = ", round(rho, 2), ", p = ", signif(pval, 3), ")"
+    "GSEA correlation between ", ref_display, " and ", other_display, " (NES)",
+    " (Spearman ρ = ", round(rho, 2), ", ", pval_display(pval), ")"
   )
 
   highcharter::hchart(
@@ -624,8 +666,8 @@ correl_scatter_gsea_hc <- function(gsea_results, rbp, other_rbp, plot_title = NU
     fast = TRUE
   ) %>%
     highcharter::hc_title(text = title_txt) %>%
-    highcharter::hc_xAxis(title = list(text = paste0(rbp_label, " NES"))) %>%
-    highcharter::hc_yAxis(title = list(text = paste0(other_rbp, " NES"))) %>%
+    highcharter::hc_xAxis(title = list(text = paste0(ref_display, " NES"), style = list(fontSize = "16px", fontWeight = "bold"))) %>%
+    highcharter::hc_yAxis(title = list(text = paste0(other_display, " NES"), style = list(fontSize = "16px", fontWeight = "bold"))) %>%
     highcharter::hc_tooltip(pointFormat = "Pathway: {point.pathway}") %>%
     highcharter::hc_plotOptions(scatter = list(
       marker = list(radius = 5, fillColor = "#DDDDDD", lineColor = "black", lineWidth = 1)
@@ -698,6 +740,12 @@ exp_correl <- function(rbp_results, rbp, correl_num = NULL,
   top_cor$Status <- ifelse(top_cor$Correlation > 0, "Positive", "Negative")
   top_cor$RBP <- factor(top_cor$RBP, levels = top_cor$RBP[order(top_cor$Correlation)])
 
+  # Discovery mode (an uploaded file, not a named RBP) reaches this via the
+  # is.data.frame(rbp) branch above, which sets rbp_label to the "UserFile"
+  # sentinel -- "UserFile KD" doesn't mean anything, so that case gets its
+  # own title phrase instead of the " <RBP> KD" suffix used for a real RBP.
+  title_subject <- if (identical(rbp_label, "UserFile")) "your uploaded data" else paste0(rbp_label, " KD")
+
   heatmap_plot <- ggplot(top_cor, aes(x = reorder(RBP, Correlation), y = Correlation, fill = Status)) +
     geom_col(alpha = 0.8) +
     scale_fill_manual(values = c("Positive" = up_color, "Negative" = down_color)) +
@@ -706,16 +754,16 @@ exp_correl <- function(rbp_results, rbp, correl_num = NULL,
               hjust = ifelse(top_cor$Correlation > 0, -0.1, 1.1),
               color = "white", size = 4) +
     labs(
-      x = "RBP",
-      y = "Spearman correlation",
-      title = paste("Expression correlations with", rbp_label),
-      subtitle = paste0("Reference: ", rbp_label),
+      # coord_flip() above swaps display axes, so this "x" label is what
+      # actually renders as the plot's vertical (Y) axis title.
+      x = "RBP KD",
+      y = "Spearman's Correlation (ρ)",
+      title = paste0("Expression (t-statistic) correlations with ", title_subject),
       caption = "Method: Spearman"
     ) +
     theme_bw(base_family = "Arial MS") +
     theme(
       plot.title = element_text(hjust = 0.5, face = "bold"),
-      plot.subtitle = element_text(hjust = 0.5),
       text = element_text(size = 17),
       legend.position = if (show_legend) "right" else "none",
       axis.text = element_text(face = "bold"),
@@ -853,6 +901,12 @@ gsea_correl <- function(gsea_df, rbp, correl_num = NULL,
     )
 
   # --- Bar plot ---
+  # Discovery mode (an uploaded file) reaches this via the is.data.frame(rbp)
+  # branch above, which reassigns `rbp` itself to the "UserFile" sentinel --
+  # "UserFile KD" doesn't mean anything, so that case gets its own title
+  # phrase instead of the " <RBP> KD" suffix used for a real RBP.
+  title_subject <- if (identical(rbp, "UserFile")) "your uploaded data" else paste0(rbp, " KD")
+
   heatmap_plot <- ggplot2::ggplot(top_cor, ggplot2::aes(x = reorder(RBP, Correlation), y = Correlation, fill = Status)) +
     ggplot2::geom_col(alpha = 0.8) +
     ggplot2::scale_fill_manual(values = c("Positive" = up_color, "Negative" = down_color)) +
@@ -863,16 +917,19 @@ gsea_correl <- function(gsea_df, rbp, correl_num = NULL,
       color = "white", size = 4
     ) +
     ggplot2::labs(
-      x = "RBP",
-      y = "Spearman correlation",
-      title = paste("GSEA correlations with", rbp),
-      subtitle = paste0("Reference: ", rbp),
+      # coord_flip() above swaps display axes, so this "x" label is what
+      # actually renders as the plot's vertical (Y) axis title.
+      x = "RBP KD",
+      y = "Spearman's Correlation (ρ)",
+      # GSEA correlations are computed on NES (Normalised Enrichment Score),
+      # not the t-statistic exp_correl() uses -- named accordingly so the
+      # title accurately reflects what this plot actually correlates.
+      title = paste0("GSEA (NES) correlations with ", title_subject),
       caption = "Method: Spearman"
     ) +
     ggplot2::theme_bw(base_family = "Arial MS") +
     ggplot2::theme(
       plot.title = ggplot2::element_text(hjust = 0.5, face = "bold"),
-      plot.subtitle = ggplot2::element_text(hjust = 0.5),
       text = ggplot2::element_text(size = 12),
       legend.position = if (show_legend) "right" else "none",
       axis.text = ggplot2::element_text(face = "bold"),
@@ -994,6 +1051,12 @@ splicing_correl <- function(charmobj, rbp, correl_num = NULL,
   top_cor$RBP <- factor(top_cor$RBP, levels = top_cor$RBP[order(top_cor$Correlation)])
 
   # --- Build bar plot (styled like exp_correl/gsea_correl) ---
+  # Discovery mode (an uploaded file, not a named RBP) reaches this via the
+  # is.data.frame(rbp) branch above, which sets rbp_label to the "UserFile"
+  # sentinel -- "UserFile KD" doesn't mean anything, so that case gets its
+  # own title phrase instead of the " <RBP> KD" suffix used for a real RBP.
+  title_subject <- if (identical(rbp_label, "UserFile")) "your uploaded data" else paste0(rbp_label, " KD")
+
   heatmap_plot <- ggplot2::ggplot(top_cor,
                                   ggplot2::aes(x = reorder(RBP, Correlation),
                                                y = Correlation,
@@ -1007,16 +1070,16 @@ splicing_correl <- function(charmobj, rbp, correl_num = NULL,
       color = "white", size = 4
     ) +
     ggplot2::labs(
-      x = "RBP",
-      y = "Spearman correlation (dPSI)",
-      title = paste("Splicing correlations with", rbp_label),
-      subtitle = paste0("Reference: ", rbp_label),
+      # coord_flip() above swaps display axes, so this "x" label is what
+      # actually renders as the plot's vertical (Y) axis title.
+      x = "RBP KD",
+      y = "Spearman's Correlation (ρ)",
+      title = paste0("Splicing (dPSI) correlations with ", title_subject),
       caption = "Method: Spearman"
     ) +
     ggplot2::theme_bw(base_family = "Arial MS") +
     ggplot2::theme(
       plot.title = ggplot2::element_text(hjust = 0.5, face = "bold"),
-      plot.subtitle = ggplot2::element_text(hjust = 0.5),
       text = ggplot2::element_text(size = 12),
       legend.position = if (show_legend) "right" else "none",
       axis.text = ggplot2::element_text(face = "bold"),
@@ -1068,7 +1131,7 @@ violin_splice_plot <- function(Charmobj, rbp) {
     theme_minimal() +
     ylab("dPSI (shRNA - CTRL)") +
     xlab("Event Type") +
-    ggtitle(paste0(rbp), subtitle = subtitle_text) +
+    ggtitle(paste0(rbp, " KD"), subtitle = subtitle_text) +
     coord_flip() +
     geom_hline(yintercept = 0, linetype = "dashed") +
     theme(
@@ -1118,7 +1181,7 @@ plot_splice_volcano <- function(charmobj, rbp, other_events = NULL) {
       legend.position = "none"
     ) +
     labs(
-      title = paste("Volcano Plot:", rbp),
+      title = paste0("Volcano Plot: ", rbp, " KD"),
       x = "dPSI (shRNA - CTRL)",
       y = "PDiff"
     )+
@@ -1166,10 +1229,18 @@ correl_splicing_rbp_hc <- function(charmobj, rbp, other_rbp, plot_title = NULL) 
   merged <- merge(ref_df, other_df, by = "Event.ID", suffixes = c("_ref", "_other"))
   colnames(merged) <- c("Event.ID", "dPSI_ref", "dPSI_other")
 
+  # Discovery mode (an uploaded file, not a named RBP) reaches this via the
+  # is.data.frame(rbp) branch above, which sets rbp_label to the "UserFile"
+  # sentinel -- "UserFile KD" doesn't mean anything, so that case displays as
+  # "your uploaded data" instead of getting the " KD" suffix. other_label is
+  # always a real named RBP (validated above), so it always gets " KD".
+  ref_display   <- if (identical(rbp_label, "UserFile")) "your uploaded data" else paste0(rbp_label, " KD")
+  other_display <- paste0(other_label, " KD")
+
   if (nrow(merged) < 3) {
     return(
       highcharter::highchart() %>%
-        highcharter::hc_title(text = paste("Not enough overlapping events between", rbp_label, "and", other_label))
+        highcharter::hc_title(text = paste("Not enough overlapping events between", ref_display, "and", other_display))
     )
   }
 
@@ -1181,9 +1252,9 @@ correl_splicing_rbp_hc <- function(charmobj, rbp, other_rbp, plot_title = NULL) 
   # --- Title ---
   title_txt <- paste0(
     if (!is.null(plot_title)) paste0(plot_title, ": ") else "",
-    "Correlation between ", rbp_label, " and ", other_label,
+    "Correlation between ", ref_display, " and ", other_display, " (dPSI)",
     " (Spearman ρ = ", round(rho, 2),
-    ", p = ", signif(pval, 3), ")"
+    ", ", pval_display(pval), ")"
   )
 
   # --- highcharter scatter ---
@@ -1197,11 +1268,11 @@ correl_splicing_rbp_hc <- function(charmobj, rbp, other_rbp, plot_title = NULL) 
     fast = TRUE
   ) %>%
     highcharter::hc_title(text = title_txt) %>%
-    highcharter::hc_xAxis(title = list(text = paste0(rbp_label, " dPSI"))) %>%
-    highcharter::hc_yAxis(title = list(text = paste0(other_label, " dPSI"))) %>%
+    highcharter::hc_xAxis(title = list(text = paste0(ref_display, " dPSI"), style = list(fontSize = "16px", fontWeight = "bold"))) %>%
+    highcharter::hc_yAxis(title = list(text = paste0(other_display, " dPSI"), style = list(fontSize = "16px", fontWeight = "bold"))) %>%
     highcharter::hc_tooltip(pointFormat = paste0(
-      "Event: {point.event_id}<br>", rbp_label, " dPSI: {point.dpsi_ref_r}<br>",
-      other_label, " dPSI: {point.dpsi_other_r}"
+      "Event: {point.event_id}<br>", ref_display, " dPSI: {point.dpsi_ref_r}<br>",
+      other_display, " dPSI: {point.dpsi_other_r}"
     )) %>%
     highcharter::hc_plotOptions(scatter = list(
       marker = list(radius = 5, fillColor = "#DDDDDD", lineColor = "black", lineWidth = 1)
@@ -1212,52 +1283,66 @@ correl_splicing_rbp_hc <- function(charmobj, rbp, other_rbp, plot_title = NULL) 
 
 
 
-plot_gene_logFC_barplot <- function(CharmObj, gene,
-                                    up_color = "#BA3B46",
-                                    down_color = "#53A2BE",
-                                    show_legend = FALSE) {
+# Renamed from plot_gene_logFC_barplot(): now ranks/plots the moderated
+# t-statistic instead of raw log2 fold-change. Rationale (per request): a
+# gene can have a large logFC but a low B-statistic/high variance (i.e. it's
+# not a reliable effect), and the t-statistic -- logFC scaled by its
+# moderated standard error -- already accounts for that precision, so it
+# won't surface a big-but-noisy fold-change the same way a raw logFC ranking
+# would. Both "t" and "logFC" are standard limma::topTable() columns, so
+# CharmObj[[rbp]]$DEGenes (built via topTable()/eBayes() -- see plot_gsea()
+# elsewhere in this file for the same pipeline) already carries a "t" column
+# alongside the "logFC" one this function used before.
+plot_gene_t_barplot <- function(CharmObj, gene,
+                                up_color = "#BA3B46",
+                                down_color = "#53A2BE",
+                                show_legend = FALSE) {
 
-  # Extract LogFC for the gene across all RBPs safely
-  logfc_data <- lapply(names(CharmObj), function(rbp) {
+  # Extract the moderated t-statistic for the gene across all RBPs safely
+  t_data <- lapply(names(CharmObj), function(rbp) {
     df <- CharmObj[[rbp]]$DEGenes
 
-    if (!is.null(df) && "logFC" %in% colnames(df) && gene %in% rownames(df)) {
-      data.frame(RBP = rbp, logFC = df[gene, "logFC"], stringsAsFactors = FALSE)
+    if (!is.null(df) && "t" %in% colnames(df) && gene %in% rownames(df)) {
+      data.frame(RBP = rbp, TStat = df[gene, "t"], stringsAsFactors = FALSE)
     } else {
-      data.frame(RBP = rbp, logFC = NA_real_, stringsAsFactors = FALSE)
+      data.frame(RBP = rbp, TStat = NA_real_, stringsAsFactors = FALSE)
     }
   }) %>%
     bind_rows() %>%
-    drop_na(logFC)
+    drop_na(TStat)
 
   # Check that we found the gene somewhere
-  if (nrow(logfc_data) == 0) {
+  if (nrow(t_data) == 0) {
     stop(paste("Gene", gene, "not found in any RBP DEGenes tables."))
   }
 
-  # Add "Status" for fill color
-  logfc_data <- logfc_data %>%
-    mutate(Status = ifelse(logFC > 0, "Upregulated", "Downregulated"))
+  # Add "Status" for fill color -- t's sign tracks logFC's sign (t is logFC
+  # scaled by a strictly positive moderated SE), so "Up/Downregulated" still
+  # reflects the same direction of change as before.
+  t_data <- t_data %>%
+    mutate(Status = ifelse(TStat > 0, "Upregulated", "Downregulated"))
 
-  # Select top 10 and bottom 10 by LogFC, deduplicate in case of overlap
+  # Select top 10 and bottom 10 by t-statistic, deduplicate in case of overlap
   # (can happen when fewer than 20 RBPs have data for this gene)
-  top10    <- logfc_data %>% arrange(desc(logFC)) %>% slice_head(n = 10)
-  bottom10 <- logfc_data %>% arrange(logFC)       %>% slice_head(n = 10)
+  top10    <- t_data %>% arrange(desc(TStat)) %>% slice_head(n = 10)
+  bottom10 <- t_data %>% arrange(TStat)       %>% slice_head(n = 10)
   selected <- bind_rows(top10, bottom10) %>% distinct(RBP, .keep_all = TRUE)
 
-  # Order RBPs by LogFC — use unique levels to avoid duplicated-factor-level error
-  lvls <- selected$RBP[order(selected$logFC)]
+  # Order RBPs by t-statistic — use unique levels to avoid duplicated-factor-level error
+  lvls <- selected$RBP[order(selected$TStat)]
   selected$RBP <- factor(selected$RBP, levels = unique(lvls))
 
   # Build bar plot (styled like your favorite one)
-  ggplot(selected, aes(x = reorder(RBP, logFC), y = logFC, fill = Status)) +
+  ggplot(selected, aes(x = reorder(RBP, TStat), y = TStat, fill = Status)) +
     geom_col(alpha = 0.8) +
     scale_fill_manual(values = c("Upregulated" = up_color, "Downregulated" = down_color)) +
     coord_flip() +
     labs(
-      x = "RBP",
-      y = "Log2 Fold Change",
-      title = paste0("Top/bottom RBPs by logFC for ", gene),
+      # coord_flip() below swaps display axes, so this "x" label is what
+      # actually renders as the plot's vertical (Y) axis title.
+      x = "RBP KD",
+      y = "Moderated t-statistic",
+      title = paste0("Top/bottom RBPs by t-statistic for ", gene),
       subtitle = paste0("Gene: ", gene),
       caption = paste0("Only top/bottom 10 shown")
     ) +
@@ -1323,7 +1408,9 @@ plot_hallmark_nes_barplot <- function(CharmObj, geneset,
     scale_fill_manual(values = c("Upregulated" = up_color, "Downregulated" = down_color)) +
     coord_flip() +
     labs(
-      x = "RBP",
+      # coord_flip() below swaps display axes, so this "x" label is what
+      # actually renders as the plot's vertical (Y) axis title.
+      x = "RBP KD",
       y = "Normalised Enrichment Score (NES)",
       title = paste0("Top/bottom RBPs by NES for ", geneset),
       subtitle = paste0("Geneset: ", geneset),
@@ -1398,7 +1485,9 @@ plot_event_dpsi_barplot <- function(CharmObj, Event.ID,
       color = "white", size = 4
     ) +
     ggplot2::labs(
-      x = "RBP",
+      # coord_flip() above swaps display axes, so this "x" label is what
+      # actually renders as the plot's vertical (Y) axis title.
+      x = "RBP KD",
       y = "dPSI",
       title = paste0("Top/bottom RBPs by dPSI for event ", Event.ID),
       subtitle = paste0("Event ID: ", Event.ID),
@@ -1597,7 +1686,10 @@ eCLIPSE_full <- function(bindingvalues_nested, rnaBP, target, dPSI,
     geom_line(aes(y = DecreasedEvents), color = dec_color, size = 1) +
     geom_line(aes(y = MaintainedEvents), color = maint_color, size = 1) +
     xlim(0, xlim_max) +
-    labs(title = paste0(rnaBP, " RNA Binding Map - ", title), x = "", y = "Normalised\nDensity\n") +
+    labs(title = paste0(
+           target, " Binding Profile - Upon ", rnaBP, " KD",
+           if (!is.null(title)) paste0(" ", title) else ""
+         ), x = "", y = "Normalised\nDensity\n") +
     theme_bw() +
     theme(
       axis.line = element_line(colour = "black"),
@@ -1937,8 +2029,10 @@ eCLIPSE_raw_user <- function(rnamapfile,
   inc_color   <- "#de425b"
   dec_color   <- "#769fca"
   maint_color <- "black"
-  plot_title  <- if (!is.null(title)) paste0(rnaBP, " RNA Binding Map — ", title) else
-    paste0(rnaBP, " RNA Binding Map (", if (is_IR) "Intron Retention" else "Exon Skipping", ")")
+  plot_title <- paste0(rnaBP, " Binding Profile - Upon Your Uploaded Splicing Alterations")
+  if (!is.null(title) && !identical(title, rnaBP)) {
+    plot_title <- paste0(plot_title, " (", title, ")")
+  }
   
   mapplot <- ggplot(dfforvis, aes(x = Name)) +
     geom_line(aes(y = IncreasedEvents),  color = inc_color,   linewidth = 1) +
@@ -2368,8 +2462,8 @@ binding_profile_correl <- function(sim_obj,
       color = "black", size = 4
     ) +
     ggplot2::labs(
-      x        = "RBP \u2013 Target Profile",
-      y        = "Pearson correlation (r)",
+      x        = "RBP KD \u2013 Target Profile",
+      y        = "Pearson's Correlation (r)",
       title    = plot_title,
       subtitle = plot_subtitle,
       caption  = "Method: Pearson"

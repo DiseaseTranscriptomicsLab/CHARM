@@ -1,35 +1,18 @@
-<<<<<<< HEAD
-.Rproj.user
-.Rhistory
-.RData
-.Ruserdata
-=======
-
-# Big Data, only stored locally
-data/
-
-# History files
+# RStudio / R session files
+.Rproj.user/
 .Rhistory
 .Rapp.history
-
-# Session Data files
 .RData
 .RDataTmp
-
-# User-specific files
 .Ruserdata
+.Renviron
 
 # Example code in package build process
 *-Ex.R
 
-# Output files from R CMD build
+# Output files from R CMD build / check
 /*.tar.gz
-
-# Output files from R CMD check
 /*.Rcheck/
-
-# RStudio files
-.Rproj.user/
 
 # intermediary files
 intermediary_files/
@@ -38,8 +21,9 @@ intermediary_files/
 vignettes/*.html
 vignettes/*.pdf
 
-# local job files
+# local job scripts (personal/one-off, not part of the pipeline)
 LocalJob_File_*
+
 # OAuth2 token, see https://github.com/hadley/httr/releases/tag/v0.3
 .httr-oauth
 
@@ -51,20 +35,29 @@ LocalJob_File_*
 *.utf8.md
 *.knit.md
 
-# R Environment Variables
-.Renviron
-
-# pkgdown site
-docs/
-
 # translation temp files
 po/*~
 
 # RStudio Connect folder
 rsconnect/
->>>>>>> fd3c70eb5d5feb719a5aec30589d6f241139b740
+
+# OS files
 .DS_Store
+
+# Python bytecode cache
+__pycache__/
+*.pyc
+
+# Personal maintenance scripts / audit notes, not part of the pipeline
 cleanup_unused_data.sh
 optimize_data.R
 STORAGE_AUDIT.md
+
+# Big data - too large for git, kept locally and distributed via Zenodo
+# (see README.md "Large data files" section for download links)
+data/
 data.zip
+eCLIPSE/all_data_combined_38.txt
+eCLIPSE/BigExon_events.txt
+eCLIPSE/Exon_events_Rmats.txt
+eCLIPSE/Intron_events.txt

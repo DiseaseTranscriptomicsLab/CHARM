@@ -1,0 +1,854 @@
+---
+title: "eCLIPSE: Reshaping Overlaps into a Metagenome Position Matrix"
+subtitle: "Final pre-processing step of the binding metagenome, converting eCLIPSE_Exon.py / eCLIPSE_Intron.py's per-region overlaps into the position matrix eCLIPSE_full()/eCLIPSE_full_IR() expect"
+author:
+  - name: "Alexandre Afonso^[Disease Transcriptomics Group, Instituto de Medicina Molecular, Faculdade de Medicina da Universidade de Lisboa]"
+    email: alexandreafonso@medicina.ulisboa.pt
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  rmdformats::downcute:
+    downcute_theme: "chaos"
+---
+
+# Introduction
+
+This notebook takes `eCLIPSE_Exon.py`/`eCLIPSE_Intron.py`'s raw per-event overlap output (one row per event x RBP x strand, with `"(start,end)"`-style columns describing where an eCLIP peak fell relative to each biological region around a splicing event, in that region's own local coordinate system) and converts those overlaps into metagenomic coordinates: one row per event x RBP, one column per position in the shared metagenome (1..1000 for exon skipping, 1..500 for intron retention, laid out upstream exon -> ... -> downstream exon), `1` where a peak covered that position, `0` where it didn't, `NA` where the region was shorter than its window and that position simply doesn't exist for this event. This is the `rnamapfile` that `eCLIPSE_full()`/`eCLIPSE_full_IR()` (see `eCLIPSE_plotting_functions.R`) take as input.
+
+There are three independent pipeline paths below: VastDB/VAST-TOOLS intron retention, VastDB/VAST-TOOLS exon skipping ("BigExon"), and rMATS exon skipping. Run only the section(s) you need. 
+
+```{r}
+library(data.table)
+library(dplyr)
+library(tidyr)
+```
+
+# Parsing the raw overlap output
+
+`parse_overlap_columns(df, regions)` turns each `"(start,end)"`-style column into numeric `..._ST`/`..._EN` columns, and drops any row where parsing failed for any region. `filter_by_region_length()` is used by the BigExon path only, to drop rows whose mapped region length is implausibly large for that region's window.
+
+```{r}
+parse_overlap_columns <- function(df, regions) {
+  df[] <- lapply(df, function(x) gsub("[()<>]", "", x))
+
+  for (region in regions) {
+    col    <- paste0("scaled_values_", region)
+    st_col <- paste0(col, "_ST")
+    en_col <- paste0(col, "_EN")
+    df <- tidyr::separate(df, dplyr::all_of(col), into = c(st_col, en_col),
+                           sep = ",", convert = TRUE)
+    df[[en_col]] <- as.numeric(df[[en_col]])
+  }
+
+  df <- df %>% dplyr::mutate(dplyr::across(dplyr::everything(), ~ ifelse(. == "", "error", .)))
+  df <- df %>% dplyr::filter(rowSums(. == "error", na.rm = TRUE) == 0)
+  rownames(df) <- NULL
+  df
+}
+
+filter_by_region_length <- function(df) {
+  edge_regions   <- c("UPS_EX", "AE_ST", "AE_EN", "DOW_EX")
+  window_regions <- c("UPS_IN_ST", "UPS_IN_EN", "DOW_IN_ST", "DOW_IN_EN")
+
+  for (region in edge_regions) {
+    col <- paste0("length_", region)
+    len <- suppressWarnings(as.numeric(df[[col]]))
+    df <- df[len <= 50 | is.na(len), ]
+  }
+  for (region in window_regions) {
+    col <- paste0("length_", region)
+    len <- suppressWarnings(as.numeric(df[[col]]))
+    df <- df[len <= 200 | is.na(len), ]
+  }
+  df
+}
+```
+
+# Intron Retention (VastDB only)
+
+4 regions per strand (`UPS_EX`, `IN_ST`, `IN_EN`, `DOW_EX`), 500 columns total. A region is degenerate if it's <=3nt wide; coordinates are clamped into each region's window.
+
+## Loading and parsing
+
+```{r}
+raw <- read.csv("~/path/to/your/project/Intron_events.txt", header = TRUE)
+raw <- as.data.table(raw)
+
+intron_regions <- c("UPS_EX", "IN_ST", "IN_EN", "DOW_EX")
+
+mapped_plus  <- parse_overlap_columns(subset(raw, STRAND == "+"), intron_regions)
+mapped_minus <- parse_overlap_columns(subset(raw, STRAND == "-"), intron_regions)
+```
+
+## Positive Stranded
+
+```{r}
+# --- UPS_EX: upstream exon, 50nt, start-anchored ---
+st_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_UPS_EX_ST))
+en_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_UPS_EX_EN))
+len_raw <- suppressWarnings(as.numeric(mapped_plus$length_UPS_EX))
+
+density_UPS_EX <- matrix(0, nrow = nrow(mapped_plus), ncol = 50)
+for (row in seq_len(nrow(mapped_plus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((en - st) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (en > 50) en <- 50
+  density_UPS_EX[row, st:en] <- 1
+}
+colnames(density_UPS_EX) <- as.character(0 + 1:50)
+
+# --- IN_ST: intron start, 200nt window, start-anchored ---
+st_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_IN_ST_ST))
+en_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_IN_ST_EN))
+len_raw <- suppressWarnings(as.numeric(mapped_plus$length_IN_ST))
+
+density_IN_ST <- matrix(0, nrow = nrow(mapped_plus), ncol = 200)
+for (row in seq_len(nrow(mapped_plus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((en - st) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (en > 200) en <- 200
+  density_IN_ST[row, st:en] <- 1
+  if (len_raw[row] < 200) density_IN_ST[row, (len_raw[row] + 1):200] <- NA
+}
+colnames(density_IN_ST) <- as.character(50 + 1:200)
+
+# --- IN_EN: intron end, 200nt window, end-anchored ---
+st_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_IN_EN_ST))
+en_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_IN_EN_EN))
+len_raw <- suppressWarnings(as.numeric(mapped_plus$length_IN_EN))
+
+density_IN_EN <- matrix(0, nrow = nrow(mapped_plus), ncol = 200)
+for (row in seq_len(nrow(mapped_plus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((st - en) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (st > 200) st <- 200
+  start_col <- 200 - st
+  end_col   <- (200 + 1) - en
+  density_IN_EN[row, start_col:end_col] <- 1
+  if (len_raw[row] < 200) density_IN_EN[row, 1:(200 + 1 - len_raw[row])] <- NA
+}
+colnames(density_IN_EN) <- as.character(250 + 1:200)
+
+# --- DOW_EX: downstream exon, 50nt, start-anchored ---
+st_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_DOW_EX_ST))
+en_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_DOW_EX_EN))
+len_raw <- suppressWarnings(as.numeric(mapped_plus$length_DOW_EX))
+
+density_DOW_EX <- matrix(0, nrow = nrow(mapped_plus), ncol = 50)
+for (row in seq_len(nrow(mapped_plus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((en - st) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  density_DOW_EX[row, st:en] <- 1
+}
+colnames(density_DOW_EX) <- as.character(450 + 1:50)
+plus_mat <- cbind(density_UPS_EX, density_IN_ST, density_IN_EN, density_DOW_EX)
+```
+
+## Negative Stranded
+
+On this strand, the upstream/downstream exon slots are built from the exon's raw columns, arithmetically reflected (`new_st = width - old_en`, `new_en = width + 1 - old_st`), and the two intron slots are built from each other's raw columns with start/end simply swapped, since what the genome calls upstream/downstream is reversed relative to the metagenome on this strand.
+
+```{r}
+# --- UPS_EX: upstream-exon slot, built from this strand's DOW_EX columns ---
+# minus strand: this slot reuses the DOW_EX columns, arithmetically reflected
+st_raw  <- 50 - suppressWarnings(as.numeric(mapped_minus$scaled_values_DOW_EX_EN))
+en_raw  <- (50 + 1) - suppressWarnings(as.numeric(mapped_minus$scaled_values_DOW_EX_ST))
+len_raw <- suppressWarnings(as.numeric(mapped_minus$length_DOW_EX))
+
+density_UPS_EX <- matrix(0, nrow = nrow(mapped_minus), ncol = 50)
+for (row in seq_len(nrow(mapped_minus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((en - st) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (st < 0) st <- 0
+  density_UPS_EX[row, st:en] <- 1
+}
+colnames(density_UPS_EX) <- as.character(0 + 1:50)
+
+# --- IN_ST: intron-start slot, built from this strand's IN_EN columns ---
+# minus strand: this slot reuses the IN_EN columns, start/end swapped
+st_raw  <- suppressWarnings(as.numeric(mapped_minus$scaled_values_IN_EN_EN))
+en_raw  <- suppressWarnings(as.numeric(mapped_minus$scaled_values_IN_EN_ST))
+len_raw <- suppressWarnings(as.numeric(mapped_minus$length_IN_EN))
+
+density_IN_ST <- matrix(0, nrow = nrow(mapped_minus), ncol = 200)
+for (row in seq_len(nrow(mapped_minus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((en - st) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (en > 200) en <- 200
+  density_IN_ST[row, st:en] <- 1
+  if (len_raw[row] < 200) density_IN_ST[row, (len_raw[row] + 1):200] <- NA
+}
+colnames(density_IN_ST) <- as.character(50 + 1:200)
+
+# --- IN_EN: intron-end slot, built from this strand's IN_ST columns ---
+# minus strand: this slot reuses the IN_ST columns, start/end swapped
+st_raw  <- suppressWarnings(as.numeric(mapped_minus$scaled_values_IN_ST_EN))
+en_raw  <- suppressWarnings(as.numeric(mapped_minus$scaled_values_IN_ST_ST))
+len_raw <- suppressWarnings(as.numeric(mapped_minus$length_IN_ST))
+
+density_IN_EN <- matrix(0, nrow = nrow(mapped_minus), ncol = 200)
+for (row in seq_len(nrow(mapped_minus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((st - en) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (st > 200) st <- 200
+  start_col <- 200 - st
+  end_col   <- (200 + 1) - en
+  density_IN_EN[row, start_col:end_col] <- 1
+  if (len_raw[row] < 200) density_IN_EN[row, 1:(200 + 1 - len_raw[row])] <- NA
+}
+colnames(density_IN_EN) <- as.character(250 + 1:200)
+
+# --- DOW_EX: downstream-exon slot, built from this strand's UPS_EX columns ---
+# minus strand: this slot reuses the UPS_EX columns, arithmetically reflected
+st_raw  <- 50 - suppressWarnings(as.numeric(mapped_minus$scaled_values_UPS_EX_EN))
+en_raw  <- (50 + 1) - suppressWarnings(as.numeric(mapped_minus$scaled_values_UPS_EX_ST))
+len_raw <- suppressWarnings(as.numeric(mapped_minus$length_UPS_EX))
+
+density_DOW_EX <- matrix(0, nrow = nrow(mapped_minus), ncol = 50)
+for (row in seq_len(nrow(mapped_minus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((en - st) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (st < 0) st <- 0
+  density_DOW_EX[row, st:en] <- 1
+}
+colnames(density_DOW_EX) <- as.character(450 + 1:50)
+minus_mat <- cbind(density_UPS_EX, density_IN_ST, density_IN_EN, density_DOW_EX)
+```
+
+## Assembling the position matrix
+
+The original version (VastDB intron) encoded the RBP column as `Name` On the other, more recent versions, this is already encoded as `RBP`. This mini chunk is simply to change it into its "modern" names.
+
+```{r}
+rnamapfile_ir <- as.data.frame(rbind(plus_mat, minus_mat))
+rnamapfile_ir$EVENTS <- c(mapped_plus$EVENT, mapped_minus$EVENT)
+rnamapfile_ir$RBP    <- c(mapped_plus$Name, mapped_minus$Name)
+saveRDS(rnamapfile_ir, "~/path/to/your/project/eCLIPSE_position_matrix_IR.rds")
+```
+
+# Exon Skipping - VastDB/VAST-TOOLS "BigExon" (Path A)
+
+8 regions per strand (`UPS_EX`, `UPS_IN_ST`, `UPS_IN_EN`, `AE_ST`, `AE_EN`, `DOW_IN_ST`, `DOW_IN_EN`, `DOW_EX`), 1000 columns total. A region is degenerate if it's <=3nt wide; coordinates **are** clamped into each region's window.
+
+## Loading and parsing
+
+```{r}
+raw <- read.csv("~/path/to/your/project/BigExon_events.txt", header = TRUE)
+raw <- as.data.table(raw)
+
+exon_regions <- c("UPS_EX", "UPS_IN_ST", "UPS_IN_EN", "AE_ST", "AE_EN",
+                   "DOW_IN_ST", "DOW_IN_EN", "DOW_EX")
+
+mapped_plus  <- filter_by_region_length(parse_overlap_columns(subset(raw, STRAND == "+"), exon_regions))
+mapped_minus <- filter_by_region_length(parse_overlap_columns(subset(raw, STRAND == "-"), exon_regions))
+```
+
+## Positive Stranded
+
+```{r}
+# --- UPS_EX: upstream exon, 50nt, start-anchored ---
+st_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_UPS_EX_ST))
+en_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_UPS_EX_EN))
+len_raw <- suppressWarnings(as.numeric(mapped_plus$length_UPS_EX))
+
+density_UPS_EX <- matrix(0, nrow = nrow(mapped_plus), ncol = 50)
+for (row in seq_len(nrow(mapped_plus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((en - st) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (en > 50) en <- 50
+  density_UPS_EX[row, st:en] <- 1
+}
+colnames(density_UPS_EX) <- as.character(0 + 1:50)
+
+# --- UPS_IN_ST: upstream intron, start side, 200nt window ---
+st_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_UPS_IN_ST_ST))
+en_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_UPS_IN_ST_EN))
+len_raw <- suppressWarnings(as.numeric(mapped_plus$length_UPS_IN_ST))
+
+density_UPS_IN_ST <- matrix(0, nrow = nrow(mapped_plus), ncol = 200)
+for (row in seq_len(nrow(mapped_plus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((en - st) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (en > 200) en <- 200
+  density_UPS_IN_ST[row, st:en] <- 1
+  if (len_raw[row] < 200) density_UPS_IN_ST[row, (len_raw[row] + 1):200] <- NA
+}
+colnames(density_UPS_IN_ST) <- as.character(50 + 1:200)
+
+# --- UPS_IN_EN: upstream intron, end side, 200nt window ---
+st_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_UPS_IN_EN_ST))
+en_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_UPS_IN_EN_EN))
+len_raw <- suppressWarnings(as.numeric(mapped_plus$length_UPS_IN_EN))
+
+density_UPS_IN_EN <- matrix(0, nrow = nrow(mapped_plus), ncol = 200)
+for (row in seq_len(nrow(mapped_plus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((st - en) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (st > 200) st <- 200
+  start_col <- 200 - st
+  end_col   <- (200 + 1) - en
+  density_UPS_IN_EN[row, start_col:end_col] <- 1
+  if (len_raw[row] < 200) density_UPS_IN_EN[row, 1:(200 + 1 - len_raw[row])] <- NA
+}
+colnames(density_UPS_IN_EN) <- as.character(250 + 1:200)
+
+# --- AE_ST: alternative exon, start side, 50nt ---
+st_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_AE_ST_ST))
+en_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_AE_ST_EN))
+len_raw <- suppressWarnings(as.numeric(mapped_plus$length_AE_ST))
+
+density_AE_ST <- matrix(0, nrow = nrow(mapped_plus), ncol = 50)
+for (row in seq_len(nrow(mapped_plus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((en - st) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (en > 50) en <- 50
+  density_AE_ST[row, st:en] <- 1
+  if (len_raw[row] < 50) density_AE_ST[row, (len_raw[row] + 1):50] <- NA
+}
+colnames(density_AE_ST) <- as.character(450 + 1:50)
+
+# --- AE_EN: alternative exon, end side, 50nt ---
+st_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_AE_EN_ST))
+en_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_AE_EN_EN))
+len_raw <- suppressWarnings(as.numeric(mapped_plus$length_AE_EN))
+
+density_AE_EN <- matrix(0, nrow = nrow(mapped_plus), ncol = 50)
+for (row in seq_len(nrow(mapped_plus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((st - en) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (st > 50) st <- 50
+  start_col <- 50 - st
+  end_col   <- (50 + 1) - en
+  density_AE_EN[row, start_col:end_col] <- 1
+  if (len_raw[row] < 50) density_AE_EN[row, 1:(50 + 1 - len_raw[row])] <- NA
+}
+colnames(density_AE_EN) <- as.character(500 + 1:50)
+
+# --- DOW_IN_ST: downstream intron, start side, 200nt window ---
+st_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_DOW_IN_ST_ST))
+en_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_DOW_IN_ST_EN))
+len_raw <- suppressWarnings(as.numeric(mapped_plus$length_DOW_IN_ST))
+
+density_DOW_IN_ST <- matrix(0, nrow = nrow(mapped_plus), ncol = 200)
+for (row in seq_len(nrow(mapped_plus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((en - st) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (en > 200) en <- 200
+  density_DOW_IN_ST[row, st:en] <- 1
+  if (len_raw[row] < 200) density_DOW_IN_ST[row, (len_raw[row] + 1):200] <- NA
+}
+colnames(density_DOW_IN_ST) <- as.character(550 + 1:200)
+
+# --- DOW_IN_EN: downstream intron, end side, 200nt window ---
+st_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_DOW_IN_EN_ST))
+en_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_DOW_IN_EN_EN))
+len_raw <- suppressWarnings(as.numeric(mapped_plus$length_DOW_IN_EN))
+
+density_DOW_IN_EN <- matrix(0, nrow = nrow(mapped_plus), ncol = 200)
+for (row in seq_len(nrow(mapped_plus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((st - en) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (st > 200) st <- 200
+  start_col <- 200 - st
+  end_col   <- (200 + 1) - en
+  density_DOW_IN_EN[row, start_col:end_col] <- 1
+  if (len_raw[row] < 200) density_DOW_IN_EN[row, 1:(200 + 1 - len_raw[row])] <- NA
+}
+colnames(density_DOW_IN_EN) <- as.character(750 + 1:200)
+
+# --- DOW_EX: downstream exon, 50nt, start-anchored ---
+st_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_DOW_EX_ST))
+en_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_DOW_EX_EN))
+len_raw <- suppressWarnings(as.numeric(mapped_plus$length_DOW_EX))
+
+density_DOW_EX <- matrix(0, nrow = nrow(mapped_plus), ncol = 50)
+for (row in seq_len(nrow(mapped_plus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((en - st) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  density_DOW_EX[row, st:en] <- 1
+}
+colnames(density_DOW_EX) <- as.character(950 + 1:50)
+plus_mat <- cbind(density_UPS_EX, density_UPS_IN_ST, density_UPS_IN_EN, density_AE_ST, density_AE_EN, density_DOW_IN_ST, density_DOW_IN_EN, density_DOW_EX)
+```
+
+## Negative Stranded
+
+Same idea as the intron-retention path above: the outermost exon slots are built from the opposite exon's raw columns, reflected; every intron/alternative-exon slot is built from its mirror-image region's raw columns, swapped.
+
+```{r}
+# --- UPS_EX: upstream-exon slot, built from this strand's DOW_EX columns ---
+# minus strand: this slot reuses the DOW_EX columns, arithmetically reflected
+st_raw  <- 50 - suppressWarnings(as.numeric(mapped_minus$scaled_values_DOW_EX_EN))
+en_raw  <- (50 + 1) - suppressWarnings(as.numeric(mapped_minus$scaled_values_DOW_EX_ST))
+len_raw <- suppressWarnings(as.numeric(mapped_minus$length_DOW_EX))
+
+density_UPS_EX <- matrix(0, nrow = nrow(mapped_minus), ncol = 50)
+for (row in seq_len(nrow(mapped_minus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((en - st) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (st < 0) st <- 0
+  density_UPS_EX[row, st:en] <- 1
+}
+colnames(density_UPS_EX) <- as.character(0 + 1:50)
+
+# --- UPS_IN_ST: upstream-intron-start slot, built from this strand's DOW_IN_EN columns ---
+# minus strand: this slot reuses the DOW_IN_EN columns, start/end swapped
+st_raw  <- suppressWarnings(as.numeric(mapped_minus$scaled_values_DOW_IN_EN_EN))
+en_raw  <- suppressWarnings(as.numeric(mapped_minus$scaled_values_DOW_IN_EN_ST))
+len_raw <- suppressWarnings(as.numeric(mapped_minus$length_DOW_IN_EN))
+
+density_UPS_IN_ST <- matrix(0, nrow = nrow(mapped_minus), ncol = 200)
+for (row in seq_len(nrow(mapped_minus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((en - st) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (en > 200) en <- 200
+  density_UPS_IN_ST[row, st:en] <- 1
+  if (len_raw[row] < 200) density_UPS_IN_ST[row, (len_raw[row] + 1):200] <- NA
+}
+colnames(density_UPS_IN_ST) <- as.character(50 + 1:200)
+
+# --- UPS_IN_EN: upstream-intron-end slot, built from this strand's DOW_IN_ST columns ---
+# minus strand: this slot reuses the DOW_IN_ST columns, start/end swapped
+st_raw  <- suppressWarnings(as.numeric(mapped_minus$scaled_values_DOW_IN_ST_EN))
+en_raw  <- suppressWarnings(as.numeric(mapped_minus$scaled_values_DOW_IN_ST_ST))
+len_raw <- suppressWarnings(as.numeric(mapped_minus$length_DOW_IN_ST))
+
+density_UPS_IN_EN <- matrix(0, nrow = nrow(mapped_minus), ncol = 200)
+for (row in seq_len(nrow(mapped_minus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((st - en) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (st > 200) st <- 200
+  start_col <- 200 - st
+  end_col   <- (200 + 1) - en
+  density_UPS_IN_EN[row, start_col:end_col] <- 1
+  if (len_raw[row] < 200) density_UPS_IN_EN[row, 1:(200 + 1 - len_raw[row])] <- NA
+}
+colnames(density_UPS_IN_EN) <- as.character(250 + 1:200)
+
+# --- AE_ST: alt-exon-start slot, built from this strand's AE_EN columns ---
+# minus strand: this slot reuses the AE_EN columns, start/end swapped
+st_raw  <- suppressWarnings(as.numeric(mapped_minus$scaled_values_AE_EN_EN))
+en_raw  <- suppressWarnings(as.numeric(mapped_minus$scaled_values_AE_EN_ST))
+len_raw <- suppressWarnings(as.numeric(mapped_minus$length_AE_EN))
+
+density_AE_ST <- matrix(0, nrow = nrow(mapped_minus), ncol = 50)
+for (row in seq_len(nrow(mapped_minus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((en - st) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (en > 50) en <- 50
+  density_AE_ST[row, st:en] <- 1
+  if (len_raw[row] < 50) density_AE_ST[row, (len_raw[row] + 1):50] <- NA
+}
+colnames(density_AE_ST) <- as.character(450 + 1:50)
+
+# --- AE_EN: alt-exon-end slot, built from this strand's AE_ST columns ---
+# minus strand: this slot reuses the AE_ST columns, start/end swapped
+st_raw  <- suppressWarnings(as.numeric(mapped_minus$scaled_values_AE_ST_EN))
+en_raw  <- suppressWarnings(as.numeric(mapped_minus$scaled_values_AE_ST_ST))
+len_raw <- suppressWarnings(as.numeric(mapped_minus$length_AE_ST))
+
+density_AE_EN <- matrix(0, nrow = nrow(mapped_minus), ncol = 50)
+for (row in seq_len(nrow(mapped_minus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((st - en) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (st > 50) st <- 50
+  start_col <- 50 - st
+  end_col   <- (50 + 1) - en
+  density_AE_EN[row, start_col:end_col] <- 1
+  if (len_raw[row] < 50) density_AE_EN[row, 1:(50 + 1 - len_raw[row])] <- NA
+}
+colnames(density_AE_EN) <- as.character(500 + 1:50)
+
+# --- DOW_IN_ST: downstream-intron-start slot, built from this strand's UPS_IN_EN columns ---
+# minus strand: this slot reuses the UPS_IN_EN columns, start/end swapped
+st_raw  <- suppressWarnings(as.numeric(mapped_minus$scaled_values_UPS_IN_EN_EN))
+en_raw  <- suppressWarnings(as.numeric(mapped_minus$scaled_values_UPS_IN_EN_ST))
+len_raw <- suppressWarnings(as.numeric(mapped_minus$length_UPS_IN_EN))
+
+density_DOW_IN_ST <- matrix(0, nrow = nrow(mapped_minus), ncol = 200)
+for (row in seq_len(nrow(mapped_minus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((en - st) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (en > 200) en <- 200
+  density_DOW_IN_ST[row, st:en] <- 1
+  if (len_raw[row] < 200) density_DOW_IN_ST[row, (len_raw[row] + 1):200] <- NA
+}
+colnames(density_DOW_IN_ST) <- as.character(550 + 1:200)
+
+# --- DOW_IN_EN: downstream-intron-end slot, built from this strand's UPS_IN_ST columns ---
+# minus strand: this slot reuses the UPS_IN_ST columns, start/end swapped
+st_raw  <- suppressWarnings(as.numeric(mapped_minus$scaled_values_UPS_IN_ST_EN))
+en_raw  <- suppressWarnings(as.numeric(mapped_minus$scaled_values_UPS_IN_ST_ST))
+len_raw <- suppressWarnings(as.numeric(mapped_minus$length_UPS_IN_ST))
+
+density_DOW_IN_EN <- matrix(0, nrow = nrow(mapped_minus), ncol = 200)
+for (row in seq_len(nrow(mapped_minus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((st - en) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (st > 200) st <- 200
+  start_col <- 200 - st
+  end_col   <- (200 + 1) - en
+  density_DOW_IN_EN[row, start_col:end_col] <- 1
+  if (len_raw[row] < 200) density_DOW_IN_EN[row, 1:(200 + 1 - len_raw[row])] <- NA
+}
+colnames(density_DOW_IN_EN) <- as.character(750 + 1:200)
+
+# --- DOW_EX: downstream-exon slot, built from this strand's UPS_EX columns ---
+# minus strand: this slot reuses the UPS_EX columns, arithmetically reflected
+st_raw  <- 50 - suppressWarnings(as.numeric(mapped_minus$scaled_values_UPS_EX_EN))
+en_raw  <- (50 + 1) - suppressWarnings(as.numeric(mapped_minus$scaled_values_UPS_EX_ST))
+len_raw <- suppressWarnings(as.numeric(mapped_minus$length_UPS_EX))
+
+density_DOW_EX <- matrix(0, nrow = nrow(mapped_minus), ncol = 50)
+for (row in seq_len(nrow(mapped_minus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((en - st) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (st < 0) st <- 0
+  density_DOW_EX[row, st:en] <- 1
+}
+colnames(density_DOW_EX) <- as.character(950 + 1:50)
+minus_mat <- cbind(density_UPS_EX, density_UPS_IN_ST, density_UPS_IN_EN, density_AE_ST, density_AE_EN, density_DOW_IN_ST, density_DOW_IN_EN, density_DOW_EX)
+```
+
+## Assembling the position matrix
+
+```{r}
+rnamapfile <- as.data.frame(rbind(plus_mat, minus_mat))
+rnamapfile$EVENTS <- c(mapped_plus$EVENT, mapped_minus$EVENT)
+rnamapfile$RBP    <- c(mapped_plus$RBP, mapped_minus$RBP)
+saveRDS(rnamapfile, "~/path/to/your/project/eCLIPSE_position_matrix.rds")
+```
+
+# Exon Skipping - rMATS (Path B)
+
+Same 8-region/1000-column layout as the BigExon path above.
+
+## Loading and parsing
+
+```{r}
+raw <- read.csv("~/path/to/your/project/Exon_events_Rmats.txt", header = TRUE)
+raw <- as.data.table(raw)
+
+exon_regions <- c("UPS_EX", "UPS_IN_ST", "UPS_IN_EN", "AE_ST", "AE_EN",
+                   "DOW_IN_ST", "DOW_IN_EN", "DOW_EX")
+
+# No filter_by_region_length() here - that extra length filter is specific
+# to the VastDB/BigExon input file above, and was never applied to rMATS.
+mapped_plus  <- parse_overlap_columns(subset(raw, STRAND == "+"), exon_regions)
+mapped_minus <- parse_overlap_columns(subset(raw, STRAND == "-"), exon_regions)
+```
+
+## Positive Stranded
+
+```{r}
+# --- UPS_EX: upstream exon, 50nt, start-anchored ---
+st_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_UPS_EX_ST))
+en_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_UPS_EX_EN))
+len_raw <- suppressWarnings(as.numeric(mapped_plus$length_UPS_EX))
+
+density_UPS_EX <- matrix(0, nrow = nrow(mapped_plus), ncol = 50)
+for (row in seq_len(nrow(mapped_plus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((en - st) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (en > 50) en <- 50
+  density_UPS_EX[row, st:en] <- 1
+}
+colnames(density_UPS_EX) <- as.character(0 + 1:50)
+
+# --- UPS_IN_ST: upstream intron, start side, 200nt window ---
+st_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_UPS_IN_ST_ST))
+en_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_UPS_IN_ST_EN))
+len_raw <- suppressWarnings(as.numeric(mapped_plus$length_UPS_IN_ST))
+
+density_UPS_IN_ST <- matrix(0, nrow = nrow(mapped_plus), ncol = 200)
+for (row in seq_len(nrow(mapped_plus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((en - st) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (en > 200) en <- 200
+  density_UPS_IN_ST[row, st:en] <- 1
+  if (len_raw[row] < 200) density_UPS_IN_ST[row, (len_raw[row] + 1):200] <- NA
+}
+colnames(density_UPS_IN_ST) <- as.character(50 + 1:200)
+
+# --- UPS_IN_EN: upstream intron, end side, 200nt window ---
+st_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_UPS_IN_EN_ST))
+en_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_UPS_IN_EN_EN))
+len_raw <- suppressWarnings(as.numeric(mapped_plus$length_UPS_IN_EN))
+
+density_UPS_IN_EN <- matrix(0, nrow = nrow(mapped_plus), ncol = 200)
+for (row in seq_len(nrow(mapped_plus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((st - en) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (st > 200) st <- 200
+  start_col <- 200 - st
+  end_col   <- (200 + 1) - en
+  density_UPS_IN_EN[row, start_col:end_col] <- 1
+  if (len_raw[row] < 200) density_UPS_IN_EN[row, 1:(200 + 1 - len_raw[row])] <- NA
+}
+colnames(density_UPS_IN_EN) <- as.character(250 + 1:200)
+
+# --- AE_ST: alternative exon, start side, 50nt ---
+st_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_AE_ST_ST))
+en_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_AE_ST_EN))
+len_raw <- suppressWarnings(as.numeric(mapped_plus$length_AE_ST))
+
+density_AE_ST <- matrix(0, nrow = nrow(mapped_plus), ncol = 50)
+for (row in seq_len(nrow(mapped_plus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((en - st) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (en > 50) en <- 50
+  density_AE_ST[row, st:en] <- 1
+  if (len_raw[row] < 50) density_AE_ST[row, (len_raw[row] + 1):50] <- NA
+}
+colnames(density_AE_ST) <- as.character(450 + 1:50)
+
+# --- AE_EN: alternative exon, end side, 50nt ---
+st_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_AE_EN_ST))
+en_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_AE_EN_EN))
+len_raw <- suppressWarnings(as.numeric(mapped_plus$length_AE_EN))
+
+density_AE_EN <- matrix(0, nrow = nrow(mapped_plus), ncol = 50)
+for (row in seq_len(nrow(mapped_plus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((st - en) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (st > 50) st <- 50
+  start_col <- 50 - st
+  end_col   <- (50 + 1) - en
+  density_AE_EN[row, start_col:end_col] <- 1
+  if (len_raw[row] < 50) density_AE_EN[row, 1:(50 + 1 - len_raw[row])] <- NA
+}
+colnames(density_AE_EN) <- as.character(500 + 1:50)
+
+# --- DOW_IN_ST: downstream intron, start side, 200nt window ---
+st_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_DOW_IN_ST_ST))
+en_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_DOW_IN_ST_EN))
+len_raw <- suppressWarnings(as.numeric(mapped_plus$length_DOW_IN_ST))
+
+density_DOW_IN_ST <- matrix(0, nrow = nrow(mapped_plus), ncol = 200)
+for (row in seq_len(nrow(mapped_plus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((en - st) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (en > 200) en <- 200
+  density_DOW_IN_ST[row, st:en] <- 1
+  if (len_raw[row] < 200) density_DOW_IN_ST[row, (len_raw[row] + 1):200] <- NA
+}
+colnames(density_DOW_IN_ST) <- as.character(550 + 1:200)
+
+# --- DOW_IN_EN: downstream intron, end side, 200nt window ---
+st_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_DOW_IN_EN_ST))
+en_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_DOW_IN_EN_EN))
+len_raw <- suppressWarnings(as.numeric(mapped_plus$length_DOW_IN_EN))
+
+density_DOW_IN_EN <- matrix(0, nrow = nrow(mapped_plus), ncol = 200)
+for (row in seq_len(nrow(mapped_plus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((st - en) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (st > 200) st <- 200
+  start_col <- 200 - st
+  end_col   <- (200 + 1) - en
+  density_DOW_IN_EN[row, start_col:end_col] <- 1
+  if (len_raw[row] < 200) density_DOW_IN_EN[row, 1:(200 + 1 - len_raw[row])] <- NA
+}
+colnames(density_DOW_IN_EN) <- as.character(750 + 1:200)
+
+# --- DOW_EX: downstream exon, 50nt, start-anchored ---
+st_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_DOW_EX_ST))
+en_raw  <- suppressWarnings(as.numeric(mapped_plus$scaled_values_DOW_EX_EN))
+len_raw <- suppressWarnings(as.numeric(mapped_plus$length_DOW_EX))
+
+density_DOW_EX <- matrix(0, nrow = nrow(mapped_plus), ncol = 50)
+for (row in seq_len(nrow(mapped_plus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((en - st) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  density_DOW_EX[row, st:en] <- 1
+}
+colnames(density_DOW_EX) <- as.character(950 + 1:50)
+plus_mat <- cbind(density_UPS_EX, density_UPS_IN_ST, density_UPS_IN_EN, density_AE_ST, density_AE_EN, density_DOW_IN_ST, density_DOW_IN_EN, density_DOW_EX)
+```
+
+## Negative Stranded
+
+Same idea as the BigExon path above: the outermost exon slots are built from the opposite exon's raw columns, reflected; every intron/alternative-exon slot is built from its mirror-image region's raw columns, swapped.
+
+```{r}
+# --- UPS_EX: upstream-exon slot, built from this strand's DOW_EX columns ---
+# minus strand: this slot reuses the DOW_EX columns, arithmetically reflected
+st_raw  <- 50 - suppressWarnings(as.numeric(mapped_minus$scaled_values_DOW_EX_EN))
+en_raw  <- (50 + 1) - suppressWarnings(as.numeric(mapped_minus$scaled_values_DOW_EX_ST))
+len_raw <- suppressWarnings(as.numeric(mapped_minus$length_DOW_EX))
+
+density_UPS_EX <- matrix(0, nrow = nrow(mapped_minus), ncol = 50)
+for (row in seq_len(nrow(mapped_minus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((en - st) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (st < 0) st <- 0
+  density_UPS_EX[row, st:en] <- 1
+}
+colnames(density_UPS_EX) <- as.character(0 + 1:50)
+
+# --- UPS_IN_ST: upstream-intron-start slot, built from this strand's DOW_IN_EN columns ---
+# minus strand: this slot reuses the DOW_IN_EN columns, start/end swapped
+st_raw  <- suppressWarnings(as.numeric(mapped_minus$scaled_values_DOW_IN_EN_EN))
+en_raw  <- suppressWarnings(as.numeric(mapped_minus$scaled_values_DOW_IN_EN_ST))
+len_raw <- suppressWarnings(as.numeric(mapped_minus$length_DOW_IN_EN))
+
+density_UPS_IN_ST <- matrix(0, nrow = nrow(mapped_minus), ncol = 200)
+for (row in seq_len(nrow(mapped_minus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((en - st) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (en > 200) en <- 200
+  density_UPS_IN_ST[row, st:en] <- 1
+  if (len_raw[row] < 200) density_UPS_IN_ST[row, (len_raw[row] + 1):200] <- NA
+}
+colnames(density_UPS_IN_ST) <- as.character(50 + 1:200)
+
+# --- UPS_IN_EN: upstream-intron-end slot, built from this strand's DOW_IN_ST columns ---
+# minus strand: this slot reuses the DOW_IN_ST columns, start/end swapped
+st_raw  <- suppressWarnings(as.numeric(mapped_minus$scaled_values_DOW_IN_ST_EN))
+en_raw  <- suppressWarnings(as.numeric(mapped_minus$scaled_values_DOW_IN_ST_ST))
+len_raw <- suppressWarnings(as.numeric(mapped_minus$length_DOW_IN_ST))
+
+density_UPS_IN_EN <- matrix(0, nrow = nrow(mapped_minus), ncol = 200)
+for (row in seq_len(nrow(mapped_minus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((st - en) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (st > 200) st <- 200
+  start_col <- 200 - st
+  end_col   <- (200 + 1) - en
+  density_UPS_IN_EN[row, start_col:end_col] <- 1
+  if (len_raw[row] < 200) density_UPS_IN_EN[row, 1:(200 + 1 - len_raw[row])] <- NA
+}
+colnames(density_UPS_IN_EN) <- as.character(250 + 1:200)
+
+# --- AE_ST: alt-exon-start slot, built from this strand's AE_EN columns ---
+# minus strand: this slot reuses the AE_EN columns, start/end swapped
+st_raw  <- suppressWarnings(as.numeric(mapped_minus$scaled_values_AE_EN_EN))
+en_raw  <- suppressWarnings(as.numeric(mapped_minus$scaled_values_AE_EN_ST))
+len_raw <- suppressWarnings(as.numeric(mapped_minus$length_AE_EN))
+
+density_AE_ST <- matrix(0, nrow = nrow(mapped_minus), ncol = 50)
+for (row in seq_len(nrow(mapped_minus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((en - st) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (en > 50) en <- 50
+  density_AE_ST[row, st:en] <- 1
+  if (len_raw[row] < 50) density_AE_ST[row, (len_raw[row] + 1):50] <- NA
+}
+colnames(density_AE_ST) <- as.character(450 + 1:50)
+
+# --- AE_EN: alt-exon-end slot, built from this strand's AE_ST columns ---
+# minus strand: this slot reuses the AE_ST columns, start/end swapped
+st_raw  <- suppressWarnings(as.numeric(mapped_minus$scaled_values_AE_ST_EN))
+en_raw  <- suppressWarnings(as.numeric(mapped_minus$scaled_values_AE_ST_ST))
+len_raw <- suppressWarnings(as.numeric(mapped_minus$length_AE_ST))
+
+density_AE_EN <- matrix(0, nrow = nrow(mapped_minus), ncol = 50)
+for (row in seq_len(nrow(mapped_minus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((st - en) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (st > 50) st <- 50
+  start_col <- 50 - st
+  end_col   <- (50 + 1) - en
+  density_AE_EN[row, start_col:end_col] <- 1
+  if (len_raw[row] < 50) density_AE_EN[row, 1:(50 + 1 - len_raw[row])] <- NA
+}
+colnames(density_AE_EN) <- as.character(500 + 1:50)
+
+# --- DOW_IN_ST: downstream-intron-start slot, built from this strand's UPS_IN_EN columns ---
+# minus strand: this slot reuses the UPS_IN_EN columns, start/end swapped
+st_raw  <- suppressWarnings(as.numeric(mapped_minus$scaled_values_UPS_IN_EN_EN))
+en_raw  <- suppressWarnings(as.numeric(mapped_minus$scaled_values_UPS_IN_EN_ST))
+len_raw <- suppressWarnings(as.numeric(mapped_minus$length_UPS_IN_EN))
+
+density_DOW_IN_ST <- matrix(0, nrow = nrow(mapped_minus), ncol = 200)
+for (row in seq_len(nrow(mapped_minus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((en - st) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (en > 200) en <- 200
+  density_DOW_IN_ST[row, st:en] <- 1
+  if (len_raw[row] < 200) density_DOW_IN_ST[row, (len_raw[row] + 1):200] <- NA
+}
+colnames(density_DOW_IN_ST) <- as.character(550 + 1:200)
+
+# --- DOW_IN_EN: downstream-intron-end slot, built from this strand's UPS_IN_ST columns ---
+# minus strand: this slot reuses the UPS_IN_ST columns, start/end swapped
+st_raw  <- suppressWarnings(as.numeric(mapped_minus$scaled_values_UPS_IN_ST_EN))
+en_raw  <- suppressWarnings(as.numeric(mapped_minus$scaled_values_UPS_IN_ST_ST))
+len_raw <- suppressWarnings(as.numeric(mapped_minus$length_UPS_IN_ST))
+
+density_DOW_IN_EN <- matrix(0, nrow = nrow(mapped_minus), ncol = 200)
+for (row in seq_len(nrow(mapped_minus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((st - en) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (st > 200) st <- 200
+  start_col <- 200 - st
+  end_col   <- (200 + 1) - en
+  density_DOW_IN_EN[row, start_col:end_col] <- 1
+  if (len_raw[row] < 200) density_DOW_IN_EN[row, 1:(200 + 1 - len_raw[row])] <- NA
+}
+colnames(density_DOW_IN_EN) <- as.character(750 + 1:200)
+
+# --- DOW_EX: downstream-exon slot, built from this strand's UPS_EX columns ---
+# minus strand: this slot reuses the UPS_EX columns, arithmetically reflected
+st_raw  <- 50 - suppressWarnings(as.numeric(mapped_minus$scaled_values_UPS_EX_EN))
+en_raw  <- (50 + 1) - suppressWarnings(as.numeric(mapped_minus$scaled_values_UPS_EX_ST))
+len_raw <- suppressWarnings(as.numeric(mapped_minus$length_UPS_EX))
+
+density_DOW_EX <- matrix(0, nrow = nrow(mapped_minus), ncol = 50)
+for (row in seq_len(nrow(mapped_minus))) {
+  if (is.na(len_raw[row]) || is.na(st_raw[row]) || is.na(en_raw[row])) next
+  st <- st_raw[row]; en <- en_raw[row]
+  if ((en - st) <= 3) next   # degenerate: region too short to trust (<=3nt)
+  if (st < 0) st <- 0
+  density_DOW_EX[row, st:en] <- 1
+}
+colnames(density_DOW_EX) <- as.character(950 + 1:50)
+minus_mat <- cbind(density_UPS_EX, density_UPS_IN_ST, density_UPS_IN_EN, density_AE_ST, density_AE_EN, density_DOW_IN_ST, density_DOW_IN_EN, density_DOW_EX)
+```
+
+## Assembling the position matrix
+
+```{r}
+rnamapfile <- as.data.frame(rbind(plus_mat, minus_mat))
+rnamapfile$EVENTS <- c(mapped_plus$EVENT, mapped_minus$EVENT)
+rnamapfile$RBP    <- c(mapped_plus$RBP, mapped_minus$RBP)
+saveRDS(rnamapfile, "~/path/to/your/project/eCLIPSE_position_matrix_rmats.rds")
+```

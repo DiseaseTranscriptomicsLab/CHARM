@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>eCLIPSE — Local Pipeline Tutorial</title>
+<meta name="description" content="A guide to running CHARM's eCLIPSE pipeline locally: build your own splicing genome (VAST-TOOLS/VastDB or rMATS), intersect it with your own eCLIP peaks, and generate RNA binding maps.">
+<link rel="icon" type="image/png" href="assets/favicon-32.png">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+
+<header class="navbar">
+  <a class="brand" href="index.html"><img src="assets/charm-logo-64.png" alt="CHARM logo">CHARM</a>
+  <nav class="navlinks">
+    <a href="index.html">Home</a>
+    <a href="tutorial.html">App Tutorial</a>
+    <a href="eclipse_tutorial.html" class="current">eCLIPSE Local Pipeline</a>
+  </nav>
+  <div class="navright">
+    <div class="theme-toggle">
+      <button data-mode="light">Light</button>
+      <button data-mode="dark">Dark</button>
+      <button data-mode="auto">Auto</button>
+    </div>
+    <a class="ghlink" href="https://doi.org/10.5281/zenodo.21724194" target="_blank" rel="noopener">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg>
+      <span class="gh-label">Zenodo</span>
+    </a>
+    <a class="ghlink" href="https://github.com/DiseaseTranscriptomicsLab/CHARM" target="_blank" rel="noopener">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+      <span class="gh-label">GitHub</span>
+    </a>
+  </div>
+  <button id="navmenu-toggle" aria-label="Toggle navigation">☰</button>
+</header>
+<div id="navmenu-panel">
+  <a href="index.html">Home</a>
+  <a href="tutorial.html">App Tutorial</a>
+  <a href="eclipse_tutorial.html">eCLIPSE Local Pipeline</a>
+  <a href="https://github.com/DiseaseTranscriptomicsLab/CHARM" target="_blank" rel="noopener" class="panel-gh">GitHub ↗</a>
+  <a href="https://doi.org/10.5281/zenodo.21724194" target="_blank" rel="noopener" class="panel-gh">Zenodo ↗</a>
+  <div class="theme-toggle">
+    <button data-mode="light">Light</button>
+    <button data-mode="dark">Dark</button>
+    <button data-mode="auto">Auto</button>
+  </div>
+</div>
+
+<div class="page">
+  <main class="content" id="top">
+    <div class="hero" style="padding-top:36px; text-align:left;">
+      <p class="kicker">Local Pipeline Tutorial</p>
+      <h1 style="font-size:clamp(28px,4.4vw,40px);">Running eCLIPSE Locally</h1>
+      <p class="sub">Build your own splicing genome, binding metagenome, and RNA binding maps</p>
+      <p class="lede" style="margin-left:0; margin-right:0;">This is a tutorial for computational users who want to run CHARM's underlying eCLIPSE pipeline directly (outside the Shiny app) to build a splicing genome from their own alternative-splicing data (VAST-TOOLS/VastDB or rMATS), intersect it against their own eCLIP peak files, and generate their own RNA binding maps.</p>
+      <p style="font-size:13.5px; color:var(--text-faint); margin:0 0 8px;">Looking for the no-code Shiny app instead? See the <a href="tutorial.html">CHARM App Tutorial</a>.</p>
+    </div>
+
+    <section id="overview">
+      <h1 class="sec">1. Overview</h1>
+      <p>Regardless of whether your splicing quantification comes from VAST-TOOLS/VastDB or rMATS, the pipeline has the same three stages:</p>
+      <ol class="steps">
+        <li><strong>Splicing-genome construction</strong>: take a table of alternative-splicing events (exon-skipping or intron-retention) and, for each event, define a fixed set of genomic sub-regions around it (flanking exon ends, flanking intron ends, the alternative exon itself, etc; see the CHARM paper's Methods, "Splicing-genome creation"). This produces one row per event with genomic coordinates for each sub-region.</li>
+        <li><strong>Binding metagenome assembly</strong>: intersect a table of eCLIP peaks (RBP, chromosome, start, end) against every region of every event, recording where and how much of each region a given RBP's peaks cover. This produces a long-format, per-RBP-per-event overlap table.</li>
+        <li><strong>RNA binding maps</strong>: reshape the overlap table into a wide "position matrix" (metagenomic coordinates 1–1000 for exon-skipping, 1–500 for intron-retention), split events by direction of splicing change (increased/decreased/maintained inclusion), and run a chi-squared test at every position to test whether the RBP's binding density differs between event classes. This is what <code>eCLIPSE_full()</code> / <code>eCLIPSE_full_IR()</code> do, and is exactly what the CHARM paper's figures show.</li>
+      </ol>
+      <p>Two independent event sources feed stage 1: <strong>VastDB/VAST-TOOLS</strong> (event IDs like <code>HsaEX0024923</code>, <code>HsaINT...</code>) and <strong>rMATS</strong> (<code>SE.MATS.JC.txt</code>, numeric event IDs). Both converge on the same stage-2/stage-3 scripts. That convergence is the whole point of rMATS compatibility, and is what makes this pipeline useful if you don't want to use VAST-TOOLS.</p>
+    </section>
+
+    <section id="environment">
+      <h1 class="sec">2. Environment &amp; Dependencies</h1>
+      <h2 class="sub">R</h2>
+      <p>Packages used throughout the notebook: <code>data.table</code>, <code>tidyr</code>, <code>dplyr</code>, <code>stringr</code>, <code>ggplot2</code>, <code>ggpubr</code>, <code>scales</code>. The betAS (ASfile) step (<a href="#betas">Section 6</a>) additionally needs <a href="https://github.com/DiseaseTranscriptomicsLab/betAS" target="_blank" rel="noopener">betAS</a> itself.</p>
+      <h2 class="sub">Python 3</h2>
+      <p>Used by <code>eCLIPSE_Exon.py</code> / <code>eCLIPSE_Intron.py</code>: <code>pandas</code>, <code>numpy</code>.</p>
+      <h2 class="sub">External tools</h2>
+      <p>VAST-TOOLS/VastDB path only: <a href="https://github.com/vastgroup/vast-tools" target="_blank" rel="noopener">vast-tools</a> (align/combine). rMATS path only: <a href="https://github.com/Xinglab/rmats-turbo" target="_blank" rel="noopener">rMATS-turbo</a>.</p>
+    </section>
+
+    <section id="path-a">
+      <h1 class="sec">3. Path A: VAST-TOOLS / VastDB Splicing Genome <span class="path-badge vastdb">VastDB</span></h1>
+
+      <h2 class="sub" id="path-a-align">3.1 Align and combine</h2>
+      <p class="purpose"><b>Scripts:</b> <code>vt_align.sh</code>, <code>vt_combine.sh</code></p>
+      <p><code>vt_align.sh</code> is a thin wrapper around <code>vast-tools align</code>. Run it from the directory containing your paired-end FASTQs (named <code>&lt;sample&gt;_1.paired.fastq.gz</code> / <code>&lt;sample&gt;_2.paired.fastq.gz</code>):</p>
+      <pre><code>./vt_align.sh /path/to/fastqs/</code></pre>
+      <p>Then combine all aligned samples into one inclusion table:</p>
+      <pre><code>./vt_combine.sh</code></pre>
+      <p>This produces a <code>vast-tools combine</code> output (an <code>INCLUSION_LEVELS_FULL-hg38-*.tab.gz</code> file) — this is the <code>vttable</code> input to the next script. </p>
+      <div class="box good"><b class="tag">Good to know:</b> Alternatively, if you want hg19 coordinates instead, then please change <code>vt_align.sh</code> accordingly.</div>
+
+      <h2 class="sub" id="path-a-genome">3.2 Build the splicing genome. </h2>
+      <p class="purpose"><b>Script:</b> <code>Eclip_preprocessing_vttools.R</code></p>
+      <p>This script reads the VAST-TOOLS inclusion table that you just generated, and writes the exon-skipping and intron-retention splicing-genome tables.</p>
+      <div class="box caution"><b class="tag">Limitation:</b> The paths below now use a generic placeholder (<code>~/path/to/your/project/</code>) rather than a personal filesystem path. Open the script and point them at wherever you keep your files before running it.</div>
+      <table class="gloss">
+        <tr><th>Line</th><th>What it reads/writes</th><th>You need to point it at</th></tr>
+        <tr><td>7</td><td><code>INCLUSION_LEVELS_FULL-hg38-25-v251.tab.gz</code></td><td>the <code>vast-tools combine</code> output from <a href="#path-a-align">Section 3.1</a></td></tr>
+        <tr><td>65</td><td><code>vttable_IR_regions.RDS</code></td><td>output path for the intermediate intron-retention regions object</td></tr>
+        <tr><td>177</td><td><code>vttable_EX_bigintron_regions.RDS</code></td><td>output path for the intermediate exon-skipping regions object. This variant minimises exon size (<i>i.e.</i> collapses exons with alternative splice sites into their smallest version)</td></tr>
+        <tr><td>269</td><td><code>vttable_EX_bigexon_regions.RDS</code></td><td>output path for the other intermediate exon-skipping regions object. This variant instead maximises exon size (collapses to the largest annotated version), correspondingly minimising the flanking introns</td></tr>
+        <tr><td>282</td><td><code>Final_IR_Table.txt</code></td><td>final intron-retention splicing-genome table (feeds <code>eCLIPSE_Intron.py</code>)</td></tr>
+        <tr><td>283</td><td><code>Final_SmallExon_Table.txt</code></td><td>final exon-skipping splicing-genome table, small-exon variant (feeds <code>eCLIPSE_Exon.py</code>)</td></tr>
+        <tr><td>284</td><td><code>Final_BIGEX_Table.txt</code></td><td>final exon-skipping splicing-genome table, big-exon variant (also feeds <code>eCLIPSE_Exon.py</code>)</td></tr>
+      </table>
+      <div class="box good"><b class="tag">Why there are two exon-skipping tables:</b> VastDB's exon-skipping annotation can list several candidate boundaries (separated by <code>+</code>) for the alternative exon and its flanking exons, reflecting different annotated transcripts. The script resolves that ambiguity twice, in opposite directions. <code>vttable_EX_bigintron</code> takes the innermost/intersection boundaries, producing the <strong>smallest</strong> version of the alternative exon (and correspondingly the largest flanking introns) written to <code>Final_SmallExon_Table.txt</code>. <code>vttable_EX_bigexon</code> mirrors every <code>head()</code>/<code>tail()</code> choice in that block, taking the outermost/union boundaries instead, producing the <strong>largest</strong> version of the alternative exon (and correspondingly the smallest flanking introns) written to <code>Final_BIGEX_Table.txt</code>. Everything downstream of the boundary selection (strand handling, the per-position region-window calculations) is identical between the two blocks; only which candidate coordinate wins differs.</div>
+    </section>
+
+    <section id="path-b">
+      <h1 class="sec">4. Path B: rMATS Splicing Genome <span class="path-badge rmats">rMATS</span></h1>
+
+      <h2 class="sub" id="path-b-run">4.1 Run rMATS-turbo yourself</h2>
+      <p class="purpose"><b>Scripts:</b> <code>rMATSp1.sh</code>, <code>rMATSp2.sh</code></p>
+      <p><code>rMATSp1.sh</code> indexes every BAM file in a directory with <code>samtools index</code> (rMATS-turbo needs the <code>.bai</code> files present):</p>
+      <pre><code>./rMATSp1.sh /path/to/bams/</code></pre>
+      <p><code>rMATSp2.sh</code> then runs <code>rmats.py</code> itself, comparing two sample groups (one BAM path per line. in this example <code>samples_stressed.txt</code>/<code>samples_unstressed.txt</code>):</p>
+      <pre><code>rmats.py --b2 samples_unstressed.txt \
+      --b1 samples_stressed.txt \
+      --gtf ~/Genomes/Human/gencode.v42.primary_assembly.basic.annotation.gtf \
+      --bi ~/Genomes/Human/STARindex/ \
+      -t single \
+      --readLength 76 \
+      --nthread 4 \
+      --od final_output_rMATS \
+      --tmp intermediate_output_rMATS &gt; rMATS_GSE171009.txt</code></pre>
+      <div class="box caution"><b class="tag">Limitation:</b> <code>rMATSp2.sh</code> hardcodes the GTF/STAR-index paths, the sample-group filenames, and run parameters (single-end, read length 76) for one specific dataset. Open the script and point it at your own genome, annotation, read length, and sample lists before running it.</div>
+      <p>A single <code>rmats.py</code> run writes one <code>*.MATS.JC.txt</code> file per event type into <code>--od</code>: <code>SE.MATS.JC.txt</code> (exon skipping), <code>RI.MATS.JC.txt</code> (intron retention), <code>A5SS.MATS.JC.txt</code>, <code>A3SS.MATS.JC.txt</code>, and <code>MXE.MATS.JC.txt</code>. </p>
+      <div class="box caution"><b class="tag">Limitation:</b> There is currently <strong>no intron-retention preprocessing script</strong> available for rMATS. <code>Eclip_preprocessing_rmats.R</code> (<a href="#path-b-genome">Section 4.2</a>) only ever reads <code>SE.MATS.JC.txt</code>. I have not yet converted <code>RI.MATS.JC.txt</code> into the splicing-genome table format <code>eCLIPSE_Intron.py</code> expects. Naturally, if the demand arises, I will create such a version.</div>
+
+      <h2 class="sub" id="path-b-genome">4.2 Build the splicing genome</h2>
+      <p class="purpose"><b>Script:</b> <code>Eclip_preprocessing_rmats.R</code></p>
+      <p>This script converts <code>SE.MATS.JC.txt</code> into the same 20-column splicing-genome schema that <code>Eclip_preprocessing_vttools.R</code> produces, so it can be fed straight into <code>eCLIPSE_Exon.py</code> instead of the VastDB path.</p>
+      <div class="box caution"><b class="tag">Limitation:</b> The paths below use a generic placeholder (<code>~/path/to/your/project/</code>). Open the script and point them at wherever you keep your files before running it.</div>
+      <table class="gloss">
+        <tr><th>Line</th><th>What it reads/writes</th><th>You need to point it at</th></tr>
+        <tr><td>6</td><td><code>SE.MATS.JC.txt</code></td><td>your rMATS-turbo output</td></tr>
+        <tr><td>7</td><td><code>Final_BIGEX_Table.txt</code></td><td>an already-existing VastDB splicing-genome table. See note below</td></tr>
+        <tr><td>93, 97</td><td><code>rmatstable_as.RDS</code></td><td>intermediate output/reload path</td></tr>
+        <tr><td>104</td><td><code>Final_AS_Table_Rmats.txt</code></td><td>final rMATS-derived splicing-genome table (feeds <code>eCLIPSE_Exon.py</code>)</td></tr>
+      </table>
+      <div class="box caution"><b class="tag">Important dependency you might miss:</b> The preprocessing script loads an existing VastDB-derived table purely to copy its column names (<code>newnames &lt;- colnames(vttable)</code>) so the rMATS table ends up with matching column names. <strong>You need to have already run the VAST-TOOLS path (<a href="#path-a">Section 3</a>) at least once</strong>, or otherwise obtain a table with the correct 20 column names, before this script's renaming step will work.</div>
+      <div class="box good"><b class="tag">Good to know:</b> this script also converts rMATS's 0-based coordinates to 1-based. This is because rMATS is python based and uses 0-based coordinates, while the rest of script uses 1-based coordinates.</div>
+    </section>
+
+    <section id="metagenome">
+      <h1 class="sec">5. Binding Metagenome Assembly</h1>
+      <p class="purpose"><b>Scripts:</b> <code>eCLIPSE_Exon.py</code>, <code>eCLIPSE_Intron.py</code></p>
+      <p>These scripts intersect your eCLIP peaks against the splicing-genome regions from <a href="#path-a">Section 3</a>/<a href="#path-b">Section 4</a>, per RBP per event, and write a long-format overlap table.</p>
+      <pre><code># Exon-skipping (works for both the VastDB and rMATS splicing-genome tables)
+python3 eCLIPSE_Exon.py \
+  --events Final_SmallExon_Table.txt \
+  --peaks  all_data_combined_38.txt \
+  --output SmallExon_events.txt
+
+# Intron retention (VastDB path only. No rMATS IR table exists yet)
+python3 eCLIPSE_Intron.py \
+  --events Final_IR_Table.txt \
+  --peaks  all_data_combined_38.txt \
+  --output Intron_events.txt</code></pre>
+      <p><code>--peaks</code> expects a <strong>space-delimited</strong> table (as produced by R's <code>write.table(..., row.names = F)</code>) with at minimum the columns <code>Chrom</code>, <code>StartCord</code>, <code>EndCord</code>, <code>RBP</code> (the combined eCLIP peaks file, <code>all_data_combined_38.txt</code>, already has exactly this format. See <a href="#example-data">Section 9</a>).</p>
+      <div class="box why"><b class="tag">What is <code>all_data_combined_38.txt</code>?</b> It's every eCLIP dataset in ENCODE, combined into one table and filtered down to peaks with signal greater than 3 (<i>i.e.</i> every called eCLIP peak, across every RBP ENCODE has profiled, in one file). I added this file so you do not need to download and merge all ENCODE's eCLIP files yourself.</div>
+    </section>
+
+    <section id="betas">
+      <h1 class="sec">6. Producing the betAS (ASfile) Table</h1>
+      <p>This is the step between splicing quantification (<a href="#path-a">Section 3</a>/<a href="#path-b">Section 4</a>) and the RNA binding maps (<a href="#position-matrix">Section 7</a>/<a href="#binding-maps">Section 8</a>), where we turn a VAST-TOOLS inclusion table into the <code>ASfile</code> that <code>eCLIPSE_full()</code>/<code>eCLIPSE_full_IR()</code> expect (an <code>Event.ID</code> column plus a <code>dPSI</code> column, <a href="#calling">Section 8.1</a>). It uses the <a href="https://github.com/DiseaseTranscriptomicsLab/betAS" target="_blank" rel="noopener">betAS</a> package to go from raw per-sample PSI values to a statistically-supported per-event delta-PSI.</p>
+      <h2 class="sub" id="betas-load">6.1 Loading and filtering the dataset</h2>
+      <p>The example below frames this as a typical ENCODE-style eCLIP experiment: a shRNA knockdown of the target RBP compared against control samples.</p>
+      <pre><code>library(betAS)
+library(data.table)
+
+dataset <- getDataset(pathTables = "INCLUSION_LEVELS_FULL-hg38-25-v251.tab.gz", tool = "vast-tools")
+dataset <- getEvents(dataset, tool = "vast-tools")
+
+# Keep exon-skipping (S) and intron-retention (IR) events
+dataset_filtered <- filterEvents(dataset, types = c("S", "IR"), N = 0)
+dataset_filtered$PSI  <- na.omit(dataset_filtered$PSI)
+dataset_filtered$Qual <- dataset_filtered$Qual[dataset_filtered$Qual$EVENT %in% dataset_filtered$PSI$EVENT, ]
+
+# Two groups: control and shRNA-knockdown samples
+samples_control <- c("control_rep1", "control_rep2")
+samples_shRNA   <- c("shRNA_rep1", "shRNA_rep2")
+
+dataset_control <- dataset_filtered
+dataset_control[["Samples"]] <- samples_control
+dataset_control[["PSI"]]  <- dataset_control$PSI[,  c(1:6, which(colnames(dataset_control$PSI)  %in% samples_control))]
+dataset_control[["Qual"]] <- dataset_control$Qual[, c(1:6, which(colnames(dataset_control$Qual) %in% paste0(samples_control, ".Q")))]
+
+dataset_shRNA <- dataset_filtered
+dataset_shRNA[["Samples"]] <- samples_shRNA
+dataset_shRNA[["PSI"]]  <- dataset_shRNA$PSI[,  c(1:6, which(colnames(dataset_shRNA$PSI)  %in% samples_shRNA))]
+dataset_shRNA[["Qual"]] <- dataset_shRNA$Qual[, c(1:6, which(colnames(dataset_shRNA$Qual) %in% paste0(samples_shRNA, ".Q")))]</code></pre>
+
+      <h2 class="sub" id="betas-filter">6.2 Filtering to informative events</h2>
+      <p>There are two ways to filter <code>dataset_control</code>/<code>dataset_shRNA</code> down to the events worth testing. Pick one, not both, since both produce a same-named <code>_filtered</code> object.</p>
+      <p><strong>Option A: betAS's own <code>alternativeEvents()</code></strong>, which filters events to a PSI range:</p>
+      <pre><code>dataset_control_filtered <- alternativeEvents(dataset_control, minPsi = 1, maxPsi = 99)
+dataset_shRNA_filtered   <- alternativeEvents(dataset_shRNA,   minPsi = 1, maxPsi = 99)</code></pre>
+      <p><strong>Option B: the custom <code>NewFilterFunction()</code></strong>, which is <strong>not</strong> part of the betAS package. It's defined in <code>eCLIPSE-Supplementary.Rmd</code> and filters differently: instead of a PSI range, it keeps only events that appear in a separately-precomputed event list, <code>FullCassetteEvents.txt</code>, that contains only events with substantial evidence for true alternative splicing. This is the version that is used throughout CHARM:</p>
+      <pre><code>FullTrial <- fread("FullCassetteEvents.txt")
+
+dataset_control_filtered <- NewFilterFunction(dataset_control, FullTrial)
+dataset_shRNA_filtered   <- NewFilterFunction(dataset_shRNA,   FullTrial)</code></pre>
+      <div class="box why"><b class="tag"><code>FullCassetteEvents.txt</code> comes from <code>eCLIPSE-Supplementary.Rmd</code>:</b> that computes, per event, the median/mean/variance of PSI across all samples, keeps events with high variance or a mean PSI away from the 0%/100% extremes (<code>var_value &gt;= 750 | (mean_value &gt;= 12.5 &amp; mean_value &lt;= 87.5)</code>), and writes the exon-skipping and intron-retention results out combined as <code>FullCassetteEvents.txt</code>. Unlike betAS's original function, this version ensures only "true alternative splicing events" are kept.</div>
+
+      <h2 class="sub" id="betas-volcano">6.3 Computing dPSI and building the ASfile</h2>
+      <pre><code>cols_control <- convertCols(dataset_control_filtered$PSI, samples_control)
+cols_shRNA   <- convertCols(dataset_shRNA_filtered$PSI,   samples_shRNA)
+
+volcanoTable <- prepareTableVolcano(
+  psitable       = dataset_control_filtered$PSI,   # control/shRNA filtered tables share the same events by construction
+  qualtable      = dataset_control_filtered$Qual,
+  npoints        = 500,
+  colsA          = cols_control,
+  colsB          = cols_shRNA,
+  labA           = "control",
+  labB           = "shRNA",
+  basalColor     = "#89C0AE",
+  interestColor  = "#E69A9C",
+  maxDevTable    = maxDevSimulationN100,     # ships with the betAS package itself
+  seed           = TRUE,
+  CoverageWeight = FALSE
+)
+
+plotVolcano(betasTable = volcanoTable, labA = "control", labB = "shRNA",
+            basalColor = "#89C0AE", interestColor = "#E69A9C")   # optional sanity-check plot
+
+ASfile <- volcanoTable[, c("EVENT", "GENE", "deltapsi", "Pdiff")]
+colnames(ASfile) <- c("Event.ID", "Gene", "dPSI", "Pdiff")
+write.table(ASfile, "my_betAS_table.txt", row.names = FALSE, col.names = TRUE)</code></pre>
+      <p><code>prepareTableVolcano()</code> is betAS's core statistical step: it computes delta-PSI (<code>deltapsi</code>) between control and shRNA and a significance-like statistic (<code>Pdiff</code>), via a permutation/simulation approach.</p>
+      <div class="box good"><b class="tag">Good to know:</b> the resulting <code>ASfile</code> carries a <code>Pdiff</code> column, but <a href="#binding-maps">Section 8</a>'s <code>eCLIPSE_full()</code>/<code>eCLIPSE_full_IR()</code> only ever read <code>Event.ID</code> and <code>dPSI</code> from it. This is why in CHARM's binding/splicing discovery tabs, it is only necessary to upload a table of VastDB IDs and their corresponding dPSI values.
+    </section>
+
+    <section id="position-matrix">
+      <h1 class="sec">7. Reshaping <code>eCLIPSE_Exon.py</code> Output into a Position Matrix</h1>
+      <p class="purpose"><b>Notebook:</b> <code>Eclip_position_matrix.Rmd</code></p>
+      <p>This is the final pre-processing step of the binding metagenome. Do <strong>not</strong> take the long-format overlap table from <a href="#metagenome">Section 5</a> directly. You need a wide <code>rnamapfile</code>, with one row per (event, RBP), one column per metagenomic position (1–1000 for exon-skipping, 1–500 for intron retention), plus <code>EVENTS</code> and <code>RBP</code> columns. Converting an event's raw, per-region overlap coordinates into that shared metagenome coordinate system is exactly what this sextion does.</p>
+
+      <h2 class="sub" id="parsing">7.1 Parsing the raw overlap output</h2>
+      <p>Near the top of the notebook, before any of the three path-specific sections: <code>parse_overlap_columns(df, regions)</code> turns each <code>"(start,end)"</code>-style column <code>eCLIPSE_Exon.py</code>/<code>eCLIPSE_Intron.py</code> produced (one per biological region, e.g. <code>scaled_values_UPS_EX</code>) into numeric <code>..._ST</code>/<code>..._EN</code> columns, and drops any row where parsing failed for any region:</p>
+      <pre><code>exon_regions <- c("UPS_EX", "UPS_IN_ST", "UPS_IN_EN", "AE_ST", "AE_EN",
+                   "DOW_IN_ST", "DOW_IN_EN", "DOW_EX")
+mapped_plus  <- parse_overlap_columns(subset(raw, STRAND == "+"), exon_regions)
+mapped_minus <- parse_overlap_columns(subset(raw, STRAND == "-"), exon_regions)</code></pre>
+
+      <h2 class="sub" id="three-recipes">7.2 One recipe, three paths</h2>
+      <p>Each path's section in the notebook has the same four-part shape: <strong>Loading and parsing</strong> (read that path's raw overlap file, split by strand), <strong>Positive Stranded</strong> and <strong>Negative Stranded</strong> (build one 0/1/NA density block per region, <code>cbind()</code> them together), and <strong>Assembling the position matrix</strong> (<code>rbind()</code> both strands, attach <code>EVENTS</code>/<code>RBP</code>, <code>saveRDS()</code> the result). Within a "Stranded" section, the same shape of code repeats once per region: Pull that region's raw start/end/length columns; zero-initialise a <code>width</code>-column matrix, one row per event; loop over rows, skipping any row with missing data or a degenerate region, clamping the coordinate into the window, marking the covered columns <code>1</code>, and padding the columns past the mapped length with <code>NA</code>; then label the columns with the metagenome positions this region occupies.</p>
+      <pre><code>density_UPS_EX <- matrix(0, nrow = nrow(mapped_plus), ncol = 50)
+for (row in seq_len(nrow(mapped_plus))) {
+  st <- mapped_plus$scaled_values_UPS_EX_ST[row]
+  en <- mapped_plus$scaled_values_UPS_EX_EN[row]
+  if (is.na(st) || is.na(en)) next
+  if ((en - st) <= 3) next   # degenerate: region too short to trust
+  if (en > 50) en <- 50      # clamp into the window
+  density_UPS_EX[row, st:en] <- 1
+}
+colnames(density_UPS_EX) <- as.character(1:50)</code></pre>
+      <p>Every other region/strand block in the notebook follows this same shape, just with a different width and an NA-pad step added in:</p>
+      <table class="gloss">
+        <tr><th>Path (notebook section)</th><th>Layout</th><th>Degenerate test</th><th>Coordinate clamp</th><th>Partial-coverage NA padding</th></tr>
+        <tr><td>"Intron Retention"<br>VastDB intron retention</td><td>4 regions/strand, 500 cols</td><td>region &le;3nt wide</td><td>yes, into each window</td><td>2 of 4 regions (not the 2 exons)</td></tr>
+        <tr><td>"Exon Skipping: BigExon"<br>VastDB exon skipping (Path A)</td><td>8 regions/strand, 1000 cols</td><td>region &le;3nt wide</td><td>yes, into each window</td><td>6 of 8 regions (not the 2 neighbouring exons)</td></tr>
+        <tr><td>"Exon Skipping: rMATS"<br>rMATS exon skipping (Path B)</td><td>8 regions/strand, 1000 cols</td><td>region &le;3nt wide</td><td>yes, into each window</td><td>6 of 8 regions (not the 2 neighbouring exons)</td></tr>
+      </table>
+
+      <h2 class="sub" id="running-preprocessing">7.3 Running it</h2>
+      <p>Open <code>Eclip_position_matrix.Rmd</code>, point the placeholder path in that path's "Loading and parsing" chunk at your own overlap file, then run that path's chunks top to bottom: Loading and parsing → Positive Stranded → Negative Stranded → Assembling the position matrix. The last chunk of each path ends with a <code>saveRDS()</code> call:</p>
+      <pre><code># Exon Skipping — BigExon section, "Assembling the position matrix" chunk:
+rnamapfile <- as.data.frame(rbind(plus_mat, minus_mat))
+rnamapfile$EVENTS <- c(mapped_plus$EVENT, mapped_minus$EVENT)
+rnamapfile$RBP    <- c(mapped_plus$RBP, mapped_minus$RBP)
+saveRDS(rnamapfile, "eCLIPSE_position_matrix.rds")</code></pre>
+    </section>
+
+    <section id="binding-maps">
+      <h1 class="sec">8. RNA Binding Map Functions</h1>
+      <p class="purpose"><b>Notebook:</b> <code>eCLIPSE_plotting_functions.Rmd</code></p>
+      <p>The RNA-binding-map functions themselves.</p>
+
+      <h2 class="sub" id="calling">8.1 Calling the plotting function</h2>
+      <pre><code>plot <- eCLIPSE_full(
+  rnamapfile = my_position_matrix,   # wide matrix, see Section 7
+  ASfile     = my_splicing_table,    # needs columns Event.ID, dPSI
+  rnaBP      = "RBFOX2",              # RBP name to plot, must match a value in rnamapfile$RBP
+  metric     = "FDR",                # or "EffectSize"
+  title      = "My experiment"
+)
+print(plot)</code></pre>
+      <p><code>ASfile</code> needs a <code>Event.ID</code> column (VastDB <code>HsaEX...</code>/<code>HsaINT...</code> IDs <strong>or</strong> rMATS numeric IDs, and a <code>dPSI</code> column (used to classify events as increased/decreased/maintained inclusion against <code>PSIthreshold</code>, default 0.05).</p>
+      <p>Use <code>eCLIPSE_full()</code> for exon-skipping data (VastDB or rMATS) and <code>eCLIPSE_full_IR()</code> for intron-retention data (VastDB only).</p>
+
+      <h2 class="sub" id="running-maps">8.2 Running it</h2>
+      <p>Open <code>eCLIPSE_plotting_functions.Rmd</code>, run the function-definition chunks (<code>eCLIPSE_full()</code>, <code>eCLIPSE_full_IR()</code>), then the "Running it" chunk with your own data:</p>
+      <pre><code>rnamapfile <- readRDS("eCLIPSE_position_matrix.rds")  # from Section 7
+ASfile     <- fread("my_betAS_table.txt")             # from Section 6
+
+eCLIPSE_full(rnamapfile = rnamapfile, ASfile = ASfile, rnaBP = "RBM39",
+             metric = "FDR", plot = TRUE, title = "control vs shRNA")
+
+# Intron-retention path (VastDB only):
+rnamapfile_ir <- readRDS("eCLIPSE_position_matrix_IR.rds")
+eCLIPSE_full_IR(rnamapfile = rnamapfile_ir, ASfile = ASfile, rnaBP = "RBM39",
+                 metric = "FDR", plot = TRUE, title = "control vs shRNA, intron retention")</code></pre>
+
+      <h2 class="sub" id="binding-heatmaps">8.3 Per-RBP binding heatmaps</h2>
+      <p>Alternatively, you can run eCLIPSE for all RBPs for a single perturbation:</p>
+      <pre><code>eCLIPSE_heatmap(rnamapfile, ASfile,
+                rbps = c("SRSF1", "U2AF2"),
+                metric = "EffectSize")   # or "FDR"
+
+# Intron-retention path (VastDB only):
+eCLIPSE_heatmap_IR(rnamapfile_ir, ASfile,
+                    rbps = c("SRSF1", "U2AF2"),
+                    metric = "EffectSize")   # or "FDR"</code></pre>
+      <p><code>metric = "EffectSize"</code> colours each tile by its chi-squared statistic, <code>metric = "FDR"</code> by <code>-log10(FDR)</code> both categories (decreased and increased inclusion) are drawn on one shared, symmetric colour scale, sized to the largest absolute value across both, so the same colour means the same thing in both panels rather than each panel scaling itself independently.</p>
+    </section>
+
+    <section id="example-data">
+      <h1 class="sec">9. The Large Data Files (Downloadable Example Data)</h1>
+      <p>Several files in the ECLIPSE folder are large precomputed datasets rather than code:</p>
+      <table class="gloss">
+        <tr><th>File</th><th>Size</th><th>Contents</th></tr>
+        <tr><td><code>all_data_combined_38.txt</code></td><td>~450&nbsp;MB</td><td>Every ENCODE eCLIP dataset combined into one table, filtered to peaks with signal &gt; 0 (hg38): <code>Chrom</code>, <code>StartCord</code>, <code>EndCord</code>, <code>Strand</code>, <code>Signal</code>, <code>PValue</code>, <code>RBP</code>, <code>Cell</code>, <code>Rep</code>. See <a href="#metagenome">Section 5</a></td></tr>
+        <tr><td><code>BigExon_events.txt</code></td><td>~88&nbsp;MB</td><td>Precomputed VastDB exon-skipping binding overlap table (<code>eCLIPSE_Exon.py</code> output)</td></tr>
+        <tr><td><code>Intron_events.txt</code></td><td>~309&nbsp;MB</td><td>Precomputed VastDB intron-retention binding overlap table (<code>eCLIPSE_Intron.py</code> output)</td></tr>
+        <tr><td><code>Exon_events_Rmats.txt</code></td><td>~278&nbsp;MB</td><td>Precomputed rMATS exon-skipping binding overlap table (numeric event IDs)</td></tr>
+        <tr><td><code>FullCassetteEvents.txt</code></td><td>~3.7&nbsp;MB</td><td>Precomputed event list (<code>EVENT</code>, <code>median_value</code>, <code>mean_value</code>, <code>var_value</code>), produced by <code>eCLIPSE-Supplementary.Rmd</code>'s "Complex Approaches" section &mdash; the <code>eventlist</code> input to <code>NewFilterFunction()</code> (<a href="#betas-filter">Section 6.2</a>)</td></tr>
+      </table>
+      <p>These are included as <strong>downloadable example data</strong> so you can try the pipeline (or just stages 5 and 7) without first needing your own eCLIP peaks or splicing quantification.</p>
+    </section>
+
+    
+
+    <footer class="page-footer">
+      <p><a class="backtotop" href="#top">↑ Back to top</a></p>
+      <p>eCLIPSE Local Pipeline Tutorial &middot; part of CHARM &middot; <a href="https://github.com/DiseaseTranscriptomicsLab/CHARM" target="_blank" rel="noopener">Source &amp; data on GitHub</a> &middot; <a href="https://doi.org/10.5281/zenodo.21724194" target="_blank" rel="noopener">Data on Zenodo</a> &middot; <a href="tutorial.html">← CHARM App Tutorial</a></p>
+    </footer>
+  </main>
+
+  <aside class="pagetoc" id="pagetoc">
+    <p class="toc-label">On this page</p>
+    <ol>
+      <li><a href="#overview">1. Overview</a></li>
+      <li><a href="#environment">2. Environment &amp; Dependencies</a></li>
+      <li><a href="#path-a">3. Path A — VastDB</a>
+        <ol>
+          <li><a href="#path-a-align">Align &amp; combine</a></li>
+          <li><a href="#path-a-genome">Splicing genome</a></li>
+        </ol>
+      </li>
+      <li><a href="#path-b">4. Path B — rMATS</a>
+        <ol>
+          <li><a href="#path-b-run">Run rMATS-turbo</a></li>
+          <li><a href="#path-b-genome">Splicing genome</a></li>
+        </ol>
+      </li>
+      <li><a href="#metagenome">5. Metagenome Assembly</a></li>
+      <li><a href="#betas">6. betAS (ASfile) Table</a>
+        <ol>
+          <li><a href="#betas-load">Loading &amp; filtering</a></li>
+          <li><a href="#betas-filter">Informative events</a></li>
+          <li><a href="#betas-volcano">Building the ASfile</a></li>
+        </ol>
+      </li>
+      <li><a href="#position-matrix">7. Position Matrix</a>
+        <ol>
+          <li><a href="#parsing">Parsing the overlap output</a></li>
+          <li><a href="#three-recipes">One recipe, three paths</a></li>
+          <li><a href="#running-preprocessing">Running it</a></li>
+        </ol>
+      </li>
+      <li><a href="#binding-maps">8. RNA Binding Map Functions</a>
+        <ol>
+          <li><a href="#calling">Calling the function</a></li>
+          <li><a href="#running-maps">Running it</a></li>
+          <li><a href="#binding-heatmaps">Per-RBP binding heatmaps</a></li>
+        </ol>
+      </li>
+      <li><a href="#example-data">9. Example Data</a></li>
+    </ol>
+  </aside>
+</div>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

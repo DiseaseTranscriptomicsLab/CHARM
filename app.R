@@ -303,7 +303,7 @@ ui <- fluidPage(
               tags$div(
                 style = "background-color:#EAEBEB; color:black; border:2px solid #2c3e50; border-radius:20px; padding:40px; text-align:center; margin:15px;",
                 div(style = "margin-bottom:10px;", fa("map", fill = "black", height = "3em")),
-                tags$h3("Discover", style = "font-weight:bold;"),
+                tags$h3("Discovery", style = "font-weight:bold;"),
                 tags$p("Upload your own expression, splicing, or binding data to discover which RBPs are most likely altered in your biological system.")
               )
             )
@@ -504,7 +504,10 @@ ui <- fluidPage(
           column(
             width = 9,
             tags$h3("Expression Results"),
-            uiOutput("expr_nav_bar"),
+            conditionalPanel(
+              condition = "input.expr_mode == 'Explore'",
+              uiOutput("expr_nav_bar")
+            ),
             
             # --- Explore Mode (default mode) ---
             conditionalPanel(
@@ -709,7 +712,10 @@ ui <- fluidPage(
           column(
             width = 9,
             tags$h3("Splicing Data Results"),
-            uiOutput("splice_nav_bar"),
+            conditionalPanel(
+              condition = "input.splice_mode == 'Explore'",
+              uiOutput("splice_nav_bar")
+            ),
             
             # --- Explore Mode (default mode, NOT Similar RBPs) ---
             conditionalPanel(
@@ -871,7 +877,10 @@ ui <- fluidPage(
             width = 9,
             
             tags$h3("Binding Data Results"),
-            uiOutput("binding_nav_bar"),
+            conditionalPanel(
+              condition = "input.binding_mode == 'Explore'",
+              uiOutput("binding_nav_bar")
+            ),
             
             div(
               tagList(
@@ -1072,7 +1081,35 @@ ui <- fluidPage(
     ",
     tags$div(
       style = "font-size: 11px; color: #2c3e50; margin-bottom: 4px;",
-      "Version: 0.9.2"
+      "Version: 0.9.3"
+    ),
+    tags$div(
+      style = "margin-bottom: 4px;",
+      actionLink(
+        "show_packages_modal",
+        label = tagList(fa("r-project", fill = "black", height = "1.1em"), " Packages"),
+        style = "color: black; text-decoration: none; font-size: 12px;"
+      )
+    ),
+    tags$div(
+      style = "margin-bottom: 4px;",
+      tags$a(
+        href = "https://diseasetranscriptomicslab.github.io/CHARM/",
+        target = "_blank",
+        style = "color: black; text-decoration: none; font-size: 12px;",
+        fa("book", fill = "black", height = "1.1em"),
+        " Tutorial"
+      )
+    ),
+    tags$div(
+      style = "margin-bottom: 4px;",
+      tags$a(
+        href = "https://doi.org/10.5281/zenodo.21724194",
+        target = "_blank",
+        style = "color: black; text-decoration: none; font-size: 12px;",
+        fa("database", fill = "black", height = "1.1em"),
+        " Zenodo"
+      )
     ),
     tags$a(
       href = "https://github.com/DiseaseTranscriptomicsLab/CHARM",
@@ -1266,9 +1303,38 @@ server <- function(input, output, session) {
   # heatmap can have 100+ rows, and a fixed 12x9in export crammed every row
   # label on top of the next -- unreadable, even though the same heatmap
   # looks fine on screen because binding_plot_ui() scales the plotOutput's
-  # pixel height with the row count. Mirror that exact scaling formula here
-  # (900 + (n-1)*10 px, capped at 2000px, translated to inches at the
-  # standard 96px/in CSS reference) so the saved file matches what's on screen.
+  # pixel height with the row count.
+  #
+  # Shared by dl_binding (Explore mode) and dl_binding_disc (Discovery
+  # mode) below -- both heatmaps have the exact same "readable on screen,
+  # crowded once saved" problem, so both call this one function.
+  #
+  # height_px tracks the SAME on-screen plotOutput scaling formula used
+  # for the live plot (900 + (n-1)*10 px per row), but the on-screen-to-
+  # inches conversion is height_px/72, not /96: shiny::renderPlot()
+  # rasterizes at its documented default res = 72, so the on-screen plot's
+  # TRUE physical canvas size is height_px/72 inches. Using /96 (the CSS
+  # "96px = 1in" convention) undersized every saved PNG relative to what
+  # was actually on screen, which is why row labels came out cramped in
+  # the download even when height_px numerically matched the live plot.
+  #
+  # An earlier revision over-corrected this by ALSO inflating the per-row
+  # pixel budget (14px instead of 10px) and adding a 25% margin on top,
+  # which produced downloads with much more row spacing than the on-screen
+  # version actually has -- rows looked too large/spread out. This version
+  # just fixes the /72-vs-/96 conversion and otherwise matches the
+  # on-screen formula exactly (10px/row, same 900px base), so a download
+  # looks like a 1:1 copy of what's on screen rather than larger OR
+  # smaller. The only deliberate difference is a taller cap (4000px vs.
+  # the on-screen view's 2000px): a saved file has no viewport to fit
+  # into, so very large "All" selections (beyond ~111 targets, where the
+  # on-screen plot itself stops growing) can keep getting a bit more room
+  # in the download than the live view ever shows.
+  binding_heatmap_dl_height_in <- function(n_targets) {
+    height_px <- min(900 + (n_targets - 1) * 10, 4000)
+    height_px / 72
+  }
+
   output$dl_binding <- downloadHandler(
     filename = function() {
       rbp <- if (!is.null(input$binding_search) && nchar(input$binding_search) > 0)
@@ -1291,14 +1357,7 @@ server <- function(input, output, session) {
         }
       }, error = function(e) 1)
       if (is.null(n_targets) || length(n_targets) == 0 || is.na(n_targets) || n_targets < 1) n_targets <- 1
-      height_px <- min(900 + (n_targets - 1) * 10, 2000)
-      # The saved PNG mirrors the on-screen pixel height exactly, but a
-      # static raster render needs a little extra breathing room around each
-      # row label than the live, scrollable browser view does -- without
-      # this the bottom-most row labels on a big "All targets" heatmap come
-      # out just slightly cramped. 12% extra height fixes that without
-      # touching the (already-correct) on-screen sizing.
-      height_in <- (height_px / 96) * 1.12
+      height_in <- binding_heatmap_dl_height_in(n_targets)
       ggplot2::ggsave(file, plot = p, device = "png",
                       width = 12, height = height_in, dpi = 300, bg = "white",
                       limitsize = FALSE)
@@ -1332,8 +1391,9 @@ server <- function(input, output, session) {
         }
       }, error = function(e) 1)
       if (is.null(n_targets) || length(n_targets) == 0 || is.na(n_targets) || n_targets < 1) n_targets <- 1
-      height_px <- min(900 + (n_targets - 1) * 10, 2000)
-      height_in <- height_px / 96
+      # Same shared helper as dl_binding above (see its definition for why
+      # this is height_px/72, not /96, plus the taller ceiling for downloads).
+      height_in <- binding_heatmap_dl_height_in(n_targets)
       ggplot2::ggsave(file, plot = p, device = "png",
                       width = 12, height = height_in, dpi = 300, bg = "white",
                       limitsize = FALSE)
@@ -1355,7 +1415,46 @@ server <- function(input, output, session) {
   make_dl_ui("event_dpsi",    "dl_event_dpsi")
   make_dl_ui("splice_initial","dl_splice_initial")
   make_dl_ui("binding_disc",  "dl_binding_disc")
-  
+
+  # ── "Packages" modal (floating corner box) ─────────────────────────────────
+  # Reads installed.packages() live from the running container instead of a
+  # hand-typed list, so this always reflects exactly what the Docker image
+  # actually has installed -- no separate list to keep in sync with the
+  # Dockerfile by hand every time a package version changes there.
+  build_package_version_table <- function() {
+    ip <- as.data.frame(installed.packages()[, c("Package", "Version", "Priority")],
+                        stringsAsFactors = FALSE)
+    # Priority is "base" or "recommended" for packages that ship with R
+    # itself (grid, stats, methods, MASS, ...), NA for everything actually
+    # installed via install.packages()/BiocManager::install() -- i.e.
+    # exactly the packages the Dockerfile is responsible for.
+    ip <- ip[is.na(ip$Priority), c("Package", "Version")]
+    ip <- ip[order(ip$Package), ]
+    rownames(ip) <- NULL
+    ip
+  }
+
+  output$packages_table <- renderDT({
+    datatable(build_package_version_table(), filter = "none", rownames = FALSE,
+              options = list(pageLength = 15, scrollX = TRUE, searching = TRUE))
+  })
+
+  observeEvent(input$show_packages_modal, {
+    showModal(modalDialog(
+      title = tagList(fa("r-project", fill = "black", height = "1em"), " R Packages"),
+      size = "l",
+      easyClose = TRUE,
+      footer = modalButton("Close"),
+      tags$p(
+        style = "font-size: 12px; color: #666; margin-top: -5px;",
+        paste0("R ", getRversion(),
+               " — package versions as installed in this running container ",
+               "(i.e. exactly what the Docker image was built with).")
+      ),
+      DTOutput("packages_table")
+    ))
+  })
+
   # ── Table download handlers ────────────────────────────────────────────────
   output$dl_volcano_table        <- make_table_dl_handler(display_table,  "expression_volcano_table")
   output$dl_geneset_table        <- make_table_dl_handler(gsea_table_rv,  "expression_gsea_table")
@@ -1733,7 +1832,7 @@ server <- function(input, output, session) {
           geom_point(alpha = 0.7) +
           scale_color_manual(values = c("None" = "#CCCCCC", "RBP" = "#A10702", "Selected" = "#008057")) +
           theme_bw() + theme(legend.position = "none") +
-          labs(title = paste("Volcano Plot:", rbp_sel), x = "dPSI (shRNA - CTRL)", y = "PDiff")
+          labs(title = paste0("Volcano Plot: ", rbp_sel, " KD"), x = "dPSI (shRNA - CTRL)", y = "PDiff")
         dl_store$splice_volcano(p)
         make_splice_volcano_plot_hc(tbl, rbp_sel)
       })
@@ -2573,8 +2672,7 @@ server <- function(input, output, session) {
             event_type   = event_type,
             PSIthreshold = psi_thresh,
             metric       = metric,
-            plot         = TRUE,
-            title        = targets_sel
+            plot         = TRUE
           )
         })
         dl_store$binding_disc(p)
@@ -2637,10 +2735,14 @@ server <- function(input, output, session) {
                                     "<br>logFC: ", round(logFC,2),
                                     "<br>B: ", round(B,2),
                                     "<br>P: ", signif(P.Value,3)))) +
-        geom_point(aes(color = highlight), alpha = 0.7) +
+        geom_point(aes(color = highlight, size = highlight), alpha = 0.7) +
         scale_color_manual(values = c("None"="#CCCCCC",
                                       "RBP"="#A10702",
                                       "Selected"="#008057")) +
+        # The highlighted "RBP" point (the searched RBP's own gene) renders
+        # bigger than the background cloud, matching the on-screen
+        # highcharter version below.
+        scale_size_manual(values = c("None"=1.5, "RBP"=4, "Selected"=2.5)) +
         theme_bw() +
         labs(title=paste(rbp,"KD"), x="Log2 Fold-Change", y="B-statistic") +
         theme(legend.position="none", plot.title=element_text(hjust=0.5)) +
@@ -2705,19 +2807,46 @@ server <- function(input, output, session) {
     plot_df$b_r     <- round(plot_df$B, 2)
     plot_df$p_r     <- signif(plot_df$P.Value, 3)
 
-    highcharter::hchart(
-      plot_df, "scatter",
-      highcharter::hcaes(x = logFC, y = B, color = point_color, gene = gene,
-                         logfc_r = logfc_r, b_r = b_r, p_r = p_r),
-      fast = TRUE
-    ) %>%
+    # Highcharts only supports a per-point marker RADIUS via a nested
+    # marker:{radius:} object on manually built point lists -- hcaes()'s flat
+    # column mapping (how per-point *color* already works, e.g. point_color
+    # above) can't express that. Splitting into two series -- background
+    # cloud vs. the highlighted "RBP" point(s) -- lets each use its own fixed
+    # series-level marker radius, so the RBP's own gene renders visibly
+    # bigger than the rest, in addition to its red color.
+    is_rbp <- plot_df$highlight == "RBP"
+    bg_df  <- plot_df[!is_rbp, , drop = FALSE]
+    rbp_df <- plot_df[ is_rbp, , drop = FALSE]
+
+    hc <- highcharter::highchart() %>%
       highcharter::hc_title(text = paste(rbp, "KD")) %>%
       highcharter::hc_xAxis(title = list(text = "Log2 Fold-Change")) %>%
       highcharter::hc_yAxis(title = list(text = "B-statistic")) %>%
       highcharter::hc_tooltip(pointFormat = "Gene: {point.gene}<br>logFC: {point.logfc_r}<br>B: {point.b_r}<br>P: {point.p_r}") %>%
-      highcharter::hc_plotOptions(scatter = list(marker = list(radius = 5, lineWidth = 1, lineColor = "black"))) %>%
       highcharter::hc_legend(enabled = FALSE) %>%
       hc_add_click_input(output_id)
+
+    if (nrow(bg_df) > 0) {
+      hc <- hc %>%
+        highcharter::hc_add_series(
+          data = bg_df, type = "scatter",
+          highcharter::hcaes(x = logFC, y = B, color = point_color, gene = gene,
+                             logfc_r = logfc_r, b_r = b_r, p_r = p_r),
+          marker = list(radius = 5, lineWidth = 1, lineColor = "black"),
+          showInLegend = FALSE
+        )
+    }
+    if (nrow(rbp_df) > 0) {
+      hc <- hc %>%
+        highcharter::hc_add_series(
+          data = rbp_df, type = "scatter",
+          highcharter::hcaes(x = logFC, y = B, color = point_color, gene = gene,
+                             logfc_r = logfc_r, b_r = b_r, p_r = p_r),
+          marker = list(radius = 9, lineWidth = 1, lineColor = "black"),
+          showInLegend = FALSE
+        )
+    }
+    hc
   }
 
   # ---- Splicing volcano plot helper (interactive, highcharter) ----
@@ -2738,7 +2867,7 @@ server <- function(input, output, session) {
       highcharter::hcaes(x = dPSI, y = Pdiff, color = point_color, key = Event.ID),
       fast = TRUE
     ) %>%
-      highcharter::hc_title(text = paste("Volcano Plot:", rbp)) %>%
+      highcharter::hc_title(text = paste0("Volcano Plot: ", rbp, " KD")) %>%
       highcharter::hc_xAxis(title = list(text = "dPSI (shRNA - CTRL)")) %>%
       highcharter::hc_yAxis(title = list(text = "PDiff")) %>%
       highcharter::hc_tooltip(pointFormat = "Event: {point.key}") %>%
@@ -2929,7 +3058,7 @@ server <- function(input, output, session) {
         need(gene %in% unlist(lapply(charm_obj, function(x) rownames(x$DEGenes))),
              paste("Gene", gene, "not found in any RBP DEGenes tables."))
       )
-      p <- plot_gene_logFC_barplot(charm_obj, gene)
+      p <- plot_gene_t_barplot(charm_obj, gene)
       dl_store$expr_gene(p)
       p
     })
@@ -3138,7 +3267,7 @@ server <- function(input, output, session) {
         scale_color_manual(values = c("None"="#CCCCCC","RBP"="#A10702","Selected"="#008057")) +
         theme_bw() +
         theme(legend.position = "none") +
-        labs(title = paste("Volcano Plot:", rbp_sel), x = "dPSI (shRNA - CTRL)", y = "PDiff")
+        labs(title = paste0("Volcano Plot: ", rbp_sel, " KD"), x = "dPSI (shRNA - CTRL)", y = "PDiff")
       dl_store$splice_volcano(p)
       make_splice_volcano_plot_hc(tbl, rbp_sel)
     }
@@ -3947,9 +4076,13 @@ server <- function(input, output, session) {
         }
         dpsi_key   <- dpsi_resolved$key
         dpsi_value <- suppressWarnings(as.numeric(sub(" .*", "", dpsi_key)))
-        plot_title <- paste(rbp, targets)
+        # eCLIPSE_full() builds its own "<target> Binding Profile - Upon
+        # <rnaBP> KD" title from its rnaBP/target arguments -- plot_title
+        # here is only an optional appended note (e.g. the dPSI fallback
+        # warning), not the main title text.
+        plot_title <- NULL
         if (isTRUE(dpsi_resolved$fallback)) {
-          plot_title <- paste0(plot_title, " [* fell back to 0.1, no maximised value available]")
+          plot_title <- "[* fell back to 0.1, no maximised value available]"
         }
         p <- eCLIPSE_full(
           bindingvalues_nested = data,
@@ -4265,6 +4398,7 @@ server <- function(input, output, session) {
     all_profile_ids <- rownames(sim_objs[["Both Cells"]]$inc$mean_profiles)
     if (is.null(all_profile_ids)) all_profile_ids <- character(0)
 
+    all_profile_ids <- sort(all_profile_ids)
     updateSelectizeInput(session, "binding_sim_query_id", choices = all_profile_ids, server = TRUE)
     updateSelectizeInput(session, "binding_sim_compare",  choices = all_profile_ids, server = TRUE)
   })
@@ -4312,12 +4446,18 @@ server <- function(input, output, session) {
           column(6,
                  tags$h5("Both Cells — Increased Events", style = "text-align:center;"),
                  shinycssloaders::withSpinner(
-                   plotOutput("binding_sim_plot_both_inc", height = "400px"), type = 6)
+                   plotOutput("binding_sim_plot_both_inc", height = "400px"), type = 6),
+                 div(style = "text-align:center; margin-top:5px;",
+                     downloadButton("dl_binding_sim_plot_both_inc", "↓ Download plot",
+                                    class = "btn btn-sm btn-default"))
           ),
           column(6,
                  tags$h5("Both Cells — Decreased Events", style = "text-align:center;"),
                  shinycssloaders::withSpinner(
-                   plotOutput("binding_sim_plot_both_dec", height = "400px"), type = 6)
+                   plotOutput("binding_sim_plot_both_dec", height = "400px"), type = 6),
+                 div(style = "text-align:center; margin-top:5px;",
+                     downloadButton("dl_binding_sim_plot_both_dec", "↓ Download plot",
+                                    class = "btn btn-sm btn-default"))
           )
         ),
         
@@ -4326,12 +4466,18 @@ server <- function(input, output, session) {
           column(6,
                  tags$h5("K562 — Increased Events", style = "text-align:center;"),
                  shinycssloaders::withSpinner(
-                   plotOutput("binding_sim_plot_K562_inc", height = "400px"), type = 6)
+                   plotOutput("binding_sim_plot_K562_inc", height = "400px"), type = 6),
+                 div(style = "text-align:center; margin-top:5px;",
+                     downloadButton("dl_binding_sim_plot_K562_inc", "↓ Download plot",
+                                    class = "btn btn-sm btn-default"))
           ),
           column(6,
                  tags$h5("K562 — Decreased Events", style = "text-align:center;"),
                  shinycssloaders::withSpinner(
-                   plotOutput("binding_sim_plot_K562_dec", height = "400px"), type = 6)
+                   plotOutput("binding_sim_plot_K562_dec", height = "400px"), type = 6),
+                 div(style = "text-align:center; margin-top:5px;",
+                     downloadButton("dl_binding_sim_plot_K562_dec", "↓ Download plot",
+                                    class = "btn btn-sm btn-default"))
           )
         ),
         
@@ -4340,12 +4486,18 @@ server <- function(input, output, session) {
           column(6,
                  tags$h5("HEPG2 — Increased Events", style = "text-align:center;"),
                  shinycssloaders::withSpinner(
-                   plotOutput("binding_sim_plot_HEPG2_inc", height = "400px"), type = 6)
+                   plotOutput("binding_sim_plot_HEPG2_inc", height = "400px"), type = 6),
+                 div(style = "text-align:center; margin-top:5px;",
+                     downloadButton("dl_binding_sim_plot_HEPG2_inc", "↓ Download plot",
+                                    class = "btn btn-sm btn-default"))
           ),
           column(6,
                  tags$h5("HEPG2 — Decreased Events", style = "text-align:center;"),
                  shinycssloaders::withSpinner(
-                   plotOutput("binding_sim_plot_HEPG2_dec", height = "400px"), type = 6)
+                   plotOutput("binding_sim_plot_HEPG2_dec", height = "400px"), type = 6),
+                 div(style = "text-align:center; margin-top:5px;",
+                     downloadButton("dl_binding_sim_plot_HEPG2_dec", "↓ Download plot",
+                                    class = "btn btn-sm btn-default"))
           )
         )
       )
@@ -4377,8 +4529,15 @@ server <- function(input, output, session) {
               direction     = dir_local,
               dataset_label = ds_local
             )
+            dyn_dl_store[[plot_id]] <- res$heatmap
             res$heatmap
           })
+
+          dl_id <- paste0("dl_", plot_id)
+          output[[dl_id]] <- make_dyn_dl_handler(
+            plot_id,
+            paste0("binding_similar_profile_", ds_key, "_", dir_local)
+          )
         })
       }
     }
@@ -4463,6 +4622,11 @@ server <- function(input, output, session) {
                                          # even if something below errors
     layers    <- input$network_layers
     cell      <- input$network_cellline
+    # Display-only label for plot titles below -- "Both" on its own reads
+    # ambiguously (both... what?), so titles say "Both cell lines" instead.
+    # `cell` itself must stay the raw "Both"/"K562"/"HEPG2" value: it drives
+    # real data lookups downstream (get_charm_object(cell), switch(cell, ...)).
+    cell_label <- if (identical(cell, "Both")) "Both cell lines" else cell
     btypes    <- input$network_binding_type
     dirs      <- input$network_binding_dir
     plot_type <- input$network_plot_type
@@ -4573,7 +4737,7 @@ server <- function(input, output, session) {
       diss_mat <- 1 - avg_cor   # dissimilarity in [0, 2]
 
       weight_str <- paste(
-        sapply(active_layers, function(l) sprintf("%s (%.0f%%)", l, w[l] * 100)),
+        sapply(active_layers, function(l) sprintf("%s (%.2f)", l, w[l])),
         collapse = " | "
       )
       caption_base <- paste0("Dissimilarity = 1 \u2212 weighted Spearman r  |  n = ",
@@ -4594,7 +4758,7 @@ server <- function(input, output, session) {
           plot_type = "MDS", df = df, common_rbps = common_rbps,
           xlab = paste0("MDS Dim 1 (", ve[1], "% var.)"),
           ylab = paste0("MDS Dim 2 (", ve[2], "% var.)"),
-          title = paste0("RBP Similarity — MDS (", cell, ")"),
+          title = paste0("RBP Similarity — MDS (", cell_label, ")"),
           weight_str = weight_str,
           caption_base = caption_base
         ))
@@ -4610,7 +4774,7 @@ server <- function(input, output, session) {
           plot_type = "PCA", df = df, common_rbps = common_rbps,
           xlab = paste0("PC1 (", ve[1], "% var.)"),
           ylab = paste0("PC2 (", ve[2], "% var.)"),
-          title = paste0("RBP Similarity — PCA (", cell, ")"),
+          title = paste0("RBP Similarity — PCA (", cell_label, ")"),
           weight_str = weight_str,
           caption_base = caption_base
         ))
@@ -4629,7 +4793,7 @@ server <- function(input, output, session) {
         return(list(
           plot_type = "t-SNE", df = df, common_rbps = common_rbps,
           xlab = "t-SNE 1", ylab = "t-SNE 2",
-          title = paste0("RBP Similarity — t-SNE (", cell, ")"),
+          title = paste0("RBP Similarity — t-SNE (", cell_label, ")"),
           weight_str = weight_str,
           caption_base = caption_base
         ))
@@ -4640,7 +4804,7 @@ server <- function(input, output, session) {
         dend <- as.dendrogram(hc)
         return(list(
           plot_type = "Dendrogram", dend = dend, common_rbps = common_rbps,
-          cell = cell, weight_str = weight_str
+          cell = cell_label, weight_str = weight_str
         ))
       }
 
