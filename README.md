@@ -57,7 +57,6 @@ Source for both lives in [`docs/`](docs/).
 | `Dockerfile`, `.dockerignore` | Container build for deploying the app. |
 | `www/` | Static assets served by the Shiny app (logo). |
 | `Images/` | Screenshots and figures used in documentation/READMEs. |
-| `data/` *(not on GitHub)* | Precomputed app data (ENCODE-derived expression/splicing/binding tables, `.qs2` objects). Too large for git. See [Large data files](#large-data-files) below. |
 | `example_data/` | Small example input files for trying the app's Discovery-mode upload features. |
 | `eCLIPSE/` | The eCLIPSE pipeline: preprocessing scripts (`Eclip_preprocessing_*.R`, `eCLIPSE_Exon.py`, `eCLIPSE_Intron.py`), the RNA-binding-map notebooks (`Eclip_position_matrix.Rmd`, `eCLIPSE_plotting_functions.Rmd`), and small reference tables. Some raw event tables here are too large for git. See [Large data files](#large-data-files). See [`eCLIPSE/README.md`](eCLIPSE/README.md) for details on running the pipeline. |
 | `Markdowns/` | Supplementary R Markdown notebooks documenting each app module (Expression, Splicing, Binding) and the original eCLIPSE analysis notebook these pipeline scripts were extracted from. |
