@@ -223,6 +223,41 @@ ui <- fluidPage(
         outline: none;
         box-shadow: 0 0 5px rgba(44,62,80,0.4);
       }
+      .charm-home { max-width: 1180px; margin: 0 auto; padding: 0 20px 60px; }
+      .charm-hero { display: flex; align-items: center; justify-content: center; gap: 22px;
+                    margin: 22px 0 6px; flex-wrap: wrap; }
+      .charm-hero-logo img { height: 90px; }
+      .charm-hero-text h1 { margin: 0; font-weight: bold; }
+      .charm-hero-text h4 { margin: 2px 0 0; font-weight: bold; }
+      .charm-section { margin: 30px 0; }
+      .charm-section h2 { text-align: center; font-weight: bold; font-size: 26px; margin: 0 0 14px; }
+      .charm-lead { max-width: 900px; margin: 0 auto 10px; font-size: 15.5px; line-height: 1.55;
+                    color: #333; text-align: center; }
+      .charm-schematic { display: block; width: 100%; max-width: 1100px; height: auto; margin: 18px auto 6px; }
+      .charm-coverage { text-align: center; font-size: 12.5px; color: #666; margin: 4px 0 0; }
+      .charm-layers { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+                      gap: 18px; margin: 8px 0 0; }
+      .charm-layer { background: #f6f7f7; border-top: 3px solid #2c3e50; border-radius: 6px; padding: 14px 18px; }
+      .charm-layer h4 { display: inline-block; margin: 0 0 6px 8px; font-weight: bold; }
+      .charm-layer-num { display: inline-flex; width: 26px; height: 26px; border-radius: 50%;
+                         background: #2c3e50; color: #fff; font-weight: bold; align-items: center;
+                         justify-content: center; font-size: 14px; }
+      .charm-layer p { margin: 0; font-size: 14px; color: #333; }
+      .charm-questions { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px 22px; }
+      .charm-q { border-left: 4px solid #BA3B46; padding: 6px 0 6px 14px; }
+      .charm-q b { display: block; font-size: 15px; margin-bottom: 2px; }
+      .charm-q span { font-size: 13.5px; color: #444; }
+      .charm-cards { display: flex; gap: 24px; justify-content: center; flex-wrap: wrap; }
+      .charm-card { flex: 1 1 420px; max-width: 560px; cursor: pointer; background: #EAEBEB; color: black;
+                    border: 2px solid #2c3e50; border-radius: 20px; overflow: hidden; text-align: center;
+                    transition: transform .12s ease, box-shadow .12s ease; }
+      .charm-card:hover { transform: translateY(-3px); box-shadow: 0 6px 16px rgba(0,0,0,.18); }
+      .charm-card-body { padding: 22px 24px 24px; }
+      .charm-card-body h3 { margin: 4px 0 8px; font-weight: bold; }
+      .charm-card-body p { margin: 0; }
+      .charm-tutorial { text-align: center; margin: 16px 0 0; font-size: 14px; }
+      .charm-footer { text-align: center; font-size: 12px; color: #666; max-width: 900px;
+                      margin: 0 auto; padding-top: 14px; border-top: 1px solid #e0e0e0; }
     ")),
     tags$script(HTML("
       Shiny.addCustomMessageHandler('toggleCursor', function(state) {
@@ -265,62 +300,130 @@ ui <- fluidPage(
     tabPanel(
       tagList(fa("home", fill = "black", height = "1em"), " Home"),
       value = "Home",
-      fluidPage(
-        fluidRow(
-          column(
-            4,
-            div(
-              style = "display: flex; align-items: center; justify-content: center; margin: 30px 0;",
-              div(style = "margin-right: 15px;", 
-                  tags$img(src = logo_b64, height = "200px")),  # <-- logo_b64, not a file path
-              div(
-                style = "text-align: left;",
-                tags$h2("CHARM", style = "margin: 0; font-weight: bold;"),
-                tags$h4("Comprehensive Hub of Alternative Regulatory Mapping", style = "margin: 0; font-weight: bold;")
-              )
-            )
+      div(
+        class = "charm-home",
+
+        # ── Hero (compact) ──────────────────────────────────────────────────
+        div(
+          class = "charm-hero",
+          div(class = "charm-hero-logo", tags$img(src = logo_b64, alt = "CHARM logo")),
+          div(
+            class = "charm-hero-text",
+            tags$h1("CHARM"),
+            tags$h4("Comprehensive Hub of Alternative Regulatory Mapping")
           )
         ),
-        fluidRow(
-          column(
-            4,
-            tags$div(
-              style = "cursor:pointer;",
-              onclick = "Shiny.setInputValue('home_go_explore', Math.random());",
-              tags$div(
-                style = "background-color:#EAEBEB; color:black; border:2px solid #2c3e50; border-radius:20px; padding:40px; text-align:center; margin:15px;",
-                div(style = "margin-bottom:10px;", fa("globe", fill = "black", height = "3em")),
-                tags$h3("Explore", style = "font-weight:bold;"),
-                tags$p("Investigate how a known RBP affects expression, splicing, and binding, based on ENCODE's gene silencing series and eCLIP data.")
-              )
-            )
+
+        # ── Why CHARM: the biological motivation ────────────────────────────
+        div(
+          class = "charm-section",
+          tags$h2("Why CHARM?"),
+          tags$p(
+            class = "charm-lead",
+            "RNA-binding proteins (RBPs) control how RNAs are processed, from alternative splicing to stability ",
+            "and translation. Their dysregulation is linked to diseases such as cancer and neurodegeneration, ",
+            "yet for most RBPs we still do not know which targets matter, or how they act."
           ),
-          column(
-            4,
-            tags$div(
-              style = "cursor:pointer;",
-              onclick = "Shiny.setInputValue('home_go_discover', Math.random());",
-              tags$div(
-                style = "background-color:#EAEBEB; color:black; border:2px solid #2c3e50; border-radius:20px; padding:40px; text-align:center; margin:15px;",
-                div(style = "margin-bottom:10px;", fa("map", fill = "black", height = "3em")),
-                tags$h3("Discovery", style = "font-weight:bold;"),
-                tags$p("Upload your own expression, splicing, or binding data to discover which RBPs are most likely altered in your biological system.")
-              )
-            )
+          tags$p(
+            class = "charm-lead",
+            "An RBP acts through ", tags$b("three connected layers"), " at once: where it binds, which exons it reshapes, ",
+            "and which genes and pathways end up changing. Datasets usually capture only one of them, and each can ",
+            "mislead on its own: an expression change may be indirect, and a binding site may have no functional effect. ",
+            "CHARM puts the three layers side by side."
           ),
-          column(
-            4,
-            tags$div(
-              style = "cursor:pointer;",
-              onclick = "Shiny.setInputValue('home_go_network', Math.random());",
-              tags$div(
-                style = "background-color:#EAEBEB; color:black; border:2px solid #2c3e50; border-radius:20px; padding:40px; text-align:center; margin:15px;",
-                div(style = "margin-bottom:10px;", fa("project-diagram", fill = "black", height = "3em")),
-                tags$h3("Network", style = "font-weight:bold;"),
-                tags$p("Explore multi-omic RBP similarity via an integrated network combining expression, splicing, and binding layers.")
-              )
-            )
+          tags$img(class = "charm-schematic", src = "charm_schematic.svg",
+                   alt = "Schematic: an RBP binds pre-mRNA near an alternative exon (binding), changes exon inclusion (splicing) and alters gene expression. CHARM covers all three layers."),
+          tags$p(
+            class = "charm-coverage",
+            sprintf("Currently covering %d RBPs with expression and splicing data and %d with eCLIP binding maps, ",
+                    length(ALL_RBP_NAMES), length(ALL_BINDING_RBP_NAMES_ES)),
+            "from ENCODE knockdown and eCLIP experiments in HepG2 and K562 cells."
           )
+        ),
+
+        # ── What each layer adds ────────────────────────────────────────────
+        div(
+          class = "charm-layers",
+          div(class = "charm-layer",
+              div(class = "charm-layer-num", "1"),
+              tags$h4("Binding"),
+              tags$p("Does the RBP sit next to the exons it seems to control? eCLIPSE maps eCLIP signal around splicing events, helping to separate direct targets from indirect ones.")),
+          div(class = "charm-layer",
+              div(class = "charm-layer-num", "2"),
+              tags$h4("Splicing"),
+              tags$p("Which splicing events depend on the RBP? Event-level changes in exon inclusion (ΔPSI) after knockdown, quantified with betAS on VastDB events.")),
+          div(class = "charm-layer",
+              div(class = "charm-layer-num", "3"),
+              tags$h4("Expression"),
+              tags$p("Which genes and cellular programs change? Differential expression after knockdown, with Hallmark gene-set enrichment."))
+        ),
+
+        # ── Questions CHARM can answer ──────────────────────────────────────
+        div(
+          class = "charm-section",
+          tags$h2("Questions CHARM helps you answer"),
+          div(
+            class = "charm-questions",
+            div(class = "charm-q", tags$b("Which RBP could explain my data?"),
+                tags$span("Upload an expression, splicing or binding signature and rank the RBPs whose knockdown looks most like it.")),
+            div(class = "charm-q", tags$b("Is this RBP regulating splicing directly?"),
+                tags$span("Check whether binding sits at the affected exons, not just whether their splicing changes.")),
+            div(class = "charm-q", tags$b("What happens downstream of an RBP?"),
+                tags$span("Follow one RBP from its splicing events to the genes and Hallmark pathways that shift.")),
+            div(class = "charm-q", tags$b("What controls my gene, event or pathway?"),
+                tags$span("Search by gene, splicing event or Hallmark gene set to find the RBPs that move it.")),
+            div(class = "charm-q", tags$b("Do two RBPs have similar effects?"),
+                tags$span("Compare knockdown signatures to spot RBPs that may share targets or pathways, as hypotheses to test.")),
+            div(class = "charm-q", tags$b("Is the effect cell-type specific?"),
+                tags$span("Compare HepG2 and K562, or look at both together."))
+          )
+        ),
+
+        # ── Entry points ────────────────────────────────────────────────────
+        div(
+          class = "charm-section",
+          tags$h2("Start here"),
+          div(
+            class = "charm-cards",
+            div(
+              class = "charm-card",
+              onclick = "Shiny.setInputValue('home_go_explore', Math.random());",
+              div(class = "charm-card-body",
+                  div(class = "charm-card-icon", fa("globe", fill = "black", height = "2em")),
+                  tags$h3("Explore"),
+                  tags$p("Investigate how a known RBP affects expression, splicing, and binding, based on ENCODE's gene silencing series and eCLIP data."))
+            ),
+            div(
+              class = "charm-card",
+              onclick = "Shiny.setInputValue('home_go_discover', Math.random());",
+              div(class = "charm-card-body",
+                  div(class = "charm-card-icon", fa("map", fill = "black", height = "2em")),
+                  tags$h3("Discovery"),
+                  tags$p("Upload your own expression, splicing, or binding data to discover which RBPs are most likely altered in your biological system."))
+            )
+            # DISABLED: Network module intentionally commented out. Code kept intact for a future redesign; to restore, uncomment this block, the Home card, and the home_go_network observer. [Home card]
+            # ,div(
+            # class = "charm-card",
+            # onclick = "Shiny.setInputValue('home_go_network', Math.random());",
+            # div(class = "charm-card-body",
+            # div(class = "charm-card-icon", fa("project-diagram", fill = "black", height = "2em")),
+            # tags$h3("Network"),
+            # tags$p("Explore multi-omic RBP similarity via an integrated network combining expression, splicing, and binding layers."))
+            # )
+          ),
+          tags$p(class = "charm-tutorial",
+                 "New to CHARM? ",
+                 tags$a(href = "https://diseasetranscriptomicslab.github.io/CHARM/", target = "_blank",
+                        "Read the step-by-step tutorial."))
+        ),
+
+        # ── Footer: data sources and citation ───────────────────────────────
+        div(
+          class = "charm-footer",
+          "CHARM is developed by the Disease Transcriptomics Lab. Data: ENCODE (Luo et al., 2020); ",
+          "splicing quantified with betAS (Ferreira et al., 2024) using VastDB event IDs (Tapial et al., 2017). ",
+          "Archived at ", tags$a(href = "https://doi.org/10.5281/zenodo.21724194", target = "_blank",
+                                 "doi:10.5281/zenodo.21724194"), "."
         )
       )
     ),
@@ -917,153 +1020,153 @@ ui <- fluidPage(
           )
         )
       )
-    ),
-    
-    # Network tab
-    tabPanel(
-      tagList(fa("project-diagram", fill = "black", height = "1em"), " Network"),
-      value = "Network",
-      fluidPage(
-        fluidRow(
-          # ── Left sidebar ──────────────────────────────────────────────────
-          column(
-            width = 3,
-            wellPanel(
-              # Cell line
-              radioButtons(
-                "network_cellline",
-                "Cell line:",
-                choices  = c("Both", "K562", "HEPG2"),
-                selected = "Both"
-              ),
-
-              hr(),
-
-              # ── Plot type ──
-              tags$h5("Plot type:", style = "font-weight: bold;"),
-              radioButtons(
-                "network_plot_type",
-                label    = NULL,
-                choices  = c("MDS", "PCA", "t-SNE", "Dendrogram"),
-                selected = "MDS"
-              ),
-
-              hr(),
-
-              # Data layers
-              tags$h5("Data layers:", style = "font-weight: bold;"),
-              checkboxGroupInput(
-                "network_layers",
-                label    = NULL,
-                choices  = c("Expression", "Splicing", "Binding"),
-                selected = "Binding"
-              ),
-
-              # Slow-layer warning
-              conditionalPanel(
-                condition = "input.network_layers.indexOf('Expression') !== -1 ||
-                             input.network_layers.indexOf('Splicing') !== -1",
-                tags$div(
-                  style = "background:#fff3cd; border:1px solid #ffc107;
-                           border-radius:6px; padding:8px 10px; margin-top:6px;
-                           font-size:11px; color:#856404;",
-                  tags$b("\u26a0 Note:"),
-                  " Expression and Splicing layers build large feature matrices
-                    and may take a few minutes to compute depending on the
-                    number of RBPs. Please be patient after clicking Plot."
-                )
-              ),
-
-              # ── Binding sub-options ──
-              conditionalPanel(
-                condition = "input.network_layers.indexOf('Binding') !== -1",
-                tags$h6("Event type:", style = "margin-top: 10px; font-weight: bold;"),
-                checkboxGroupInput(
-                  "network_binding_type",
-                  label    = NULL,
-                  choices  = c("Intron Retention", "Exon Skipping"),
-                  selected = c("Intron Retention", "Exon Skipping")
-                ),
-                tags$h6("Direction:", style = "margin-top: 8px; font-weight: bold;"),
-                checkboxGroupInput(
-                  "network_binding_dir",
-                  label    = NULL,
-                  choices  = c("Increased", "Decreased"),
-                  selected = c("Increased", "Decreased")
-                )
-              ),
-
-              hr(),
-
-              # ── Layer weights ──
-              tags$h5("Layer weights:", style = "font-weight: bold;"),
-              tags$p(
-                "Weights are automatically normalised to sum to 1.",
-                style = "font-size: 11px; color: #888; margin-top: -5px;"
-              ),
-
-              conditionalPanel(
-                condition = "input.network_layers.indexOf('Expression') !== -1",
-                sliderInput("network_weight_expr",   "Expression weight:",
-                            min = 0, max = 1, value = 0.33, step = 0.05)
-              ),
-              conditionalPanel(
-                condition = "input.network_layers.indexOf('Splicing') !== -1",
-                sliderInput("network_weight_splice", "Splicing weight:",
-                            min = 0, max = 1, value = 0.33, step = 0.05)
-              ),
-              conditionalPanel(
-                condition = "input.network_layers.indexOf('Binding') !== -1",
-                sliderInput("network_weight_binding","Binding weight:",
-                            min = 0, max = 1, value = 0.34, step = 0.05)
-              ),
-
-              hr(),
-
-              # ── RBP highlight search ──
-              tags$h5("Highlight RBPs:", style = "font-weight: bold;"),
-              tags$p("Selected RBPs will be highlighted in red on the plot.",
-                     style = "font-size: 11px; color: #888; margin-top: -5px;"),
-              selectizeInput(
-                "network_highlight_rbps",
-                label   = NULL,
-                choices = sort(ALL_RBP_NAMES),
-                multiple = TRUE,
-                options  = list(placeholder = "Type to search RBPs...")
-              ),
-
-              hr(),
-
-              actionButton(
-                "network_plot_btn",
-                tagList(fa("chart-line"), " Plot"),
-                class = "btn btn-primary",
-                style = "border-radius: 20px; width: 100%;"
-              )
-            )
-          ),
-
-          # ── Right plot area ───────────────────────────────────────────────
-          column(
-            width = 9,
-            tags$h3("RBP Similarity Network"),
-            tags$p(
-              "Multi-omic ordination of RBP similarity. Each point is an RBP;
-               proximity reflects similarity across the selected data layers
-               (Expression: t-statistics across shared genes; Splicing: dPSI
-               across shared events; Binding: profile shape across regulated
-               splice sites). Layer weights are normalised to sum to 1.",
-              style = "color: #555; font-size: 13px; margin-bottom: 15px;"
-            ),
-            shinycssloaders::withSpinner(
-              plotOutput("network_mds_plot", height = "600px"),
-              type = 6
-            ),
-            uiOutput("dl_ui_network")
-          )
-        )
-      )
     )
+    
+    # DISABLED: Network module intentionally commented out. Code kept intact for a future redesign; to restore, uncomment this block, the Home card, and the home_go_network observer.
+    # tabPanel(
+    #   tagList(fa("project-diagram", fill = "black", height = "1em"), " Network"),
+    #   value = "Network",
+    #   fluidPage(
+    #     fluidRow(
+    #       # ── Left sidebar ──────────────────────────────────────────────────
+    #       column(
+    #         width = 3,
+    #         wellPanel(
+    #           # Cell line
+    #           radioButtons(
+    #             "network_cellline",
+    #             "Cell line:",
+    #             choices  = c("Both", "K562", "HEPG2"),
+    #             selected = "Both"
+    #           ),
+    # 
+    #           hr(),
+    # 
+    #           # ── Plot type ──
+    #           tags$h5("Plot type:", style = "font-weight: bold;"),
+    #           radioButtons(
+    #             "network_plot_type",
+    #             label    = NULL,
+    #             choices  = c("MDS", "PCA", "t-SNE", "Dendrogram"),
+    #             selected = "MDS"
+    #           ),
+    # 
+    #           hr(),
+    # 
+    #           # Data layers
+    #           tags$h5("Data layers:", style = "font-weight: bold;"),
+    #           checkboxGroupInput(
+    #             "network_layers",
+    #             label    = NULL,
+    #             choices  = c("Expression", "Splicing", "Binding"),
+    #             selected = "Binding"
+    #           ),
+    # 
+    #           # Slow-layer warning
+    #           conditionalPanel(
+    #             condition = "input.network_layers.indexOf('Expression') !== -1 ||
+    #                          input.network_layers.indexOf('Splicing') !== -1",
+    #             tags$div(
+    #               style = "background:#fff3cd; border:1px solid #ffc107;
+    #                        border-radius:6px; padding:8px 10px; margin-top:6px;
+    #                        font-size:11px; color:#856404;",
+    #               tags$b("\u26a0 Note:"),
+    #               " Expression and Splicing layers build large feature matrices
+    #                 and may take a few minutes to compute depending on the
+    #                 number of RBPs. Please be patient after clicking Plot."
+    #             )
+    #           ),
+    # 
+    #           # ── Binding sub-options ──
+    #           conditionalPanel(
+    #             condition = "input.network_layers.indexOf('Binding') !== -1",
+    #             tags$h6("Event type:", style = "margin-top: 10px; font-weight: bold;"),
+    #             checkboxGroupInput(
+    #               "network_binding_type",
+    #               label    = NULL,
+    #               choices  = c("Intron Retention", "Exon Skipping"),
+    #               selected = c("Intron Retention", "Exon Skipping")
+    #             ),
+    #             tags$h6("Direction:", style = "margin-top: 8px; font-weight: bold;"),
+    #             checkboxGroupInput(
+    #               "network_binding_dir",
+    #               label    = NULL,
+    #               choices  = c("Increased", "Decreased"),
+    #               selected = c("Increased", "Decreased")
+    #             )
+    #           ),
+    # 
+    #           hr(),
+    # 
+    #           # ── Layer weights ──
+    #           tags$h5("Layer weights:", style = "font-weight: bold;"),
+    #           tags$p(
+    #             "Weights are automatically normalised to sum to 1.",
+    #             style = "font-size: 11px; color: #888; margin-top: -5px;"
+    #           ),
+    # 
+    #           conditionalPanel(
+    #             condition = "input.network_layers.indexOf('Expression') !== -1",
+    #             sliderInput("network_weight_expr",   "Expression weight:",
+    #                         min = 0, max = 1, value = 0.33, step = 0.05)
+    #           ),
+    #           conditionalPanel(
+    #             condition = "input.network_layers.indexOf('Splicing') !== -1",
+    #             sliderInput("network_weight_splice", "Splicing weight:",
+    #                         min = 0, max = 1, value = 0.33, step = 0.05)
+    #           ),
+    #           conditionalPanel(
+    #             condition = "input.network_layers.indexOf('Binding') !== -1",
+    #             sliderInput("network_weight_binding","Binding weight:",
+    #                         min = 0, max = 1, value = 0.34, step = 0.05)
+    #           ),
+    # 
+    #           hr(),
+    # 
+    #           # ── RBP highlight search ──
+    #           tags$h5("Highlight RBPs:", style = "font-weight: bold;"),
+    #           tags$p("Selected RBPs will be highlighted in red on the plot.",
+    #                  style = "font-size: 11px; color: #888; margin-top: -5px;"),
+    #           selectizeInput(
+    #             "network_highlight_rbps",
+    #             label   = NULL,
+    #             choices = sort(ALL_RBP_NAMES),
+    #             multiple = TRUE,
+    #             options  = list(placeholder = "Type to search RBPs...")
+    #           ),
+    # 
+    #           hr(),
+    # 
+    #           actionButton(
+    #             "network_plot_btn",
+    #             tagList(fa("chart-line"), " Plot"),
+    #             class = "btn btn-primary",
+    #             style = "border-radius: 20px; width: 100%;"
+    #           )
+    #         )
+    #       ),
+    # 
+    #       # ── Right plot area ───────────────────────────────────────────────
+    #       column(
+    #         width = 9,
+    #         tags$h3("RBP Similarity Network"),
+    #         tags$p(
+    #           "Multi-omic ordination of RBP similarity. Each point is an RBP;
+    #            proximity reflects similarity across the selected data layers
+    #            (Expression: t-statistics across shared genes; Splicing: dPSI
+    #            across shared events; Binding: profile shape across regulated
+    #            splice sites). Layer weights are normalised to sum to 1.",
+    #           style = "color: #555; font-size: 13px; margin-bottom: 15px;"
+    #         ),
+    #         shinycssloaders::withSpinner(
+    #           plotOutput("network_mds_plot", height = "600px"),
+    #           type = 6
+    #         ),
+    #         uiOutput("dl_ui_network")
+    #       )
+    #     )
+    #   )
+    # )
   ),
   
   # GitHub link floating across ALL tabs
@@ -1516,9 +1619,9 @@ server <- function(input, output, session) {
     updateTabsetPanel(session, "main_tabs", selected = "Expression")
     updateRadioButtons(session, "expr_mode", selected = "Discovery")
   })
-  observeEvent(input$home_go_network, {
-    updateTabsetPanel(session, "main_tabs", selected = "Network")
-  })
+  # observeEvent(input$home_go_network, {
+  # updateTabsetPanel(session, "main_tabs", selected = "Network")
+  # })
   
   
   image_to_ggplot <- function(path) {

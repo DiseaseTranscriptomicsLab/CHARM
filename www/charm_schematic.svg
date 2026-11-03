@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 470" role="img" aria-label="Schematic: an RNA-binding protein binds pre-mRNA, changes exon inclusion, and alters gene expression. CHARM covers all three layers.">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2c3e50"/>
+    </marker>
+    <style>
+      text { font-family: Lato, "Helvetica Neue", Arial, sans-serif; fill: #2c3e50; }
+      .t-h  { font-size: 19px; font-weight: 700; }
+      .t-s  { font-size: 14px; }
+      .t-xs { font-size: 12.5px; fill: #555; }
+      .t-b  { font-size: 13px; font-weight: 700; }
+      .lab  { font-size: 13px; font-weight: 700; fill: #fff; }
+    </style>
+  </defs>
+
+  <!-- cell and nucleus -->
+  <rect x="10" y="10" width="1180" height="360" rx="70" fill="#f7f8f8" stroke="#2c3e50" stroke-width="2.5"/>
+  <text x="60" y="48" class="t-b" fill="#555">CELL</text>
+  <rect x="40" y="62" width="790" height="290" rx="60" fill="#eef3f7" stroke="#2c3e50" stroke-width="2" stroke-dasharray="7 5"/>
+  <text x="70" y="90" class="t-b">NUCLEUS</text>
+
+  <!-- ============ 1. BINDING ============ -->
+  <g transform="translate(0,0)">
+    <circle cx="82" cy="128" r="17" fill="#2c3e50"/><text x="82" y="134" text-anchor="middle" class="lab">1</text>
+    <text x="108" y="134" class="t-h">Binding</text>
+    <!-- pre-mRNA -->
+    <line x1="70" y1="250" x2="400" y2="250" stroke="#2c3e50" stroke-width="3"/>
+    <rect x="70"  y="228" width="60" height="44" rx="4" fill="#1B4F72"/>
+    <rect x="215" y="228" width="70" height="44" rx="4" fill="#B83A47"/>
+    <rect x="340" y="228" width="60" height="44" rx="4" fill="#1B4F72"/>
+    <text x="100" y="255" text-anchor="middle" class="lab">E1</text>
+    <text x="250" y="255" text-anchor="middle" class="lab">E2</text>
+    <text x="370" y="255" text-anchor="middle" class="lab">E3</text>
+    <text x="250" y="292" text-anchor="middle" class="t-xs">alternative exon</text>
+    <!-- RBP -->
+    <g transform="translate(205,172) scale(0.72) translate(-205,-152)"><path d="M150,150 C150,118 205,112 215,136 C240,122 268,140 258,164 C262,186 232,192 212,184 C186,196 150,184 150,150 Z" fill="#7D5BA6"/></g>
+    <text x="205" y="176" text-anchor="middle" class="lab">RBP</text>
+    <path d="M192,198 L192,226 M232,198 L232,226" stroke="#7D5BA6" stroke-width="3" fill="none"/>
+    <!-- eCLIP peaks -->
+    <path d="M140,200 C165,200 170,180 190,180 C210,180 215,200 240,200" fill="none" stroke="none"/>
+    <text x="250" y="324" text-anchor="middle" class="t-s"><tspan font-weight="700">Where does the RBP bind?</tspan></text>
+    <text x="250" y="344" text-anchor="middle" class="t-xs">eCLIP binding maps</text>
+  </g>
+
+  <!-- arrow 1 -> 2 -->
+  <line x1="420" y1="250" x2="468" y2="250" stroke="#2c3e50" stroke-width="3" marker-end="url(#arr)"/>
+
+  <!-- ============ 2. SPLICING ============ -->
+  <g>
+    <circle cx="502" cy="128" r="17" fill="#2c3e50"/><text x="502" y="134" text-anchor="middle" class="lab">2</text>
+    <text x="528" y="134" class="t-h">Splicing</text>
+    <!-- inclusion isoform -->
+    <text x="490" y="176" class="t-xs">inclusion</text>
+    <rect x="490" y="184" width="50" height="30" rx="3" fill="#1B4F72"/>
+    <rect x="552" y="184" width="60" height="30" rx="3" fill="#B83A47"/>
+    <rect x="624" y="184" width="50" height="30" rx="3" fill="#1B4F72"/>
+    <!-- skipping isoform -->
+    <text x="490" y="240" class="t-xs">skipping</text>
+    <rect x="490" y="248" width="50" height="30" rx="3" fill="#1B4F72"/>
+    <rect x="624" y="248" width="50" height="30" rx="3" fill="#1B4F72"/>
+    <path d="M540,248 Q582,226 624,248" fill="none" stroke="#2c3e50" stroke-width="2"/>
+    <!-- delta PSI bars -->
+    <g transform="translate(715,170)">
+      <text x="0" y="-6" class="t-xs">PSI</text>
+      <rect x="0"  y="30" width="30" height="80" fill="#9aa5a8"/>
+      <rect x="40" y="62" width="30" height="48" fill="#BA3B46"/>
+      <text x="15" y="126" text-anchor="middle" class="t-xs">ctrl</text>
+      <text x="55" y="126" text-anchor="middle" class="t-xs">KD</text>
+      <text x="35" y="14" text-anchor="middle" class="t-b" fill="#BA3B46">&#916;PSI</text>
+    </g>
+    <text x="610" y="324" text-anchor="middle" class="t-s"><tspan font-weight="700">Which exons change?</tspan></text>
+    <text x="610" y="344" text-anchor="middle" class="t-xs">exon inclusion after RBP knockdown</text>
+  </g>
+
+  <!-- arrow 2 -> 3 (mRNA export) -->
+  <line x1="800" y1="250" x2="878" y2="250" stroke="#2c3e50" stroke-width="3" marker-end="url(#arr)"/>
+  <text x="839" y="238" text-anchor="middle" class="t-xs">mRNA</text>
+
+  <!-- ============ 3. EXPRESSION ============ -->
+  <g>
+    <circle cx="912" cy="128" r="17" fill="#2c3e50"/><text x="912" y="134" text-anchor="middle" class="lab">3</text>
+    <text x="938" y="134" class="t-h">Expression</text>
+    <!-- volcano-like scatter -->
+    <g transform="translate(905,160)">
+      <line x1="0" y1="110" x2="240" y2="110" stroke="#2c3e50" stroke-width="2"/>
+      <line x1="0" y1="0" x2="0" y2="110" stroke="#2c3e50" stroke-width="2"/>
+      <g fill="#b8bfc1">
+        <circle cx="105" cy="100" r="4"/><circle cx="120" cy="96" r="4"/><circle cx="135" cy="100" r="4"/>
+        <circle cx="96" cy="88" r="4"/><circle cx="145" cy="90" r="4"/><circle cx="112" cy="80" r="4"/>
+        <circle cx="128" cy="76" r="4"/><circle cx="80" cy="84" r="4"/><circle cx="160" cy="82" r="4"/>
+      </g>
+      <g fill="#53A2BE"><circle cx="40" cy="48" r="5"/><circle cx="56" cy="30" r="5"/><circle cx="30" cy="66" r="5"/><circle cx="62" cy="58" r="5"/></g>
+      <g fill="#BA3B46"><circle cx="196" cy="40" r="5"/><circle cx="182" cy="24" r="5"/><circle cx="214" cy="56" r="5"/><circle cx="200" cy="70" r="5"/></g>
+      <text x="120" y="128" text-anchor="middle" class="t-xs">log2 fold-change</text>
+    </g>
+    <text x="1030" y="324" text-anchor="middle" class="t-s"><tspan font-weight="700">Which genes and pathways respond?</tspan></text>
+    <text x="1030" y="344" text-anchor="middle" class="t-xs">differential expression and gene-set enrichment</text>
+  </g>
+
+  <!-- footer band: what CHARM does -->
+  <rect x="10" y="386" width="1180" height="74" rx="16" fill="#2c3e50"/>
+  <text x="600" y="416" text-anchor="middle" style="fill:#fff;font-size:18px;font-weight:700">CHARM connects the three layers for 150+ RBPs in HepG2 and K562 cells</text>
+  <text x="600" y="442" text-anchor="middle" style="fill:#dfe6e9;font-size:14px">to tell direct regulation from indirect effects, and to match your own data to the RBPs most likely responsible</text>
+</svg>

@@ -60,9 +60,11 @@
     <section id="intro">
       <h1 class="sec">1. Introduction</h1>
       <p>RNA-binding proteins (RBPs) regulate almost every stage of RNA metabolism, and among their most consequential roles is the control of alternative splicing. Studying this regulation properly means combining three different kinds of evidence: how much an RBP is expressed, how splicing changes when the RBP is depleted, and where the RBP physically binds its RNA targets. Assembling this evidence normally requires custom, code-heavy pipelines that align CLIP peaks to genomic coordinates, filter genuine alternative-splicing events from constitutive noise, and apply the right statistical test at each step, a barrier that keeps ENCODE's rich public RBP resources largely inaccessible to wet-lab researchers without computational support.</p>
-      <p><b>CHARM (Comprehensive Hub of Alternative Regulatory Mapping)</b> is a no-code, browser-based R/Shiny application built to remove that barrier. It organises RBP-centric data across four modules: Expression, Splicing, Binding, and Network; built on ENCODE shRNA-knockdown RNA-seq, ENCODE eCLIP binding data, and VastDB splicing annotations. The first three modules can be used in either of two modes: Explore mode lets you query this precomputed reference resource directly, while Discovery mode lets you upload your own differential expression or splicing results and compare them against it.</p>
+      <!-- ORIGINAL (with Network): <p><b>CHARM (Comprehensive Hub of Alternative Regulatory Mapping)</b> is a no-code, browser-based R/Shiny application built to remove that barrier. It organises RBP-centric data across four modules: Expression, Splicing, Binding, and Network; built on ENCODE shRNA-knockdown RNA-seq, ENCODE eCLIP binding data, and VastDB splicing annotations. The first three modules can be used in either of two modes: Explore mode lets you query this precomputed reference resource directly, while Discovery mode lets you upload your own differential expression or splicing results and compare them against it.</p> -->
+      <p><b>CHARM (Comprehensive Hub of Alternative Regulatory Mapping)</b> is a no-code, browser-based R/Shiny application built to remove that barrier. It organises RBP-centric data across three modules: Expression, Splicing, and Binding; built on ENCODE shRNA-knockdown RNA-seq, ENCODE eCLIP binding data, and VastDB splicing annotations. The first three modules can be used in either of two modes: Explore mode lets you query this precomputed reference resource directly, while Discovery mode lets you upload your own differential expression or splicing results and compare them against it.</p>
       <p>CHARM is deliberately a hypothesis-generating tool rather than a source of validated mechanistic claims. Every relationship it surfaces , be it an expression-independent functional change, or a candidate indirect regulatory interaction between two RBPs, is a candidate for downstream experimental confirmation, not a substitute for it. Two published analyses illustrate what this can reveal. First, because CHARM assesses RBP activity through binding rather than through expression alone, it can detect functional alterations invisible to expression-only analysis. Sequestration of TIA1 into stress granules produced splicing changes resembling those of <i>TIA1</i> knockdown, even though <i>TIA1</i> expression itself was unchanged. Second, CHARM can flag indirect regulatory relationships: knockdown of <i>RBM39</i> altered the binding of U2AF1 and U2AF2, suggesting RBM39 functions within, or in cooperation with, this splicing complex.</p>
-      <div class="box good"><b class="tag">Good to know:</b> This tutorial walks through all five tabs of the app (Home, Expression, Splicing, Binding, Network), then covers how to read each plot type CHARM produces (<a href="#interpreting">Section 4</a>).</div>
+      <!-- ORIGINAL (with Network): <div class="box good"><b class="tag">Good to know:</b> This tutorial walks through all five tabs of the app (Home, Expression, Splicing, Binding, Network), then covers how to read each plot type CHARM produces (<a href="#interpreting">Section 4</a>).</div> -->
+      <div class="box good"><b class="tag">Good to know:</b> This tutorial walks through all four tabs of the app (Home, Expression, Splicing, Binding), then covers how to read each plot type CHARM produces (<a href="#interpreting">Section 4</a>).</div>
     </section>
 
     <section id="getting-started">
@@ -77,16 +79,22 @@
       <h2 class="sub" id="home-tab">The Home Tab</h2>
       <p class="purpose"><b>Purpose:</b> Orient yourself and jump straight to the module you need.</p>
       <figure class="screenshot">
-        <img src="assets/screenshots/charm-home-screen.png" alt="CHARM Home tab, showing the logo and the three navigation cards: Explore, Discovery, and Network">
-        <figcaption>The CHARM Home tab, with its three navigation cards: Explore, Discovery, and Network.</figcaption>
+        <!-- ORIGINAL (with Network): <img src="assets/screenshots/charm-home-screen.png" alt="CHARM Home tab, showing the logo and the three navigation cards: Explore, Discovery, and Network"> -->
+        <img src="assets/screenshots/charm-home-screen.png" alt="CHARM Home tab, showing the logo and the two navigation cards: Explore and Discovery">
+        <!-- ORIGINAL (with Network): <figcaption>The CHARM Home tab, with its three navigation cards: Explore, Discovery, and Network.</figcaption> -->
+        <figcaption>The CHARM Home tab, with its two navigation cards: Explore and Discovery.</figcaption>
       </figure>
-      <p>The Home tab greets you with the CHARM logo and three clickable cards:</p>
+      <!-- ORIGINAL (with Network): <p>The Home tab greets you with the CHARM logo and three clickable cards:</p> -->
+      <p>The Home tab greets you with the CHARM logo and two clickable cards:</p>
       <ul>
         <li><strong>Explore</strong> — takes you to the Expression tab in Explore mode, to investigate how a known RBP affects expression, using ENCODE's gene-silencing series.</li>
         <li><strong>Discover</strong> — takes you to the Expression tab in Discovery mode, to upload your own expression data and discover which RBPs are most likely altered in your biological system.</li>
+        <!-- DISABLED: Network module is commented out in this version. Original content kept below for a future redesign.
         <li><strong>Network</strong> — takes you directly to the Network tab, to explore multi-omic RBP similarity via an integrated network combining expression, splicing, and binding layers.</li>
+        -->
       </ul>
-      <p>You can also reach any tab directly at any time using the tab bar at the top of the page (Home, Expression, Splicing, Binding, Network), and from each tab switch from Explore (default) to Discover modes.</p>
+      <!-- ORIGINAL (with Network): <p>You can also reach any tab directly at any time using the tab bar at the top of the page (Home, Expression, Splicing, Binding, Network), and from each tab switch from Explore (default) to Discover modes.</p> -->
+      <p>You can also reach any tab directly at any time using the tab bar at the top of the page (Home, Expression, Splicing, Binding), and from each tab switch from Explore (default) to Discover modes.</p>
 
       <h2 class="sub" id="glossary">Glossary of Key Terms</h2>
       <p>CHARM's interface uses a small set of recurring terms drawn from RNA biology and statistics. This glossary is meant as a quick reference list.</p>
@@ -213,6 +221,7 @@
         <figcaption>The Binding tab in Discovery mode: build RNA binding maps directly from your own uploaded splicing categories.</figcaption>
       </figure>
 
+      <!-- DISABLED: Network module is commented out in this version. Original content kept below for a future redesign.
       <h2 class="sub" id="network-tab">3.4 Network Tab</h2>
       <p class="purpose"><b>Purpose:</b> Visualise RBP–RBP similarity by combining Expression, Splicing, and Binding evidence into a single ordination or dendrogram, to spot candidate complexes or functional groups.</p>
       <div class="box why"><b class="tag">Why use this:</b> A single layer of evidence can mislead: an RBP pair might look similar by expression alone yet act through unrelated mechanisms.</div>
@@ -230,6 +239,7 @@
         <img src="assets/screenshots/charm-network.png" alt="CHARM Network tab, showing a t-SNE ordination of RBP similarity across Expression, Splicing, and Binding layers, with U2AF1, U2AF2, and SF3B1 highlighted as a tight cluster">
         <figcaption>The Network tab: a t-SNE ordination of RBP similarity combining Expression, Splicing, and Binding evidence, with a query RBP set (here U2AF1, U2AF2, SF3B1) highlighted in red.</figcaption>
       </figure>
+      -->
     </section>
 
     <section id="interpreting">
@@ -254,8 +264,10 @@
       <p class="interp">How to interpret this:</p>
       <p>A peak in the bottom track at a position where the RBP is also enriched in the top track (for the matching colour) is the strongest evidence that the RBP directly regulates splicing at that position.</p>
 
+      <!-- DISABLED: Network module is commented out in this version. Original content kept below for a future redesign.
       <h2 class="sub">Network ordination plots</h2>
       <p>Each point is one RBP; proximity approximates similarity across the selected layers (1 minus a weighted correlation of expression, splicing, and/or binding signatures). MDS and PCA preserve global distance relationships and are easiest to interpret quantitatively (percentage of variance explained is shown for both); t-SNE better separates tight local clusters but distorts global distances (far-apart point's distances is more distorted, and thus one shouldn't compare them); the Dendrogram groups RBPs hierarchically and is useful for reading off discrete clusters.</p>
+      -->
     </section>
 
     <section id="faq">
@@ -279,14 +291,17 @@
         </ul>
       </div>
 
+      <!-- DISABLED: Network module is commented out in this version. Original content kept below for a future redesign.
       <div class="faq-item" id="faq-network-slow">
         <h3>The Network tab is taking a long time to compute.</h3>
         <p>This is expected, and is proportional to which layers you selected. Binding alone is fast because it uses precomputed profiles; Expression and/or Splicing build large RBP-by-gene or RBP-by-event feature matrices on the fly and can take a few minutes, especially with Both Cells selected. If you are only exploring, start with Binding alone, then add the other layers once you know which RBPs you want to inspect.</p>
       </div>
+      -->
 
       <div class="faq-item" id="faq-indirect">
         <h3>Why does an RBP's own knockdown sometimes not enrich its own binding?</h3>
-        <p>Absence of a clean binding enrichment at the searched RBP's own knockdown does not necessarily mean the map is wrong. Some RBPs regulate splicing indirectly (through a partner or complex member) rather than through direct, local binding at the affected exon. This is precisely the kind of case the Binding tab's cross-RBP search and the Network module are designed to help you investigate further.</p>
+<!-- ORIGINAL (with Network): <p>Absence of a clean binding enrichment at the searched RBP's own knockdown does not necessarily mean the map is wrong. Some RBPs regulate splicing indirectly (through a partner or complex member) rather than through direct, local binding at the affected exon. This is precisely the kind of case the Binding tab's cross-RBP search and the Network module are designed to help you investigate further.</p> -->
+        <p>Absence of a clean binding enrichment at the searched RBP's own knockdown does not necessarily mean the map is wrong. Some RBPs regulate splicing indirectly (through a partner or complex member) rather than through direct, local binding at the affected exon. This is precisely the kind of case the Binding tab's cross-RBP search is designed to help you investigate further.</p>
       </div>
 
 
@@ -334,10 +349,12 @@
         </ul>
       </div>
 
+      <!-- DISABLED: Network module is commented out in this version. Original content kept below for a future redesign.
       <div class="faq-item" id="faq-pca-network">
         <h3>PCA is supposed to best preserve distances, so why does the Network tab's PCA view not make sense?</h3>
         <p>Because in the Network tab, PCA and MDS are not actually run on the same input. MDS (classical multidimensional scaling) is applied directly to the "1 &minus; weighted correlation" dissimilarity matrix, which is exactly the object it is designed to embed: by construction, MDS finds the 2D layout whose distances best approximate that dissimilarity. PCA, instead, is run on the RBP&times;RBP correlation matrix itself, treating each RBP's row of correlations to every other RBP as its own feature vector, then finding the directions of greatest variance in that (centred and scaled) matrix. That is a legitimate but different question, asked of a different mathematical object &mdash; it carries no guarantee of reproducing the original 1&minus;correlation distances the way MDS does, and standardising each RBP's correlation profile to unit variance also discards information about how strongly correlated (or hub-like) an RBP is overall, keeping only the shape of its correlation pattern. </p>
       </div>
+      -->
 
       <div class="faq-item" id="faq-contact">
         <h3>Who do I contact if something looks broken, or if I have a request?</h3>
@@ -367,7 +384,9 @@
           <li><a href="#expression-tab">Expression</a></li>
           <li><a href="#splicing-tab">Splicing</a></li>
           <li><a href="#binding-tab">Binding</a></li>
+          <!-- DISABLED: Network module is commented out in this version. Original content kept below for a future redesign.
           <li><a href="#network-tab">Network</a></li>
+          -->
         </ol>
       </li>
       <li><a href="#interpreting">4. Interpreting Results</a></li>
