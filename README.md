@@ -10,7 +10,9 @@ The app integrates data from the **ENCODE project** (Luo et al., 2020), includin
 
 CHARM serves as both a **repository** of this curated data and a **discovery tool**:  
 - Explore how 168 RBPs from ENCODE affect expression, splicing, and binding.  
+<!-- DISABLED: Network module intentionally commented out (may return in a future version):
 - Infer potential networks between these regulatory layers, revealing new pathways and mechanisms.  
+-->
 - Upload your own expression, splicing, or binding datasets to identify RBPs most likely altered in your system.  
 
 ---
@@ -53,7 +55,7 @@ Source for both lives in [`docs/`](docs/).
 | Path | What it is |
 |---|---|
 | `app.R` | The CHARM Shiny app itself (UI + server). |
-| `helper_functions.R` | Shared R functions used by `app.R` : data loading, statistics, and plotting (RNA binding maps, heatmaps, network views, etc.). |
+| `helper_functions.R` | Shared R functions used by `app.R` : data loading, statistics, and plotting (RNA binding maps, heatmaps<!-- , network views -->, etc.). |
 | `Dockerfile`, `.dockerignore` | Container build for deploying the app. |
 | `www/` | Static assets served by the Shiny app (logo). |
 | `Images/` | Screenshots and figures used in documentation/READMEs. |

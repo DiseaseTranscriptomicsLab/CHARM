@@ -246,6 +246,9 @@ ui <- fluidPage(
                          background: #2c3e50; color: #fff; font-weight: bold; align-items: center;
                          justify-content: center; font-size: 14px; }
       .charm-layer p { margin: 0; font-size: 14px; color: #333; }
+      .charm-layer { cursor: pointer; transition: transform .15s, box-shadow .15s; }
+      .charm-layer:hover { transform: translateY(-3px); box-shadow: 0 6px 16px rgba(0,0,0,.15); }
+      .charm-layer-go { display: block; margin-top: 8px; font-size: 13px; font-weight: bold; color: #2c3e50; }
       .charm-questions { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px 22px; }
       .charm-q { border-left: 4px solid #BA3B46; padding: 6px 0 6px 14px; }
       .charm-q b { display: block; font-size: 15px; margin-bottom: 2px; }
@@ -373,17 +376,23 @@ ui <- fluidPage(
         div(
           class = "charm-layers",
           div(class = "charm-layer",
+              onclick = "Shiny.setInputValue('home_go_layer', 'Binding', {priority: 'event'});",
               div(class = "charm-layer-num", "1"),
               tags$h4("Binding"),
-              tags$p("Where does an RBP bind, and what are its consequences? RNA splicing maps from eCLIP show where it binds around affected events, helping to separate direct targets from indirect ones.")),
+              tags$p("Where does an RBP bind, and what are its consequences? RNA splicing maps from eCLIP show where it binds around affected events, helping to separate direct targets from indirect ones."),
+              tags$span(class = "charm-layer-go", "Open Binding \u2192")),
           div(class = "charm-layer",
+              onclick = "Shiny.setInputValue('home_go_layer', 'Splicing', {priority: 'event'});",
               div(class = "charm-layer-num", "2"),
               tags$h4("Splicing"),
-              tags$p("Which splicing events depend on the RBP? Changes in exon skipping and intron retention (dPSI) after knockdown, across VastDB-annotated events.")),
+              tags$p("Which splicing events depend on the RBP? Changes in exon skipping and intron retention (dPSI) after knockdown, across VastDB-annotated events."),
+              tags$span(class = "charm-layer-go", "Open Splicing \u2192")),
           div(class = "charm-layer",
+              onclick = "Shiny.setInputValue('home_go_layer', 'Expression', {priority: 'event'});",
               div(class = "charm-layer-num", "3"),
               tags$h4("Expression"),
-              tags$p("Which genes and cellular programs change? Differential expression after knockdown, with Hallmark gene-set enrichment."))
+              tags$p("Which genes and cellular programs change? Differential expression after knockdown, with Hallmark gene-set enrichment."),
+              tags$span(class = "charm-layer-go", "Open Expression \u2192"))
         ),
 
         # ── Questions CHARM can answer ──────────────────────────────────────
@@ -1638,6 +1647,11 @@ server <- function(input, output, session) {
     names(objs) <- paste0("similar_binding_", keys)
     objs
   })
+  # Home: the three layer boxes ("Binding" / "Splicing" / "Expression") open their tab
+  observeEvent(input$home_go_layer, {
+    req(input$home_go_layer %in% c("Binding", "Splicing", "Expression"))
+    updateTabsetPanel(session, "main_tabs", selected = input$home_go_layer)
+  })
   observeEvent(input$home_go_explore, {
     updateTabsetPanel(session, "main_tabs", selected = "Expression")
   })
@@ -2038,7 +2052,8 @@ server <- function(input, output, session) {
     updateSelectizeInput(
       session,
       "expr_search_hallmark",
-      choices = HALLMARK_CHOICES,
+      # displayed without underscores; the value sent to the server stays the raw ID
+      choices = stats::setNames(HALLMARK_CHOICES, gsub("_", " ", HALLMARK_CHOICES)),
       server = TRUE
     )
   })
@@ -2488,17 +2503,17 @@ server <- function(input, output, session) {
     # derive Type from Event.ID (same logic as your function)
     dpsi_table <- df %>%
       mutate(Type = case_when(
-        startsWith(Event.ID, "HsaEX")  ~ "ES",
+        startsWith(Event.ID, "HsaEX")  ~ "EX",
         startsWith(Event.ID, "HsaINT") ~ "IR",
         TRUE                           ~ NA_character_
       )) %>%
       filter(!is.na(Type))
     
-    # If no ES/IR events present, show a message plot
+    # If no EX/IR events present, show a message plot
     if (nrow(dpsi_table) == 0) {
       dl_store$splice_initial(NULL)
       plot.new()
-      title(main = "No ES or IR events detected in uploaded file")
+      title(main = "No EX or IR events detected in uploaded file")
       return(invisible(NULL))
     }
     
@@ -2509,9 +2524,9 @@ server <- function(input, output, session) {
       pivot_wider(names_from = Type, values_from = mean_dPSI)
     
     # Build subtitle text safely (handle missing types)
-    mean_ES <- ifelse("ES" %in% names(avg_vals), sprintf("%.3f", avg_vals$ES), "NA")
+    mean_EX <- ifelse("EX" %in% names(avg_vals), sprintf("%.3f", avg_vals$EX), "NA")
     mean_IR <- ifelse("IR" %in% names(avg_vals), sprintf("%.3f", avg_vals$IR), "NA")
-    subtitle_text <- paste0("Mean dPSI — ES: ", mean_ES, " | IR: ", mean_IR)
+    subtitle_text <- paste0("Mean dPSI — EX: ", mean_EX, " | IR: ", mean_IR)
     
     # Violin + jitter plot similar to your function
     p <- ggplot(dpsi_table, aes(x = Type, y = dPSI)) +

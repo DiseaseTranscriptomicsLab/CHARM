@@ -71,7 +71,7 @@ violinplotter <- function(charmobj, rbp,
     geom_jitter(width = 0.15, alpha = 0.3, color = control_color) +
 
     # Violin
-    geom_violin(trim = FALSE, alpha = 0.6) +
+    geom_violin(trim = TRUE, alpha = 0.6) +
 
     # Fill colors. NOTE: `rbp = other_color` here was previously an unquoted
     # literal name (the string "rbp"), not the RBP variable's actual value --
@@ -96,7 +96,15 @@ violinplotter <- function(charmobj, rbp,
     theme(legend.position = "none") +
     xlab("") +
     ylab("Expression (log2 CPM)") +
-    ylim(0, max(df$Expression, na.rm = TRUE) * 1.05)
+    # Zoom to the data range (+5% padding) instead of starting at 0. Violins are drawn
+    # with trim = TRUE so they end exactly at the min/max of the data. coord_cartesian()
+    # only zooms the view, so no data is dropped (unlike ylim()).
+    coord_cartesian(ylim = {
+      rng <- range(df$Expression, na.rm = TRUE)
+      pad <- diff(rng) * 0.05
+      if (!is.finite(pad) || pad == 0) pad <- max(abs(rng[1]) * 0.05, 0.1)
+      c(rng[1] - pad, rng[2] + pad)
+    })
 
   return(p)
 }
@@ -106,9 +114,11 @@ plot_shRNA_effect <- function(sh_effect_vector, rbp) {
   markers_to_plot <- as.data.frame(sh_effect_vector[rbp, , drop = FALSE])
   markers_to_plot$gene <- rownames(markers_to_plot)
 
-  # extract stats for subtitle
+  # Stats go in the label next to the highlighted dot (not in a subtitle), so it is
+  # clear they describe this RBP's knockdown and not the whole cloud of points.
   t_val <- round(markers_to_plot$t, 2)
   p_val <- signif(markers_to_plot$P.Value, 3)
+  markers_to_plot$label <- paste0(markers_to_plot$gene, "\nt = ", t_val, ", p = ", p_val)
 
   ggplot(data = sh_effect_vector,
          aes(x = logFC, y = B)) +
@@ -117,7 +127,7 @@ plot_shRNA_effect <- function(sh_effect_vector, rbp) {
                color = "#A10702", size = 5) +
     geom_label_repel(
       data = markers_to_plot,
-      aes(label = gene),
+      aes(label = label),
       size = CHARM_GEOM_TEXT,
       point.padding = -0.5,
       color = "#A10702",
@@ -127,9 +137,7 @@ plot_shRNA_effect <- function(sh_effect_vector, rbp) {
     theme_charm() +
     xlab("Log2 Fold-Change") +
     ylab("B-Statistic") +
-    ggtitle("Knockdown Efficiency",
-            subtitle = paste0("t = ", t_val,
-                              ", P = ", p_val))
+    ggtitle("Knockdown Efficiency")
 }
 
 plot_rbp_volcano <- function(charmobj, rbp, other_genes = NULL) {
@@ -362,6 +370,8 @@ plot_gsea <- function(charmobj, rbp, thresh = 0.05,
     gsea_plot_hall <- ggplot(data_to_plot, aes(x = reorder(pathway, NES), y = NES)) +
       geom_col(aes(fill = Status), alpha = 0.8) +
       scale_fill_manual(values = c("Upregulated" = up_color, "Downregulated" = down_color)) +
+      # Display only: underscores -> spaces (the underlying pathway IDs are unchanged)
+      scale_x_discrete(labels = function(x) gsub("_", " ", x)) +
       coord_flip() +
       labs(x = "Gene Set",
            y = "Normalised Enrichment Score (NES)",
@@ -374,7 +384,10 @@ plot_gsea <- function(charmobj, rbp, thresh = 0.05,
   }
 
 
-  return(list(geneset_table = hallmarks.res.tidy, gsea_plot = gsea_plot_hall))
+  # Table shown/downloaded in the app: readable names (underscores -> spaces)
+  geneset_table_display <- hallmarks.res.tidy
+  geneset_table_display$pathway <- gsub("_", " ", geneset_table_display$pathway)
+  return(list(geneset_table = geneset_table_display, gsea_plot = gsea_plot_hall))
 }
 
 # ============================================================
@@ -625,6 +638,7 @@ correl_scatter_gsea_hc <- function(gsea_results, rbp, other_rbp, plot_title = NU
     " (Spearman ρ = ", round(rho, 2), ", ", pval_display(pval), ")"
   )
 
+  merged$pathway <- gsub("_", " ", merged$pathway)   # display only (tooltip)
   highcharter::hchart(
     merged, "scatter",
     highcharter::hcaes(x = NES_ref, y = NES_other, pathway = pathway),
@@ -1048,7 +1062,7 @@ violin_splice_plot <- function(Charmobj, rbp) {
   # Add splicing type info
   dpsi_table <- dpsi_table %>%
     mutate(Type = case_when(
-      startsWith(Event.ID, "HsaEX")  ~ "ES",
+      startsWith(Event.ID, "HsaEX")  ~ "EX",
       startsWith(Event.ID, "HsaINT") ~ "IR",
       TRUE                           ~ NA_character_
     )) %>%
@@ -1062,8 +1076,8 @@ violin_splice_plot <- function(Charmobj, rbp) {
 
   # Build subtitle text
   subtitle_text <- paste0(
-    "Mean dPSI — ES: ",
-    sprintf("%.3f", avg_vals$ES),
+    "Mean dPSI — EX: ",
+    sprintf("%.3f", avg_vals$EX),
     " | IR: ",
     sprintf("%.3f", avg_vals$IR)
   )
@@ -1326,8 +1340,8 @@ plot_hallmark_nes_barplot <- function(CharmObj, geneset,
       # actually renders as the plot's vertical (Y) axis title.
       x = "RBP KD",
       y = "Normalised Enrichment Score (NES)",
-      title = paste0("Top/bottom RBPs by NES for ", geneset),
-      subtitle = paste0("Geneset: ", geneset),
+      title = paste0("Top/bottom RBPs by NES for ", gsub("_", " ", geneset)),
+      subtitle = paste0("Geneset: ", gsub("_", " ", geneset)),
       caption = paste0("Only top/bottom 10 RBPs shown")
     ) +
     theme_charm() +
