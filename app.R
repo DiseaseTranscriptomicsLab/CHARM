@@ -17,6 +17,8 @@ library(png)
 library(grid)
 library(base64enc)
 logo_b64 <- base64enc::dataURI(file = "www/Charm_logo.png", mime = "image/png")
+# Embedded like the logo (not served from www/), so it cannot fail to load as a static file
+schematic_b64 <- base64enc::dataURI(file = "www/charm_schematic.svg", mime = "image/svg+xml")
 
 source("helper_functions.R")
 
@@ -320,19 +322,18 @@ ui <- fluidPage(
           tags$h2("Why CHARM?"),
           tags$p(
             class = "charm-lead",
-            "RNA-binding proteins (RBPs) control how RNAs are processed, from alternative splicing to stability ",
-            "and translation. Their dysregulation is linked to diseases such as cancer and neurodegeneration, ",
-            "yet for most RBPs we still do not know which targets matter, or how they act."
+            "RNA-binding proteins (RBPs) govern nearly every stage of RNA metabolism, and their dysfunction is linked to ",
+            "neurodegeneration, viral infection, ageing and cancer. Among their roles, alternative splicing is particularly ",
+            "consequential, and it depends on where an RBP binds."
           ),
           tags$p(
             class = "charm-lead",
-            "An RBP acts through ", tags$b("three connected layers"), " at once: where it binds, which exons it reshapes, ",
-            "and which genes and pathways end up changing. Datasets usually capture only one of them, and each can ",
-            "mislead on its own: an expression change may be indirect, and a binding site may have no functional effect. ",
-            "CHARM puts the three layers side by side."
+            "ENCODE provides eCLIP binding and knockdown RNA-seq for over a hundred RBPs, but turning them into ",
+            "splicing maps takes custom, code-heavy pipelines. CHARM removes that barrier, putting RBP ",
+            tags$b("expression, splicing and binding"), " side by side in a single no-code app."
           ),
-          tags$img(class = "charm-schematic", src = "charm_schematic.svg",
-                   alt = "Schematic: an RBP binds pre-mRNA near an alternative exon (binding), changes exon inclusion (splicing) and alters gene expression. CHARM covers all three layers."),
+          tags$img(class = "charm-schematic", src = schematic_b64,
+                   alt = "Schematic: an RBP binds pre-mRNA near an alternatively spliced region (binding), changes splicing outcome (splicing) and alters gene expression. CHARM covers all three layers."),
           tags$p(
             class = "charm-coverage",
             sprintf("Currently covering %d RBPs with expression and splicing data and %d with eCLIP binding maps, ",
@@ -347,11 +348,11 @@ ui <- fluidPage(
           div(class = "charm-layer",
               div(class = "charm-layer-num", "1"),
               tags$h4("Binding"),
-              tags$p("Does the RBP sit next to the exons it seems to control? eCLIPSE maps eCLIP signal around splicing events, helping to separate direct targets from indirect ones.")),
+              tags$p("Where does an RBP bind, and what are its consequences? RNA splicing maps from eCLIP show where it binds around affected events, helping to separate direct targets from indirect ones.")),
           div(class = "charm-layer",
               div(class = "charm-layer-num", "2"),
               tags$h4("Splicing"),
-              tags$p("Which splicing events depend on the RBP? Event-level changes in exon inclusion (ΔPSI) after knockdown, quantified with betAS on VastDB events.")),
+              tags$p("Which splicing events depend on the RBP? Changes in exon skipping and intron retention (dPSI) after knockdown, across VastDB-annotated events.")),
           div(class = "charm-layer",
               div(class = "charm-layer-num", "3"),
               tags$h4("Expression"),
@@ -364,16 +365,16 @@ ui <- fluidPage(
           tags$h2("Questions CHARM helps you answer"),
           div(
             class = "charm-questions",
+            div(class = "charm-q", tags$b("How does an RBP regulate splicing?"),
+                tags$span("Generate RNA splicing maps for many RBPs, and see how their knockdown affects these maps.")),
+            div(class = "charm-q", tags$b("Is an RBP active even though its expression has not changed?"),
+                tags$span("Detect changes in RBP function, such as relocalisation or a lost partner, through its binding rather than its expression.")),
+            div(class = "charm-q", tags$b("Do two RBPs act together?"),
+                tags$span("See whether knocking down one perturbs the binding of another, hinting at their interaction.")),
             div(class = "charm-q", tags$b("Which RBP could explain my data?"),
-                tags$span("Upload an expression, splicing or binding signature and rank the RBPs whose knockdown looks most like it.")),
-            div(class = "charm-q", tags$b("Is this RBP regulating splicing directly?"),
-                tags$span("Check whether binding sits at the affected exons, not just whether their splicing changes.")),
-            div(class = "charm-q", tags$b("What happens downstream of an RBP?"),
-                tags$span("Follow one RBP from its splicing events to the genes and Hallmark pathways that shift.")),
+                tags$span("Upload an expression or splicing signature and rank the RBPs whose knockdown looks most like it.")),
             div(class = "charm-q", tags$b("What controls my gene, event or pathway?"),
                 tags$span("Search by gene, splicing event or Hallmark gene set to find the RBPs that move it.")),
-            div(class = "charm-q", tags$b("Do two RBPs have similar effects?"),
-                tags$span("Compare knockdown signatures to spot RBPs that may share targets or pathways, as hypotheses to test.")),
             div(class = "charm-q", tags$b("Is the effect cell-type specific?"),
                 tags$span("Compare HepG2 and K562, or look at both together."))
           )

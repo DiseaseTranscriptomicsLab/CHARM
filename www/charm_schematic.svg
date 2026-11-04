@@ -51,30 +51,29 @@
     <text x="528" y="134" class="t-h">Splicing</text>
     <!-- inclusion isoform -->
     <text x="490" y="176" class="t-xs">inclusion</text>
-    <rect x="490" y="184" width="50" height="30" rx="3" fill="#1B4F72"/>
-    <rect x="552" y="184" width="60" height="30" rx="3" fill="#B83A47"/>
-    <rect x="624" y="184" width="50" height="30" rx="3" fill="#1B4F72"/>
+    <rect x="490" y="184" width="50" height="30" fill="#1B4F72" stroke="#eef3f7" stroke-width="1.5"/>
+    <rect x="540" y="184" width="60" height="30" fill="#B83A47" stroke="#eef3f7" stroke-width="1.5"/>
+    <rect x="600" y="184" width="50" height="30" fill="#1B4F72" stroke="#eef3f7" stroke-width="1.5"/>
     <!-- skipping isoform -->
     <text x="490" y="240" class="t-xs">skipping</text>
-    <rect x="490" y="248" width="50" height="30" rx="3" fill="#1B4F72"/>
-    <rect x="624" y="248" width="50" height="30" rx="3" fill="#1B4F72"/>
-    <path d="M540,248 Q582,226 624,248" fill="none" stroke="#2c3e50" stroke-width="2"/>
-    <!-- delta PSI bars -->
+    <rect x="490" y="248" width="50" height="30" fill="#1B4F72" stroke="#eef3f7" stroke-width="1.5"/>
+    <rect x="540" y="248" width="50" height="30" fill="#1B4F72" stroke="#eef3f7" stroke-width="1.5"/>
+    <!-- PSI bars (control vs knockdown) -->
     <g transform="translate(715,170)">
-      <text x="0" y="-6" class="t-xs">PSI</text>
+      <line x1="-8" y1="20" x2="-8" y2="110" stroke="#2c3e50" stroke-width="2"/>
+      <line x1="-8" y1="110" x2="80" y2="110" stroke="#2c3e50" stroke-width="2"/>
+      <text transform="translate(-22,65) rotate(-90)" text-anchor="middle" class="t-xs">PSI</text>
       <rect x="0"  y="30" width="30" height="80" fill="#9aa5a8"/>
       <rect x="40" y="62" width="30" height="48" fill="#BA3B46"/>
       <text x="15" y="126" text-anchor="middle" class="t-xs">ctrl</text>
       <text x="55" y="126" text-anchor="middle" class="t-xs">KD</text>
-      <text x="35" y="14" text-anchor="middle" class="t-b" fill="#BA3B46">&#916;PSI</text>
     </g>
-    <text x="610" y="324" text-anchor="middle" class="t-s"><tspan font-weight="700">Which exons change?</tspan></text>
-    <text x="610" y="344" text-anchor="middle" class="t-xs">exon inclusion after RBP knockdown</text>
+    <text x="610" y="324" text-anchor="middle" class="t-s"><tspan font-weight="700">Which events change?</tspan></text>
+    <text x="610" y="344" text-anchor="middle" class="t-xs">event inclusion after RBP knockdown</text>
   </g>
 
-  <!-- arrow 2 -> 3 (mRNA export) -->
+  <!-- arrow 2 -> 3 -->
   <line x1="800" y1="250" x2="878" y2="250" stroke="#2c3e50" stroke-width="3" marker-end="url(#arr)"/>
-  <text x="839" y="238" text-anchor="middle" class="t-xs">mRNA</text>
 
   <!-- ============ 3. EXPRESSION ============ -->
   <g>
