@@ -260,6 +260,14 @@ ui <- fluidPage(
       .charm-tutorial { text-align: center; margin: 16px 0 0; font-size: 14px; }
       .charm-footer { text-align: center; font-size: 12px; color: #666; max-width: 900px;
                       margin: 0 auto; padding-top: 14px; border-top: 1px solid #e0e0e0; }
+      #charm-info { position: fixed; bottom: 20px; right: 20px; z-index: 1000; text-align: right; }
+      #charm-info-btn { background: #EAEBEB; border: 1px solid #2c3e50; border-radius: 999px;
+                        padding: 5px 13px; font-size: 12px; color: #2c3e50; cursor: pointer; }
+      #charm-info-btn:hover { background: #dfe1e1; }
+      #charm-info-panel { display: none; position: absolute; bottom: 100%; right: 0; margin-bottom: 8px;
+                          min-width: 130px; background: #EAEBEB; padding: 8px 12px; border-radius: 10px;
+                          border: 1px solid #2c3e50; text-align: center; box-shadow: 0 4px 12px rgba(0,0,0,.2); }
+      #charm-info.open #charm-info-panel { display: block; }
     ")),
     tags$script(HTML("
       Shiny.addCustomMessageHandler('toggleCursor', function(state) {
@@ -270,6 +278,24 @@ ui <- fluidPage(
           var btn = document.getElementById(msg.id);
           if (btn) btn.click();
         }, msg.delay || 300);
+      });
+      document.addEventListener('click', function(e) {
+        var w = document.getElementById('charm-info');
+        if (!w) return;
+        var btn = document.getElementById('charm-info-btn');
+        if (e.target.closest('#charm-info-btn')) {
+          var open = w.classList.toggle('open');
+          btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        } else if (!e.target.closest('#charm-info-panel') || e.target.closest('#charm-info-panel a')) {
+          w.classList.remove('open');
+          btn.setAttribute('aria-expanded', 'false');
+        }
+      });
+      document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+          var w = document.getElementById('charm-info');
+          if (w) { w.classList.remove('open'); document.getElementById('charm-info-btn').setAttribute('aria-expanded', 'false'); }
+        }
       });
       Shiny.addCustomMessageHandler('showStatus', function(msg) {
         var bar = document.getElementById('charm-status-bar');
@@ -1170,19 +1196,16 @@ ui <- fluidPage(
     # )
   ),
   
-  # GitHub link floating across ALL tabs
+  # Info button floating across ALL tabs: collapsed to a small "Info" pill,
+  # click to open the panel (version, packages, tutorial, Zenodo, GitHub).
   tags$div(
-    style = "
-      position: fixed;
-      bottom: 20px;
-      right: 20px;
-      z-index: 1000;
-      background-color: #EAEBEB;
-      padding: 8px 12px;
-      border-radius: 10px;
-      border: 1px solid #2c3e50;
-      text-align: center;
-    ",
+    id = "charm-info",
+    tags$button(
+      id = "charm-info-btn", type = "button", "aria-expanded" = "false",
+      fa("circle-info", fill = "#2c3e50", height = "1em"), " Info"
+    ),
+    tags$div(
+      id = "charm-info-panel",
     tags$div(
       style = "font-size: 11px; color: #2c3e50; margin-bottom: 4px;",
       "Version: 0.9.3"
@@ -1221,6 +1244,7 @@ ui <- fluidPage(
       style = "color: black; text-decoration: none;",
       fa("github", fill = "black", height = "1.5em"),
       " GitHub"
+    )
     )
   )
 )
