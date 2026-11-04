@@ -6,7 +6,7 @@ violinplotter <- function(charmobj, rbp,
   rbp <- trimws(as.character(rbp))
 
   na_plot <- function(msg) {
-    ggplot() + annotate("text", x = 0, y = 0, label = msg) + theme_void()
+    ggplot() + annotate("text", x = 0, y = 0, label = msg, family = CHARM_FONT) + theme_charm_void()
   }
 
   if (is.null(charmobj) || is.null(charmobj[[rbp]])) {
@@ -92,17 +92,8 @@ violinplotter <- function(charmobj, rbp,
       subtitle = paste0("Log2 Fold-Change: ", round(logFC, 2),
                         "  |  Cohen's d: ", round(cohens_d, 2))
     ) +
-    theme_bw() +
-    theme(
-      axis.line = element_line(colour = "black"),
-      panel.grid = element_blank(),
-      panel.border = element_blank(),
-      panel.background = element_blank(),
-      plot.title = element_text(hjust = 0.5),
-      plot.subtitle = element_text(hjust = 0.5),
-      text = element_text(size = 20, family = "Arial MS", face = "bold"),
-      legend.position = "none"
-    ) +
+    theme_charm() +
+    theme(legend.position = "none") +
     xlab("") +
     ylab("Expression (log2 CPM)") +
     ylim(0, max(df$Expression, na.rm = TRUE) * 1.05)
@@ -127,38 +118,29 @@ plot_shRNA_effect <- function(sh_effect_vector, rbp) {
     geom_label_repel(
       data = markers_to_plot,
       aes(label = gene),
-      size = 4,
+      size = CHARM_GEOM_TEXT,
       point.padding = -0.5,
       color = "#A10702",
       max.overlaps = 20,
       fontface = "italic"
-    ) +
-    theme_bw() +
+    , family = CHARM_FONT) +
+    theme_charm() +
     xlab("Log2 Fold-Change") +
     ylab("B-Statistic") +
     ggtitle("Knockdown Efficiency",
             subtitle = paste0("t = ", t_val,
-                              ", P = ", p_val)) +
-    theme(
-      axis.line = element_line(colour = "black"),
-      panel.grid = element_blank(),
-      panel.border = element_blank(),
-      panel.background = element_blank(),
-      plot.title = element_text(hjust = 0.5),
-      plot.subtitle = element_text(hjust = 0.5),
-      text = element_text(size = 20, family = "Arial MS", face="bold")
-    )
+                              ", P = ", p_val))
 }
 
 plot_rbp_volcano <- function(charmobj, rbp, other_genes = NULL) {
   # Basic sanity checks
   if (is.null(charmobj) || is.null(rbp)) {
-    return(list(top_table = data.frame(), volcano_plot = ggplot() + theme_void()))
+    return(list(top_table = data.frame(), volcano_plot = ggplot() + theme_charm_void()))
   }
 
   if (is.null(charmobj[[rbp]])) {
     message(sprintf("No entry for %s in charm object", rbp))
-    return(list(top_table = data.frame(), volcano_plot = ggplot() + annotate("text", x=0,y=0,label=paste("No data for", rbp)) + theme_void()))
+    return(list(top_table = data.frame(), volcano_plot = ggplot() + annotate("text", x=0,y=0,label=paste("No data for", rbp), family = CHARM_FONT) + theme_charm_void()))
   }
 
   expr <- charmobj[[rbp]]$corcounts
@@ -167,14 +149,14 @@ plot_rbp_volcano <- function(charmobj, rbp, other_genes = NULL) {
   # Ensure expr and group are present and compatible
   if (is.null(expr) || is.null(group) || length(group) == 0) {
     message("Expression or group information missing/empty.")
-    return(list(top_table = data.frame(), volcano_plot = ggplot() + annotate("text", x=0,y=0,label=paste("No data for", rbp)) + theme_void()))
+    return(list(top_table = data.frame(), volcano_plot = ggplot() + annotate("text", x=0,y=0,label=paste("No data for", rbp), family = CHARM_FONT) + theme_charm_void()))
   }
 
   # Build design matrix; guard for degenerate cases
   mm <- tryCatch(model.matrix(~0 + group), error = function(e) NULL)
   if (is.null(mm) || ncol(mm) == 0) {
     message("Design matrix has zero columns.")
-    return(list(top_table = data.frame(), volcano_plot = ggplot() + annotate("text", x=0,y=0,label=paste("Insufficient group levels for", rbp)) + theme_void()))
+    return(list(top_table = data.frame(), volcano_plot = ggplot() + annotate("text", x=0,y=0,label=paste("Insufficient group levels for", rbp), family = CHARM_FONT) + theme_charm_void()))
   }
 
   colnames(mm) <- gsub("group", "", colnames(mm))
@@ -183,20 +165,20 @@ plot_rbp_volcano <- function(charmobj, rbp, other_genes = NULL) {
   fitted <- tryCatch(lmFit(expr, mm), error = function(e) NULL)
   if (is.null(fitted)) {
     message("lmFit failed.")
-    return(list(top_table = data.frame(), volcano_plot = ggplot() + annotate("text", x=0,y=0,label=paste("DE analysis failed for", rbp)) + theme_void()))
+    return(list(top_table = data.frame(), volcano_plot = ggplot() + annotate("text", x=0,y=0,label=paste("DE analysis failed for", rbp), family = CHARM_FONT) + theme_charm_void()))
   }
 
   # Create contrast; guard if 'Control' not present
   if (!("Control" %in% colnames(coef(fitted)))) {
     message("Control column not found in fitted coefficients.")
-    return(list(top_table = data.frame(), volcano_plot = ggplot() + annotate("text", x=0,y=0,label="No Control level found") + theme_void()))
+    return(list(top_table = data.frame(), volcano_plot = ggplot() + annotate("text", x=0,y=0,label="No Control level found", family = CHARM_FONT) + theme_charm_void()))
   }
 
   contrast_formula <- paste0(rbp, " - Control")
   contr <- tryCatch(makeContrasts(contrasts = contrast_formula, levels = colnames(coef(fitted))), error = function(e) NULL)
   if (is.null(contr)) {
     message("Could not create contrasts (check that RBP and Control are valid levels).")
-    return(list(top_table = data.frame(), volcano_plot = ggplot() + annotate("text", x=0,y=0,label=paste("Contrast creation failed for", rbp)) + theme_void()))
+    return(list(top_table = data.frame(), volcano_plot = ggplot() + annotate("text", x=0,y=0,label=paste("Contrast creation failed for", rbp), family = CHARM_FONT) + theme_charm_void()))
   }
 
   tmp_contr <- contrasts.fit(fitted, contr)
@@ -205,7 +187,7 @@ plot_rbp_volcano <- function(charmobj, rbp, other_genes = NULL) {
   # Get results for all genes (safe)
   top.table <- tryCatch(topTable(tmp, sort.by = "none", n = Inf), error = function(e) data.frame())
   if (nrow(top.table) == 0) {
-    return(list(top_table = data.frame(), volcano_plot = ggplot() + annotate("text", x=0,y=0,label=paste("No differential expression results for", rbp)) + theme_void()))
+    return(list(top_table = data.frame(), volcano_plot = ggplot() + annotate("text", x=0,y=0,label=paste("No differential expression results for", rbp), family = CHARM_FONT) + theme_charm_void()))
   }
 
   # Check provided genes
@@ -236,16 +218,10 @@ plot_rbp_volcano <- function(charmobj, rbp, other_genes = NULL) {
     geom_point(data = subset(top.table, highlight == "None"), aes(x = logFC, y = B), color = "#CCCCCC", alpha = 0.6) +
     geom_point(data = subset(top.table, highlight == "Other"), aes(x = logFC, y = B), color = "#23586C", alpha = 0.8, size = 2) +
     geom_point(data = subset(top.table, highlight == "RBP"), aes(x = logFC, y = B), color = "#A10702", alpha = 0.9, size = 2.5) +
-    geom_text_repel(data = subset(top.table, highlight == "RBP"), aes(x = logFC, y = B, label = rownames(subset(top.table, highlight == "RBP"))), size = 5, fontface = "italic", color = "#A10702", nudge_y = 1) +
-    geom_text_repel(data = subset(top.table, highlight == "Other"), aes(x = logFC, y = B, label = rownames(subset(top.table, highlight == "Other"))), size = 4, fontface = "italic", color = "#23586C", nudge_y = 1) +
-    theme_bw() +
-    theme(plot.title = element_text(hjust = 0.5),
-          axis.line = element_line(colour = "black"),
-          panel.grid.minor = element_blank(),
-          panel.border = element_blank(),
-          panel.background = element_blank(),
-          legend.position = "none",
-          text = element_text(size = 20, family = "Arial MS", face="bold")) +
+    geom_text_repel(data = subset(top.table, highlight == "RBP"), aes(x = logFC, y = B, label = rownames(subset(top.table, highlight == "RBP"))), size = CHARM_GEOM_TEXT, fontface = "italic", color = "#A10702", nudge_y = 1, family = CHARM_FONT) +
+    geom_text_repel(data = subset(top.table, highlight == "Other"), aes(x = logFC, y = B, label = rownames(subset(top.table, highlight == "Other"))), size = CHARM_GEOM_TEXT, fontface = "italic", color = "#23586C", nudge_y = 1, family = CHARM_FONT) +
+    theme_charm() +
+    theme(legend.position = "none") +
     labs(title = paste("Volcano plot:", rbp), x = "Log2 Fold-Change", y = "B-statistic")
 
   return(list(top_table = top.table, volcano_plot = volcano_plot))
@@ -266,8 +242,8 @@ plot_gsea <- function(charmobj, rbp, thresh = 0.05,
     list(
       geneset_table = data.frame(),
       gsea_plot = ggplot() +
-        annotate("text", x = 0, y = 0, label = paste("GSEA unavailable for", rbp)) +
-        theme_void()
+        annotate("text", x = 0, y = 0, label = paste("GSEA unavailable for", rbp), family = CHARM_FONT) +
+        theme_charm_void()
     )
   }
 
@@ -379,8 +355,8 @@ plot_gsea <- function(charmobj, rbp, thresh = 0.05,
   # If no significant results, return empty plot
   if (nrow(data_to_plot) == 0) {
     gsea_plot_hall <- ggplot() +
-      annotate("text", x = 0, y = 0, label = paste("No significant GSEA results for", rbp)) +
-      theme_void()
+      annotate("text", x = 0, y = 0, label = paste("No significant GSEA results for", rbp), family = CHARM_FONT) +
+      theme_charm_void()
   } else {
 
     gsea_plot_hall <- ggplot(data_to_plot, aes(x = reorder(pathway, NES), y = NES)) +
@@ -392,20 +368,9 @@ plot_gsea <- function(charmobj, rbp, thresh = 0.05,
            title = "Enriched Gene Sets",
            subtitle = paste0("Comparison: ", rbp, " KD vs Control"),
            caption = paste0("padj < ", thresh)) +
-      theme_bw(base_family = "Arial MS") +
-      theme(
-        plot.title = element_text(hjust = 0.5, size = 17, face = "bold"),
-        plot.subtitle = element_text(hjust = 0.5, size = 13),
-        text = element_text(size = 17),
-        legend.position = if (show_legend) "right" else "none"
-      )+
-      theme(legend.position = "none",
-            text = element_text(size = 17, family = "Arial MS", face = "bold"),
-            plot.title = element_text(hjust = 0.5, size = 17, face = "bold"),
-            axis.title = element_text(face = "bold"),
-            axis.text = element_text(face = "bold"),
-            legend.title = element_text(face = "bold"),
-            legend.text = element_text(face = "bold"))
+      theme_charm() +
+      theme(legend.position = if (show_legend) "right" else "none")+
+      theme(legend.position = "none")
   }
 
 
@@ -583,9 +548,9 @@ correl_exp_rbp_hc <- function(rbp_results, rbp, other_rbp, plot_title = NULL) {
     highcharter::hcaes(x = x_val, y = y_val, gene = gene),
     fast = TRUE
   ) %>%
-    highcharter::hc_title(text = title_txt) %>%
-    highcharter::hc_xAxis(title = list(text = paste0(ref_display, " t-statistics"), style = list(fontSize = "16px", fontWeight = "bold"))) %>%
-    highcharter::hc_yAxis(title = list(text = paste0(other_display, " t-statistics"), style = list(fontSize = "16px", fontWeight = "bold"))) %>%
+    charm_hc_style() %>% highcharter::hc_title(text = title_txt) %>%
+    highcharter::hc_xAxis(title = list(text = paste0(ref_display, " t-statistics"))) %>%
+    highcharter::hc_yAxis(title = list(text = paste0(other_display, " t-statistics"))) %>%
     highcharter::hc_tooltip(pointFormat = "Gene: {point.gene}") %>%
     highcharter::hc_plotOptions(scatter = list(
       marker = list(radius = 5, fillColor = "#DDDDDD", lineColor = "black", lineWidth = 1)
@@ -665,9 +630,9 @@ correl_scatter_gsea_hc <- function(gsea_results, rbp, other_rbp, plot_title = NU
     highcharter::hcaes(x = NES_ref, y = NES_other, pathway = pathway),
     fast = TRUE
   ) %>%
-    highcharter::hc_title(text = title_txt) %>%
-    highcharter::hc_xAxis(title = list(text = paste0(ref_display, " NES"), style = list(fontSize = "16px", fontWeight = "bold"))) %>%
-    highcharter::hc_yAxis(title = list(text = paste0(other_display, " NES"), style = list(fontSize = "16px", fontWeight = "bold"))) %>%
+    charm_hc_style() %>% highcharter::hc_title(text = title_txt) %>%
+    highcharter::hc_xAxis(title = list(text = paste0(ref_display, " NES"))) %>%
+    highcharter::hc_yAxis(title = list(text = paste0(other_display, " NES"))) %>%
     highcharter::hc_tooltip(pointFormat = "Pathway: {point.pathway}") %>%
     highcharter::hc_plotOptions(scatter = list(
       marker = list(radius = 5, fillColor = "#DDDDDD", lineColor = "black", lineWidth = 1)
@@ -752,7 +717,7 @@ exp_correl <- function(rbp_results, rbp, correl_num = NULL,
     coord_flip() +
     geom_text(aes(label = sprintf("%.2f", Correlation)),
               hjust = ifelse(top_cor$Correlation > 0, -0.1, 1.1),
-              color = "white", size = 4) +
+              color = "white", size = CHARM_GEOM_TEXT, family = CHARM_FONT) +
     labs(
       # coord_flip() above swaps display axes, so this "x" label is what
       # actually renders as the plot's vertical (Y) axis title.
@@ -761,14 +726,8 @@ exp_correl <- function(rbp_results, rbp, correl_num = NULL,
       title = paste0("Expression (t-statistic) correlations with ", title_subject),
       caption = "Method: Spearman"
     ) +
-    theme_bw(base_family = "Arial MS") +
-    theme(
-      plot.title = element_text(hjust = 0.5, face = "bold"),
-      text = element_text(size = 17),
-      legend.position = if (show_legend) "right" else "none",
-      axis.text = element_text(face = "bold"),
-      axis.title = element_text(face = "bold")
-    )
+    theme_charm() +
+    theme(legend.position = if (show_legend) "right" else "none")
   return(list(
     correlation_table = cor_results,
     top_table = top_cor,
@@ -888,7 +847,7 @@ gsea_correl <- function(gsea_df, rbp, correl_num = NULL,
   if (is.null(top_cor) || nrow(top_cor) == 0) {
     p <- ggplot2::ggplot() +
       ggplot2::labs(title = paste("No correlations available for", rbp)) +
-      ggplot2::theme_minimal()
+      theme_charm()
     return(list(correlation_table = cor_results, top_table = top_cor, heatmap = p))
   }
 
@@ -914,8 +873,7 @@ gsea_correl <- function(gsea_df, rbp, correl_num = NULL,
     ggplot2::geom_text(
       ggplot2::aes(label = sprintf("%.2f", Correlation)),
       hjust = ifelse(top_cor$Correlation > 0, -0.1, 1.1),
-      color = "white", size = 4
-    ) +
+      color = "white", size = CHARM_GEOM_TEXT , family = CHARM_FONT) +
     ggplot2::labs(
       # coord_flip() above swaps display axes, so this "x" label is what
       # actually renders as the plot's vertical (Y) axis title.
@@ -927,14 +885,8 @@ gsea_correl <- function(gsea_df, rbp, correl_num = NULL,
       title = paste0("GSEA (NES) correlations with ", title_subject),
       caption = "Method: Spearman"
     ) +
-    ggplot2::theme_bw(base_family = "Arial MS") +
-    ggplot2::theme(
-      plot.title = ggplot2::element_text(hjust = 0.5, face = "bold"),
-      text = ggplot2::element_text(size = 12),
-      legend.position = if (show_legend) "right" else "none",
-      axis.text = ggplot2::element_text(face = "bold"),
-      axis.title = ggplot2::element_text(face = "bold")
-    )
+    theme_charm() +
+    ggplot2::theme(legend.position = if (show_legend) "right" else "none")
 
   return(list(
     correlation_table = cor_results,
@@ -1041,7 +993,7 @@ splicing_correl <- function(charmobj, rbp, correl_num = NULL,
   if (nrow(top_cor) == 0) {
     p <- ggplot2::ggplot() +
       ggplot2::labs(title = paste("No correlations available for", rbp_label, "(dPSI))")) +
-      ggplot2::theme_minimal()
+      theme_charm()
     return(list(correlation_table = cor_results, top_table = top_cor, heatmap = p))
   }
 
@@ -1067,8 +1019,7 @@ splicing_correl <- function(charmobj, rbp, correl_num = NULL,
     ggplot2::geom_text(
       ggplot2::aes(label = sprintf("%.2f", Correlation)),
       hjust = ifelse(top_cor$Correlation > 0, -0.1, 1.1),
-      color = "white", size = 4
-    ) +
+      color = "white", size = CHARM_GEOM_TEXT , family = CHARM_FONT) +
     ggplot2::labs(
       # coord_flip() above swaps display axes, so this "x" label is what
       # actually renders as the plot's vertical (Y) axis title.
@@ -1077,14 +1028,8 @@ splicing_correl <- function(charmobj, rbp, correl_num = NULL,
       title = paste0("Splicing (dPSI) correlations with ", title_subject),
       caption = "Method: Spearman"
     ) +
-    ggplot2::theme_bw(base_family = "Arial MS") +
-    ggplot2::theme(
-      plot.title = ggplot2::element_text(hjust = 0.5, face = "bold"),
-      text = ggplot2::element_text(size = 12),
-      legend.position = if (show_legend) "right" else "none",
-      axis.text = ggplot2::element_text(face = "bold"),
-      axis.title = ggplot2::element_text(face = "bold")
-    )
+    theme_charm() +
+    ggplot2::theme(legend.position = if (show_legend) "right" else "none")
 
   return(list(
     correlation_table = cor_results,
@@ -1128,17 +1073,12 @@ violin_splice_plot <- function(Charmobj, rbp) {
   ggplot(dpsi_table, aes(x = Type, y = dPSI))  +
     # Violin plot
     geom_jitter(width = 0.2, alpha = 0.6, size = 1.5) +geom_violin(alpha=.7) +
-    theme_minimal() +
+    theme_charm() +
     ylab("dPSI (shRNA - CTRL)") +
     xlab("Event Type") +
     ggtitle(paste0(rbp, " KD"), subtitle = subtitle_text) +
     coord_flip() +
-    geom_hline(yintercept = 0, linetype = "dashed") +
-    theme(
-      plot.title = element_text(hjust = 0.5),
-      text = element_text(size = 20, family = "Arial MS"),
-      plot.subtitle = element_text(hjust = 0.5)
-    )
+    geom_hline(yintercept = 0, linetype = "dashed")
 }
 
 plot_splice_volcano <- function(charmobj, rbp, other_events = NULL) {
@@ -1170,31 +1110,14 @@ plot_splice_volcano <- function(charmobj, rbp, other_events = NULL) {
                color = "#CCCCCC", alpha = 0.6) +
     geom_point(data = subset(top.table, highlight == "Other"),
                color = "#23586C", alpha = 0.8, size = 2) +
-    theme_bw() +
-    theme(
-      plot.title = element_text(hjust = 0.5, size = 14),
-      axis.title = element_text(size = 12),
-      axis.line = element_line(colour = "black"),
-      panel.grid.minor = element_blank(),
-      panel.border = element_blank(),
-      panel.background = element_blank(),
-      legend.position = "none"
-    ) +
+    theme_charm() +
+    theme(legend.position = "none") +
     labs(
       title = paste0("Volcano Plot: ", rbp, " KD"),
       x = "dPSI (shRNA - CTRL)",
       y = "PDiff"
     )+
-    theme(
-      axis.line = element_line(colour = "black"),
-      panel.grid = element_blank(),
-      panel.border = element_blank(),
-      panel.background = element_blank(),
-      plot.title = element_text(hjust = 0.5),
-      plot.subtitle = element_text(hjust = 0.5),
-      text = element_text(size = 20, face = "bold"),
-      legend.position = "none"
-    )
+    theme(legend.position = "none")
 
   return(list(top_table = top.table, volcano_plot = volcano_plot))
 }
@@ -1240,7 +1163,7 @@ correl_splicing_rbp_hc <- function(charmobj, rbp, other_rbp, plot_title = NULL) 
   if (nrow(merged) < 3) {
     return(
       highcharter::highchart() %>%
-        highcharter::hc_title(text = paste("Not enough overlapping events between", ref_display, "and", other_display))
+        charm_hc_style() %>% highcharter::hc_title(text = paste("Not enough overlapping events between", ref_display, "and", other_display))
     )
   }
 
@@ -1267,9 +1190,9 @@ correl_splicing_rbp_hc <- function(charmobj, rbp, other_rbp, plot_title = NULL) 
                        dpsi_ref_r = dPSI_ref_r, dpsi_other_r = dPSI_other_r),
     fast = TRUE
   ) %>%
-    highcharter::hc_title(text = title_txt) %>%
-    highcharter::hc_xAxis(title = list(text = paste0(ref_display, " dPSI"), style = list(fontSize = "16px", fontWeight = "bold"))) %>%
-    highcharter::hc_yAxis(title = list(text = paste0(other_display, " dPSI"), style = list(fontSize = "16px", fontWeight = "bold"))) %>%
+    charm_hc_style() %>% highcharter::hc_title(text = title_txt) %>%
+    highcharter::hc_xAxis(title = list(text = paste0(ref_display, " dPSI"))) %>%
+    highcharter::hc_yAxis(title = list(text = paste0(other_display, " dPSI"))) %>%
     highcharter::hc_tooltip(pointFormat = paste0(
       "Event: {point.event_id}<br>", ref_display, " dPSI: {point.dpsi_ref_r}<br>",
       other_display, " dPSI: {point.dpsi_other_r}"
@@ -1346,17 +1269,8 @@ plot_gene_t_barplot <- function(CharmObj, gene,
       subtitle = paste0("Gene: ", gene),
       caption = paste0("Only top/bottom 10 shown")
     ) +
-    theme_bw(base_family = "Arial MS") +
-    theme(
-      plot.title = element_text(hjust = 0.5, size = 17, face = "bold"),
-      plot.subtitle = element_text(hjust = 0.5, size = 13),
-      text = element_text(size = 17),
-      legend.position = if (show_legend) "right" else "none",
-      axis.text = element_text(face = "bold"),
-      axis.title = element_text(face = "bold"),
-      legend.title = element_text(face = "bold"),
-      legend.text = element_text(face = "bold")
-    )
+    theme_charm() +
+    theme(legend.position = if (show_legend) "right" else "none")
 }
 
 
@@ -1416,17 +1330,8 @@ plot_hallmark_nes_barplot <- function(CharmObj, geneset,
       subtitle = paste0("Geneset: ", geneset),
       caption = paste0("Only top/bottom 10 RBPs shown")
     ) +
-    theme_bw(base_family = "Arial MS") +
-    theme(
-      plot.title = element_text(hjust = 0.5, size = 17, face = "bold"),
-      plot.subtitle = element_text(hjust = 0.5, size = 13),
-      text = element_text(size = 17),
-      legend.position = if (show_legend) "right" else "none",
-      axis.text = element_text(face = "bold"),
-      axis.title = element_text(face = "bold"),
-      legend.title = element_text(face = "bold"),
-      legend.text = element_text(face = "bold")
-    )
+    theme_charm() +
+    theme(legend.position = if (show_legend) "right" else "none")
 }
 
 
@@ -1482,8 +1387,7 @@ plot_event_dpsi_barplot <- function(CharmObj, Event.ID,
     ggplot2::geom_text(
       ggplot2::aes(label = sprintf("%.2f", dPSI)),
       hjust = ifelse(selected$dPSI > 0, -0.1, 1.1),
-      color = "white", size = 4
-    ) +
+      color = "white", size = CHARM_GEOM_TEXT , family = CHARM_FONT) +
     ggplot2::labs(
       # coord_flip() above swaps display axes, so this "x" label is what
       # actually renders as the plot's vertical (Y) axis title.
@@ -1493,17 +1397,8 @@ plot_event_dpsi_barplot <- function(CharmObj, Event.ID,
       subtitle = paste0("Event ID: ", Event.ID),
       caption = "Only top/bottom 10 shown"
     ) +
-    ggplot2::theme_bw(base_family = "Arial MS") +
-    ggplot2::theme(
-      plot.title = ggplot2::element_text(hjust = 0.5, face = "bold", size = 18),
-      plot.subtitle = ggplot2::element_text(hjust = 0.5, size = 14),
-      text = ggplot2::element_text(size = 14),
-      legend.position = if (show_legend) "right" else "none",
-      axis.text = ggplot2::element_text(face = "bold"),
-      axis.title = ggplot2::element_text(face = "bold"),
-      legend.title = ggplot2::element_text(face = "bold"),
-      legend.text = ggplot2::element_text(face = "bold")
-    )
+    theme_charm() +
+    ggplot2::theme(legend.position = if (show_legend) "right" else "none")
 
   return(p)
 }
@@ -1668,17 +1563,8 @@ eCLIPSE_full <- function(bindingvalues_nested, rnaBP, target, dPSI,
       expand = c(0,0)
     ) +
     scale_fill_identity() +
-    theme_void(base_size = 18) +
-    theme(
-      text = element_text(size = 20, face = "bold"),
-      axis.title = element_blank(),
-      axis.text.x = element_text(size = 16, face = "bold"),
-      axis.text.y = element_blank(),
-      axis.ticks.y = element_blank(),
-      panel.grid = element_blank(),
-      plot.margin = margin(t = 10, r = 10, b = 10, l = 10),
-      legend.position = "none"
-    ) + geom_vline(xintercept = c(50,250,450,500,550,750,950), linetype="dashed")
+    theme_charm_void() +
+    theme(axis.title = element_blank(), axis.text.x = element_text(size = CHARM_SIZE_TEXT, colour = "black"), axis.text.y = element_blank(), axis.ticks.y = element_blank(), plot.margin = margin(t = 10, r = 10, b = 10, l = 10), legend.position = "none") + geom_vline(xintercept = c(50,250,450,500,550,750,950), linetype="dashed")
   
   # --- 11. Map plot (use schematic colors)
   mapplot <- ggplot(dfforvis_raw, aes(x = Pos)) +
@@ -1690,30 +1576,21 @@ eCLIPSE_full <- function(bindingvalues_nested, rnaBP, target, dPSI,
            target, " Binding Profile - Upon ", rnaBP, " KD",
            if (!is.null(title)) paste0(" ", title) else ""
          ), x = "", y = "Normalised\nDensity\n") +
-    theme_bw() +
-    theme(
-      axis.line = element_line(colour = "black"),
-      panel.grid.minor = element_blank(),
-      panel.border = element_blank(),
-      panel.background = element_blank(),
-      axis.text.x = element_blank(),
-      axis.ticks.x = element_blank(),
-      legend.position = "none",
-      text = element_text(size = 20, face = "bold")
-    )+ geom_vline(xintercept = c(50,250,450,500,550,750,950), linetype="dashed")
+    theme_charm() +
+    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.position = "none")+ geom_vline(xintercept = c(50,250,450,500,550,750,950), linetype="dashed")
   
   # --- 12. Labels plot (summary counts) - bold
   labels_plot <- ggplot() +
     annotate("text", x = 1, y = 0,
              label = paste0("Increased: ", inc_target, " (", inc_total, ")\n"),
-             color = inc_color, size = 6, fontface = "bold", hjust = -0.75) +
+             color = inc_color, size = CHARM_GEOM_TEXT, fontface = "bold", hjust = -0.75, family = CHARM_FONT) +
     annotate("text", x = 1, y = 0,
              label = paste0("Maintained: ", maint_target, " (", maint_total, ")\n"),
-             color = maint_color, size = 6, fontface = "bold", hjust = 0.5) +
+             color = maint_color, size = CHARM_GEOM_TEXT, fontface = "bold", hjust = 0.5, family = CHARM_FONT) +
     annotate("text", x = 1, y = 0,
              label = paste0("Decreased: ", dec_target, " (", dec_total, ")\n"),
-             color = dec_color, size = 6, fontface = "bold", hjust = 1.75) +
-    theme_void() +
+             color = dec_color, size = CHARM_GEOM_TEXT, fontface = "bold", hjust = 1.75, family = CHARM_FONT) +
+    theme_charm_void() +
     theme(plot.margin = margin(t = 0, r = 0, b = 0, l = 0))
   
   # --- 13. Metric-specific plot (use schematic colors)
@@ -1723,30 +1600,16 @@ eCLIPSE_full <- function(bindingvalues_nested, rnaBP, target, dPSI,
       geom_line(aes(y = oddsratdec), color = dec_color, size = 1) +
       xlim(0, xlim_max) +
       labs(x = "Position", y = "Chi-Squared\nStatistic\n") +
-      theme_bw() + geom_vline(xintercept = c(50,250,450,500,550,750,950), linetype="dashed")+
-      theme(axis.line = element_line(colour = "black"),
-            panel.grid.minor = element_blank(),
-            panel.border = element_blank(),
-            panel.background = element_blank(),
-            axis.text.x = element_blank(),
-            axis.ticks.x = element_blank(),
-            legend.position = "none",
-            text = element_text(size = 20, face = "bold"))
+      theme_charm() + geom_vline(xintercept = c(50,250,450,500,550,750,950), linetype="dashed")+
+      theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.position = "none")
   } else {
     metricplot <- ggplot(dfforvis_pval, aes(x = pos)) +
       geom_line(aes(y = pvalinc), color = inc_color, size = 1) +
       geom_line(aes(y = pvaldec), color = dec_color, size = 1) +
       xlim(0, xlim_max) +
       labs(x = "Position", y = "-log10 (FDR)\n") +
-      theme_bw() +  geom_vline(xintercept = c(50,250,450,500,550,750,950), linetype="dashed")+
-      theme(axis.line = element_line(colour = "black"),
-            panel.grid.minor = element_blank(),
-            panel.border = element_blank(),
-            panel.background = element_blank(),
-            axis.text.x = element_blank(),
-            axis.ticks.x = element_blank(),
-            legend.position = "none",
-            text = element_text(size = 20, face = "bold"))
+      theme_charm() +  geom_vline(xintercept = c(50,250,450,500,550,750,950), linetype="dashed")+
+      theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.position = "none")
   }
   
   
@@ -1796,8 +1659,8 @@ eCLIPSE_raw_user <- function(rnamapfile,
     return(ggplot() +
              annotate("text", x = 0.5, y = 0.5,
                       label = paste0("No ", prefix, " events found in the uploaded file."),
-                      size = 6) +
-             theme_void())
+                      size = CHARM_GEOM_TEXT, family = CHARM_FONT) +
+             theme_charm_void())
   }
   
   ASfile_filt_increased  <- subset(ASfile,  dPSI >  PSIthreshold)
@@ -1848,8 +1711,8 @@ eCLIPSE_raw_user <- function(rnamapfile,
     msg <- paste0(rnaBP, " does not have enough events for this event type.")
     message(msg)
     return(ggplot() +
-             annotate("text", x = 0.5, y = 0.5, label = msg, size = 5) +
-             theme_void())
+             annotate("text", x = 0.5, y = 0.5, label = msg, size = CHARM_GEOM_TEXT, family = CHARM_FONT) +
+             theme_charm_void())
   }
   
   mat_to_colsums <- function(mat, drop = NULL) {
@@ -2040,30 +1903,21 @@ eCLIPSE_raw_user <- function(rnamapfile,
     geom_line(aes(y = MaintainedEvents), color = maint_color, linewidth = 1) +
     xlim(0, n_pos) +
     labs(title = plot_title, x = "", y = "Normalised\nDensity\n") +
-    theme_bw() +
+    theme_charm() +
     geom_vline(xintercept = vlines, linetype = "dashed") +
-    theme(
-      axis.line          = element_line(colour = "black"),
-      panel.grid.minor   = element_blank(),
-      panel.border       = element_blank(),
-      panel.background   = element_blank(),
-      axis.text.x        = element_blank(),
-      axis.ticks.x       = element_blank(),
-      legend.position    = "none",
-      text               = element_text(size = 15, face = "bold")
-    )
+    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.position = "none")
   
   labels_plot <- ggplot() +
     annotate("text", x = 1, y = 0,
              label = paste0("Increased: ",  n_inc_rbp,   " (", n_inc_total,   ")\n"),
-             color = inc_color,   size = 4.5, fontface = "bold", hjust = -0.75) +
+             color = inc_color,   size = CHARM_GEOM_TEXT, fontface = "bold", hjust = -0.75, family = CHARM_FONT) +
     annotate("text", x = 1, y = 0,
              label = paste0("Maintained: ", n_maint_rbp, " (", n_maint_total, ")\n"),
-             color = maint_color, size = 4.5, fontface = "bold", hjust =  0.5) +
+             color = maint_color, size = CHARM_GEOM_TEXT, fontface = "bold", hjust =  0.5, family = CHARM_FONT) +
     annotate("text", x = 1, y = 0,
              label = paste0("Decreased: ",  n_dec_rbp,   " (", n_dec_total,   ")\n"),
-             color = dec_color,   size = 4.5, fontface = "bold", hjust =  1.75) +
-    theme_void() +
+             color = dec_color,   size = CHARM_GEOM_TEXT, fontface = "bold", hjust =  1.75, family = CHARM_FONT) +
+    theme_charm_void() +
     theme(plot.margin = margin(0, 0, 0, 0))
   
   if (metric == "EffectSize") {
@@ -2072,38 +1926,20 @@ eCLIPSE_raw_user <- function(rnamapfile,
       geom_line(aes(y = oddsratdec), color = dec_color, linewidth = 1) +
       xlim(0, n_pos) +
       labs(x = "Position", y = "Chi-Squared\nStatistic\n") +
-      theme_bw() +
+      theme_charm() +
       geom_vline(xintercept = vlines, linetype = "dashed") +
       scale_y_continuous(labels = scales::label_number(accuracy = 0.01)) +
-      theme(
-        axis.line        = element_line(colour = "black"),
-        panel.grid.minor = element_blank(),
-        panel.border     = element_blank(),
-        panel.background = element_blank(),
-        axis.text.x      = element_blank(),
-        axis.ticks.x     = element_blank(),
-        legend.position  = "none",
-        text             = element_text(size = 15, face = "bold")
-      )
+      theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.position = "none")
   } else {
     metricplot <- ggplot(dfforvis_pval, aes(x = pos)) +
       geom_line(aes(y = pvalinc), color = inc_color, linewidth = 1) +
       geom_line(aes(y = pvaldec), color = dec_color, linewidth = 1) +
       xlim(0, n_pos) +
       labs(x = "Position", y = "-log10 (FDR)\n") +
-      theme_bw() +
+      theme_charm() +
       geom_vline(xintercept = vlines, linetype = "dashed") +
       scale_y_continuous(labels = scales::label_number(accuracy = 0.01)) +
-      theme(
-        axis.line        = element_line(colour = "black"),
-        panel.grid.minor = element_blank(),
-        panel.border     = element_blank(),
-        panel.background = element_blank(),
-        axis.text.x      = element_blank(),
-        axis.ticks.x     = element_blank(),
-        legend.position  = "none",
-        text             = element_text(size = 15, face = "bold")
-      )
+      theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.position = "none")
   }
   
   ggpubr::ggarrange(mapplot, labels_plot, metricplot,
@@ -2172,7 +2008,7 @@ build_binding_heatmap_user <- function(rnamapfile,
   }
 
   if (length(inc_list) == 0 && length(dec_list) == 0) {
-    return(ggplot() + theme_void() + ggtitle("No heatmap data"))
+    return(ggplot() + theme_charm_void() + ggtitle("No heatmap data"))
   }
 
   # 2. Pad to equal-length matrix
@@ -2247,15 +2083,10 @@ build_binding_heatmap_user <- function(rnamapfile,
         limits = lim, oob = scales::squish
       ) +
       labs(x = "Genomic position", y = "", fill = fill_label, title = title_text) +
-      theme_minimal(base_size = 14) +
-      theme(
-        text        = element_text(size = 16, face = "bold"),
-        axis.text.x = element_text(size = 14, face = "bold"),
+      theme_charm() +
+      theme(axis.line = element_blank(), axis.ticks = element_blank(),
         axis.text.y = if (hide_row_labels) element_blank()
-                      else element_text(size = 14, face = "bold"),
-        axis.title  = element_text(size = 16, face = "bold"),
-        panel.grid  = element_blank()
-      ) +
+                      else element_text()) +
       geom_segment(data = vline_df,
                    aes(x = x, xend = x, y = 1, yend = n_rows),
                    linetype = "dashed", color = "black", linewidth = 0.4,
@@ -2305,14 +2136,14 @@ build_binding_heatmap_user <- function(rnamapfile,
   labels_plot <- ggplot() +
     annotate("text", x = 1, y = 0,
              label = paste0("Increased: ", n_inc_total, "\n"),
-             color = inc_color_lbl, size = 5, fontface = "bold", hjust = -0.75) +
+             color = inc_color_lbl, size = CHARM_GEOM_TEXT, fontface = "bold", hjust = -0.75, family = CHARM_FONT) +
     annotate("text", x = 1, y = 0,
              label = paste0("Maintained: ", n_maint_total, "\n"),
-             color = maint_color_lbl, size = 5, fontface = "bold", hjust = 0.5) +
+             color = maint_color_lbl, size = CHARM_GEOM_TEXT, fontface = "bold", hjust = 0.5, family = CHARM_FONT) +
     annotate("text", x = 1, y = 0,
              label = paste0("Decreased: ", n_dec_total, "\n"),
-             color = dec_color_lbl, size = 5, fontface = "bold", hjust = 1.75) +
-    theme_void() +
+             color = dec_color_lbl, size = CHARM_GEOM_TEXT, fontface = "bold", hjust = 1.75, family = CHARM_FONT) +
+    theme_charm_void() +
     theme(plot.margin = margin(t = 0, r = 0, b = 0, l = 0))
 
   heat_row <- NULL
@@ -2328,7 +2159,7 @@ build_binding_heatmap_user <- function(rnamapfile,
     return(ggpubr::ggarrange(labels_plot, heat_row, ncol = 1, heights = c(0.06, 0.94)))
   }
 
-  ggplot() + theme_void() + ggtitle("No heatmap data")
+  ggplot() + theme_charm_void() + ggtitle("No heatmap data")
 }
 
 binding_profile_correl <- function(sim_obj,
@@ -2364,8 +2195,8 @@ binding_profile_correl <- function(sim_obj,
     empty_plot <- ggplot2::ggplot() +
       ggplot2::annotate("text", x = 0.5, y = 0.5,
                         label = paste0("Profile '", query_id, "' not found in this dataset."),
-                        size = 5, hjust = 0.5) +
-      ggplot2::theme_void()
+                        size = CHARM_GEOM_TEXT, hjust = 0.5, family = CHARM_FONT) +
+      theme_charm_void()
     return(list(correlation_table = data.frame(), heatmap = empty_plot))
   }
   
@@ -2436,8 +2267,8 @@ binding_profile_correl <- function(sim_obj,
     empty_plot <- ggplot2::ggplot() +
       ggplot2::annotate("text", x = 0.5, y = 0.5,
                         label = "No profiles match the current filter settings.",
-                        size = 5, hjust = 0.5) +
-      ggplot2::theme_void()
+                        size = CHARM_GEOM_TEXT, hjust = 0.5, family = CHARM_FONT) +
+      theme_charm_void()
     return(list(correlation_table = cor_df, heatmap = empty_plot))
   }
   
@@ -2459,8 +2290,7 @@ binding_profile_correl <- function(sim_obj,
     ggplot2::geom_text(
       ggplot2::aes(label = sprintf("%.2f", Correlation)),
       hjust = ifelse(cor_df$Correlation > 0, -0.1, 1.1),
-      color = "black", size = 4
-    ) +
+      color = "black", size = CHARM_GEOM_TEXT , family = CHARM_FONT) +
     ggplot2::labs(
       x        = "RBP KD \u2013 Target Profile",
       y        = "Pearson's Correlation (r)",
@@ -2468,15 +2298,8 @@ binding_profile_correl <- function(sim_obj,
       subtitle = plot_subtitle,
       caption  = "Method: Pearson"
     ) +
-    ggplot2::theme_bw(base_family = "Arial MS") +
-    ggplot2::theme(
-      plot.title      = ggplot2::element_text(hjust = 0.5, face = "bold"),
-      plot.subtitle   = ggplot2::element_text(hjust = 0.5),
-      text            = ggplot2::element_text(size = 13),
-      legend.position = "none",
-      axis.text       = ggplot2::element_text(face = "bold"),
-      axis.title      = ggplot2::element_text(face = "bold")
-    )
+    theme_charm() +
+    ggplot2::theme(legend.position = "none")
   
   list(
     correlation_table = cor_df[, c("Profile", "RBP", "Target", "Correlation")],

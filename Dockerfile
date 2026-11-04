@@ -5,6 +5,8 @@ MAINTAINER Disease Transcriptomics Lab <diseasetranscriptomicslab@gmail.com>
 # top - this app is a headless Shiny app and never uses it, so skipping it
 # saves close to 1.7GB. The trade-off: bioconductor_docker also came with
 # BiocManager and various system libraries pre-installed for building
+# fonts-liberation: Helvetica/Arial-compatible font; the fontconfig rule below makes it
+# the default 'sans' so R plots and Highcharts share one typeface. See plot_theme.R.
 # Bioconductor/CRAN packages from source; both are added explicitly below
 # since rocker/r-ver doesn't include them.
 RUN apt-get update && apt-get -y upgrade && apt-get install -y --no-install-recommends \
@@ -22,7 +24,10 @@ RUN apt-get update && apt-get -y upgrade && apt-get install -y --no-install-reco
       liblapack-dev \
       libblas-dev \
       libglpk-dev \
+      fontconfig \
+      fonts-liberation \
     && apt-get -y autoremove && rm -rf /var/lib/apt/lists/*
+RUN printf '%s\n' '<?xml version="1.0"?>' '<!DOCTYPE fontconfig SYSTEM "fonts.dtd">' '<fontconfig>' '<alias binding="same"><family>sans</family><prefer><family>Liberation Sans</family></prefer></alias>' '<alias binding="same"><family>Helvetica</family><prefer><family>Liberation Sans</family></prefer></alias>' '</fontconfig>' > /etc/fonts/local.conf && fc-cache -f
 # cmake: nloptr (a transitive dependency of ggpubr, via rstatix -> car ->
 # pbkrtest -> lme4 -> nloptr) has required cmake to build its bundled
 # NLopt C library from source since nloptr 2.0. bioconductor_docker ships

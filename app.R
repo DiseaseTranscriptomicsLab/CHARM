@@ -20,6 +20,7 @@ logo_b64 <- base64enc::dataURI(file = "www/Charm_logo.png", mime = "image/png")
 # Embedded like the logo (not served from www/), so it cannot fail to load as a static file
 schematic_b64 <- base64enc::dataURI(file = "www/charm_schematic.svg", mime = "image/svg+xml")
 
+source("plot_theme.R")       # one font/size/style for every plot
 source("helper_functions.R")
 
 # --- Data directory -----------------------------------------------------
@@ -1653,7 +1654,7 @@ server <- function(input, output, session) {
     img <- png::readPNG(path)
     g <- grid::rasterGrob(img, interpolate = TRUE)
     ggplot() + annotation_custom(g, xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf) +
-      theme_void()
+      theme_charm_void()
   }
   
   
@@ -1959,7 +1960,7 @@ server <- function(input, output, session) {
         p <- ggplot(tbl, aes(x = dPSI, y = Pdiff, key = Event.ID, color = highlight)) +
           geom_point(alpha = 0.7) +
           scale_color_manual(values = c("None" = "#CCCCCC", "RBP" = "#A10702", "Selected" = "#008057")) +
-          theme_bw() + theme(legend.position = "none") +
+          theme_charm() + theme(legend.position = "none") +
           labs(title = paste0("Volcano Plot: ", rbp_sel, " KD"), x = "dPSI (shRNA - CTRL)", y = "PDiff")
         dl_store$splice_volcano(p)
         make_splice_volcano_plot_hc(tbl, rbp_sel)
@@ -2516,17 +2517,12 @@ server <- function(input, output, session) {
     p <- ggplot(dpsi_table, aes(x = Type, y = dPSI)) +
       geom_jitter(width = 0.2, alpha = 0.6, size = 1.5) +
       geom_violin(alpha = .7) +
-      theme_minimal() +
+      theme_charm() +
       ylab("dPSI (shRNA - CTRL)") +
       xlab("Event Type") +
       ggtitle("Uploaded data", subtitle = subtitle_text) +
       coord_flip() +
-      geom_hline(yintercept = 0, linetype = "dashed") +
-      theme(
-        plot.title = element_text(hjust = 0.5),
-        text = element_text(size = 20, family = "Arial MS"),
-        plot.subtitle = element_text(hjust = 0.5)
-      )
+      geom_hline(yintercept = 0, linetype = "dashed")
     dl_store$splice_initial(p)
     p
   })
@@ -2788,7 +2784,7 @@ server <- function(input, output, session) {
         # example (bare-\r line endings normalised by read_user_table) lands
         # here in the right shape; this surfaces a readable message if a
         # malformed file ever slips through instead of erroring in the analysis.
-        validate(
+        shiny::validate(
           need(all(c("Event.ID", "dPSI") %in% names(user_binding_df())),
                "Uploaded file is missing required columns (Event.ID, dPSI).")
         )
@@ -2828,7 +2824,7 @@ server <- function(input, output, session) {
         # example (bare-\r line endings normalised by read_user_table) lands
         # here in the right shape; this surfaces a readable message if a
         # malformed file ever slips through instead of erroring in the analysis.
-        validate(
+        shiny::validate(
           need(all(c("Event.ID", "dPSI") %in% names(user_binding_df())),
                "Uploaded file is missing required columns (Event.ID, dPSI).")
         )
@@ -2856,7 +2852,7 @@ server <- function(input, output, session) {
   # ---- Volcano plot helper ----
   make_volcano_plot <- function(tbl, rbp) {
     if (is.null(tbl) || nrow(tbl) == 0) {
-      ggplot() + annotate("text", x = 0, y = 0, label = paste("No results for", rbp)) + theme_void()
+      ggplot() + annotate("text", x = 0, y = 0, label = paste("No results for", rbp), family = CHARM_FONT) + theme_charm_void()
     } else {
       ggplot(tbl, aes(x = logFC, y = B,
                       text = paste0("Gene: ", gene,
@@ -2871,19 +2867,10 @@ server <- function(input, output, session) {
         # bigger than the background cloud, matching the on-screen
         # highcharter version below.
         scale_size_manual(values = c("None"=1.5, "RBP"=4, "Selected"=2.5)) +
-        theme_bw() +
+        theme_charm() +
         labs(title=paste(rbp,"KD"), x="Log2 Fold-Change", y="B-statistic") +
-        theme(legend.position="none", plot.title=element_text(hjust=0.5)) +
-        theme(
-          axis.line = element_line(colour = "black"),
-          panel.grid = element_blank(),
-          panel.border = element_blank(),
-          panel.background = element_blank(),
-          plot.title = element_text(hjust = 0.5),
-          plot.subtitle = element_text(hjust = 0.5),
-          text = element_text(size = 15, face = "bold"),
-          legend.position = "none"
-        )
+        theme(legend.position = "none") +
+        theme(legend.position = "none")
     }
   }
 
@@ -2919,7 +2906,7 @@ server <- function(input, output, session) {
   # is left untouched since it still feeds the PNG download handler.
   make_volcano_plot_hc <- function(tbl, rbp, output_id = "volcano_plot") {
     if (is.null(tbl) || nrow(tbl) == 0) {
-      return(highcharter::highchart() %>% highcharter::hc_title(text = paste("No results for", rbp)))
+      return(highcharter::highchart() %>% charm_hc_style() %>% highcharter::hc_title(text = paste("No results for", rbp)))
     }
     # Per-point hex color (rather than group=highlight + hc_colors()) so
     # coloring is exact regardless of which highlight categories happen to
@@ -2947,7 +2934,7 @@ server <- function(input, output, session) {
     rbp_df <- plot_df[ is_rbp, , drop = FALSE]
 
     hc <- highcharter::highchart() %>%
-      highcharter::hc_title(text = paste(rbp, "KD")) %>%
+      charm_hc_style() %>% highcharter::hc_title(text = paste(rbp, "KD")) %>%
       highcharter::hc_xAxis(title = list(text = "Log2 Fold-Change")) %>%
       highcharter::hc_yAxis(title = list(text = "B-statistic")) %>%
       highcharter::hc_tooltip(pointFormat = "Gene: {point.gene}<br>logFC: {point.logfc_r}<br>B: {point.b_r}<br>P: {point.p_r}") %>%
@@ -2982,7 +2969,7 @@ server <- function(input, output, session) {
   # (dPSI vs Pdiff, colored by highlight, tooltip keyed by Event.ID).
   make_splice_volcano_plot_hc <- function(tbl, rbp, output_id = "plot_splice_volcano") {
     if (is.null(tbl) || nrow(tbl) == 0) {
-      return(highcharter::highchart() %>% highcharter::hc_title(text = paste("No results for", rbp)))
+      return(highcharter::highchart() %>% charm_hc_style() %>% highcharter::hc_title(text = paste("No results for", rbp)))
     }
     # See make_volcano_plot_hc() above for why this uses per-point hex
     # color instead of group=highlight + hc_colors().
@@ -2995,7 +2982,7 @@ server <- function(input, output, session) {
       highcharter::hcaes(x = dPSI, y = Pdiff, color = point_color, key = Event.ID),
       fast = TRUE
     ) %>%
-      highcharter::hc_title(text = paste0("Volcano Plot: ", rbp, " KD")) %>%
+      charm_hc_style() %>% highcharter::hc_title(text = paste0("Volcano Plot: ", rbp, " KD")) %>%
       highcharter::hc_xAxis(title = list(text = "dPSI (shRNA - CTRL)")) %>%
       highcharter::hc_yAxis(title = list(text = "PDiff")) %>%
       highcharter::hc_tooltip(pointFormat = "Event: {point.key}") %>%
@@ -3178,11 +3165,11 @@ server <- function(input, output, session) {
     expr_top_panel("gene")
     
     output$expr_gene_plot <- renderPlot({
-      # on.exit fires even when validate()/need() below stops execution (an
+      # on.exit fires even when shiny::validate()/need() below stops execution (an
       # unrecognized gene) -- the plain hide_status() call after it would
       # never run in that case, leaving the status banner stuck up.
       on.exit(hide_status(), add = TRUE)
-      validate(
+      shiny::validate(
         need(gene %in% unlist(lapply(charm_obj, function(x) rownames(x$DEGenes))),
              paste("Gene", gene, "not found in any RBP DEGenes tables."))
       )
@@ -3203,7 +3190,7 @@ server <- function(input, output, session) {
     
     output$expr_hallmark_plot <- renderPlot({
       on.exit(hide_status(), add = TRUE)
-      validate(
+      shiny::validate(
         need(geneset %in% unlist(lapply(charm_obj, function(x) x$GSEA$pathway)),
              paste0("Geneset '", geneset, "' not found in any RBP GSEA tables."))
       )
@@ -3379,7 +3366,7 @@ server <- function(input, output, session) {
     splice_res <- plot_splice_volcano(charm_obj, rbp_sel)
     if (is.null(splice_res)) {
       output$plot_splice_volcano <- renderPlot({
-        ggplot() + annotate("text", x = 0, y = 0, label = paste("No results for", rbp_sel)) + theme_void()
+        ggplot() + annotate("text", x = 0, y = 0, label = paste("No results for", rbp_sel), family = CHARM_FONT) + theme_charm_void()
       })
       output$splice_volcano_table <- DT::renderDataTable(NULL)
       return()
@@ -3393,7 +3380,7 @@ server <- function(input, output, session) {
       p <- ggplot(tbl, aes(x = dPSI, y = Pdiff, key = Event.ID, color = highlight)) +
         geom_point(alpha = 0.7) +
         scale_color_manual(values = c("None"="#CCCCCC","RBP"="#A10702","Selected"="#008057")) +
-        theme_bw() +
+        theme_charm() +
         theme(legend.position = "none") +
         labs(title = paste0("Volcano Plot: ", rbp_sel, " KD"), x = "dPSI (shRNA - CTRL)", y = "PDiff")
       dl_store$splice_volcano(p)
@@ -3517,8 +3504,8 @@ server <- function(input, output, session) {
               # RBP must both exist in THIS cell line's Charm object -- an
               # RBP profiled in one line can be absent from another, which
               # would otherwise throw a hard error in just that panel.
-              # validate() turns that into a readable message instead.
-              validate(
+              # shiny::validate() turns that into a readable message instead.
+              shiny::validate(
                 need(rbp1 %in% names(datasets[[ds_name]]),
                      paste0(rbp1, " is not available in ", ds_name, ".")),
                 need(all(selected_rbps %in% names(datasets[[ds_name]])),
@@ -3530,7 +3517,7 @@ server <- function(input, output, session) {
           } else {
             output[[plotname]] <- renderPlot({
               # Same cross-cell-line guard as the scatter branch above.
-              validate(
+              shiny::validate(
                 need(rbp1 %in% names(datasets[[ds_name]]),
                      paste0(rbp1, " is not available in ", ds_name, "."))
               )
@@ -3960,7 +3947,7 @@ server <- function(input, output, session) {
     }
     
     if (length(inc_list) == 0 && length(dec_list) == 0) {
-      return(ggplot() + theme_void() + ggtitle("No heatmap data"))
+      return(ggplot() + theme_charm_void() + ggtitle("No heatmap data"))
     }
     
     inc_mat <- pad_and_rbind(inc_list)
@@ -4035,14 +4022,9 @@ server <- function(input, output, session) {
         geom_tile() +
         scale_fill_gradient2(low="#A6B1E1", mid="#EEEEEE", high="#B07156", limits=lim, oob=scales::squish) +
         labs(x="Genomic position", y="", fill=fill_label, title=title_text) +
-        theme_minimal(base_size=14) +
-        theme(
-          text = element_text(size = 16, face = "bold"),
-          axis.text.x = element_text(size = 14, face = "bold"),
-          axis.text.y = if(hide_row_labels) element_blank() else element_text(size = 14, face = "bold"),
-          axis.title = element_text(size = 16, face = "bold"),
-          panel.grid = element_blank()
-        ) +
+        theme_charm() +
+        theme(axis.line = element_blank(), axis.ticks = element_blank(),
+        axis.text.y = if(hide_row_labels) element_blank() else element_text()) +
         geom_segment(data=vline_df,
                      aes(x=x, xend=x, y=1, yend=n_rows),
                      linetype="dashed", color="black", linewidth=0.4,
@@ -4097,14 +4079,14 @@ server <- function(input, output, session) {
     labels_plot <- ggplot() +
       annotate("text", x = 1, y = 0,
                label = paste0("Increased: ", inc_total, "\n"),
-               color = inc_color, size = 5, fontface = "bold", hjust = -0.75) +
+               color = inc_color, size = CHARM_GEOM_TEXT, fontface = "bold", hjust = -0.75, family = CHARM_FONT) +
       annotate("text", x = 1, y = 0,
                label = paste0("Maintained: ", maint_total, "\n"),
-               color = maint_color, size = 5, fontface = "bold", hjust = 0.5) +
+               color = maint_color, size = CHARM_GEOM_TEXT, fontface = "bold", hjust = 0.5, family = CHARM_FONT) +
       annotate("text", x = 1, y = 0,
                label = paste0("Decreased: ", dec_total, "\n"),
-               color = dec_color, size = 5, fontface = "bold", hjust = 1.75) +
-      theme_void() +
+               color = dec_color, size = CHARM_GEOM_TEXT, fontface = "bold", hjust = 1.75, family = CHARM_FONT) +
+      theme_charm_void() +
       theme(plot.margin = margin(t = 0, r = 0, b = 0, l = 0))
     
     # -----------------------------
@@ -4134,14 +4116,14 @@ server <- function(input, output, session) {
         footnote <- ggplot() +
           annotate("text", x = 0.5, y = 0.5,
                    label = paste(footnote_lines, collapse = "\n"),
-                   size = 4, fontface = "italic", hjust = 0.5) +
-          theme_void()
+                   size = CHARM_GEOM_TEXT, fontface = "italic", hjust = 0.5, family = CHARM_FONT) +
+          theme_charm_void()
         return(ggpubr::ggarrange(labels_plot, heat_row, footnote, ncol = 1, heights = c(0.05, 0.88, 0.07)))
       }
       return(ggpubr::ggarrange(labels_plot, heat_row, ncol = 1, heights = c(0.06, 0.94)))
     }
     
-    ggplot() + theme_void() + ggtitle("No heatmap data")
+    ggplot() + theme_charm_void() + ggtitle("No heatmap data")
   }
   
   
@@ -4199,8 +4181,8 @@ server <- function(input, output, session) {
                    annotate("text", x = 0.5, y = 0.5,
                             label = paste0("dPSI option '", input$binding_dpsi,
                                            "' is not available for ", rbp, " - ", targets, "."),
-                            size = 6, hjust = 0.5) +
-                   theme_void())
+                            size = CHARM_GEOM_TEXT, hjust = 0.5, family = CHARM_FONT) +
+                   theme_charm_void())
         }
         dpsi_key   <- dpsi_resolved$key
         dpsi_value <- suppressWarnings(as.numeric(sub(" .*", "", dpsi_key)))
@@ -4708,17 +4690,8 @@ server <- function(input, output, session) {
       scale_size_manual( values = c("Highlighted" = 4,         "Other" = 2.5)) +
       labs(title = title, subtitle = subtitle,
            x = xlab, y = ylab, caption = caption) +
-      theme_bw() +
-      theme(
-        plot.title    = element_text(hjust = 0.5, face = "bold", size = 15),
-        plot.subtitle = element_text(hjust = 0.5, size = 11, color = "#555555"),
-        plot.caption  = element_text(hjust = 0.5, size = 9,  color = "#888888"),
-        text          = element_text(size = 12),
-        panel.grid    = element_blank(),
-        axis.line     = element_line(colour = "black"),
-        panel.border  = element_blank(),
-        legend.position = if (has_hl) "right" else "none"
-      )
+      theme_charm() +
+      theme(legend.position = if (has_hl) "right" else "none")
 
     # Label every RBP regardless of highlight status (highlighting should
     # only recolor points red, not remove everyone else's labels) --
@@ -4726,10 +4699,10 @@ server <- function(input, output, session) {
     # aesthetic instead of only repelling a filtered subset.
     p <- p + ggrepel::geom_text_repel(
       aes(label = RBP, color = Highlight, fontface = Fontface),
-      size         = 3.5,
+      size         = CHARM_GEOM_TEXT,
       max.overlaps = 30,
       show.legend  = FALSE
-    )
+    , family = CHARM_FONT)
     p
   }
 
@@ -4953,7 +4926,7 @@ server <- function(input, output, session) {
     if (!is.null(res$error)) {
       return(ggplot() +
                annotate("text", x = 0.5, y = 0.5, label = res$error,
-                        size = 6, hjust = 0.5) + theme_void())
+                        size = CHARM_GEOM_TEXT, hjust = 0.5, family = CHARM_FONT) + theme_charm_void())
     }
 
     hl_valid <- intersect(input$network_highlight_rbps, res$common_rbps)
