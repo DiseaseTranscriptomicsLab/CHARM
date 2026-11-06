@@ -1,0 +1,37 @@
+"Dataset","Row","Group","n","r_line","Percentile"
+"Both Cells","Increased events","All profile pairs",247965315,0.644,3.05
+"Both Cells","Increased events","RBFOX2 profiles vs each other (different KD RBPs)",11175,0.644,13.46
+"Both Cells","Increased events","RBFOX2__RBFOX2 vs the other RBFOX2 profiles",149,0.644,14.77
+"Both Cells","Decreased events","All profile pairs",248767665,0.697,2.07
+"Both Cells","Decreased events","RBFOX2 profiles vs each other (different KD RBPs)",11175,0.697,7.29
+"Both Cells","Decreased events","RBFOX2__RBFOX2 vs the other RBFOX2 profiles",149,0.697,18.12
+"Both Cells","Increased + decreased together (inc line)","All profile pairs",496732980,0.644,3.13
+"Both Cells","Increased + decreased together (inc line)","RBFOX2 profiles vs each other (different KD RBPs)",22350,0.644,12.79
+"Both Cells","Increased + decreased together (inc line)","RBFOX2__RBFOX2 vs the other RBFOX2 profiles",298,0.644,22.48
+"Both Cells","Increased + decreased together (dec line)","All profile pairs",496732980,0.697,2.02
+"Both Cells","Increased + decreased together (dec line)","RBFOX2 profiles vs each other (different KD RBPs)",22350,0.697,7.81
+"Both Cells","Increased + decreased together (dec line)","RBFOX2__RBFOX2 vs the other RBFOX2 profiles",298,0.697,12.75
+"K562","Increased events","All profile pairs",242957946,0.433,10.75
+"K562","Increased events","RBFOX2 profiles vs each other (different KD RBPs)",10878,0.433,33.21
+"K562","Increased events","RBFOX2__RBFOX2 vs the other RBFOX2 profiles",147,0.433,17.69
+"K562","Decreased events","All profile pairs",244017186,0.289,22.69
+"K562","Decreased events","RBFOX2 profiles vs each other (different KD RBPs)",10878,0.289,48.9
+"K562","Decreased events","RBFOX2__RBFOX2 vs the other RBFOX2 profiles",147,0.289,50.34
+"K562","Increased + decreased together (inc line)","All profile pairs",486975132,0.433,11.06
+"K562","Increased + decreased together (inc line)","RBFOX2 profiles vs each other (different KD RBPs)",21756,0.433,31.82
+"K562","Increased + decreased together (inc line)","RBFOX2__RBFOX2 vs the other RBFOX2 profiles",294,0.433,23.81
+"K562","Increased + decreased together (dec line)","All profile pairs",486975132,0.289,22.31
+"K562","Increased + decreased together (dec line)","RBFOX2 profiles vs each other (different KD RBPs)",21756,0.289,49.99
+"K562","Increased + decreased together (dec line)","RBFOX2__RBFOX2 vs the other RBFOX2 profiles",294,0.289,40.82
+"HEPG2","Increased events","All profile pairs",224349153,0.47,9.24
+"HEPG2","Increased events","RBFOX2 profiles vs each other (different KD RBPs)",10011,0.47,49.34
+"HEPG2","Increased events","RBFOX2__RBFOX2 vs the other RBFOX2 profiles",141,0.47,60.28
+"HEPG2","Decreased events","All profile pairs",223798746,0.067,46.37
+"HEPG2","Decreased events","RBFOX2 profiles vs each other (different KD RBPs)",10011,0.067,86.37
+"HEPG2","Decreased events","RBFOX2__RBFOX2 vs the other RBFOX2 profiles",141,0.067,82.27
+"HEPG2","Increased + decreased together (inc line)","All profile pairs",448147899,0.47,9.29
+"HEPG2","Increased + decreased together (inc line)","RBFOX2 profiles vs each other (different KD RBPs)",20022,0.47,44.39
+"HEPG2","Increased + decreased together (inc line)","RBFOX2__RBFOX2 vs the other RBFOX2 profiles",282,0.47,42.91
+"HEPG2","Increased + decreased together (dec line)","All profile pairs",448147899,0.067,46.59
+"HEPG2","Increased + decreased together (dec line)","RBFOX2 profiles vs each other (different KD RBPs)",20022,0.067,88.92
+"HEPG2","Increased + decreased together (dec line)","RBFOX2__RBFOX2 vs the other RBFOX2 profiles",282,0.067,90.43

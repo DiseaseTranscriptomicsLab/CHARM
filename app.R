@@ -21,6 +21,7 @@ logo_b64 <- base64enc::dataURI(file = "www/Charm_logo.png", mime = "image/png")
 schematic_b64 <- base64enc::dataURI(file = "www/charm_schematic.svg", mime = "image/svg+xml")
 
 source("plot_theme.R")       # one font/size/style for every plot
+source("correlation_reference.R")   # percentile / permutation-null context for correlations
 source("helper_functions.R")
 
 # --- Data directory -----------------------------------------------------
@@ -42,6 +43,15 @@ qload <- function(name) {
   path <- file.path(DATA_DIR, paste0(name, DATA_EXT))
   if (DATA_EXT == ".qs2") qs2::qs_read(path) else qs::qread(path)
 }
+
+# Reference distributions for "how unusual is this correlation?" (built offline by
+# build_correlation_reference.R). Optional: if the file is missing the app simply
+# shows the plain correlation bar plots, as before.
+CORR_REF <- tryCatch(qload("Correlation_Reference"), error = function(e) NULL)
+# Same idea for binding profiles (built by build_binding_reference.R)
+BIND_REF <- tryCatch(qload("Binding_Correlation_Reference"), error = function(e) NULL)
+# Taller plot box when the density panel is stacked under the bar plot
+corr_plot_height <- function(key) if (corr_has_ref(key)) "800px" else "500px"
 
 # --- Lazy, single-instance dataset-family caches ---------------------------
 # Charm.object (3 cell-line variants: Both/K562/HEPG2) and the Binding tables
@@ -2357,12 +2367,13 @@ server <- function(input, output, session) {
                 correl_num = if (mode == "expr") input$user_file_topN_expr else input$user_file_topN_gsea,
                 n_pos      = if (mode == "expr") input$user_file_n_pos_expr else input$user_file_n_pos_gsea,
                 n_neg      = if (mode == "expr") input$user_file_n_neg_expr else input$user_file_n_neg_gsea,
-                other_rbps = if (!is.null(selected_rbps) && length(selected_rbps) > 1) selected_rbps else NULL
+                other_rbps = if (!is.null(selected_rbps) && length(selected_rbps) > 1) selected_rbps else NULL,
+                ref_key    = corr_key(if (mode == "expr") "expr" else "gsea", ds_name)
               )
               dyn_dl_store[[plotname]] <- heat_res$heatmap
               heat_res$heatmap   # ✅ FIXED
             })
-            plot_ui <- plotOutput(plotname, height = "500px")
+            plot_ui <- plotOutput(plotname, height = corr_plot_height(corr_key(if (mode == "expr") "expr" else "gsea", ds_name)))
             dl_id <- paste0("dl_", plotname)
             output[[dl_id]] <- make_dyn_dl_handler(plotname, paste0("expression_discovery_", plotname))
             dl_ui <- downloadButton(dl_id, "↓ Download plot",
@@ -2590,12 +2601,13 @@ server <- function(input, output, session) {
                 correl_num = input$user_file_topN_splice,
                 n_pos = input$user_file_n_pos_splice,
                 n_neg = input$user_file_n_neg_splice,
-                other_rbps = if (!is.null(selected_rbps) && length(selected_rbps) > 1) selected_rbps else NULL
+                other_rbps = if (!is.null(selected_rbps) && length(selected_rbps) > 1) selected_rbps else NULL,
+                ref_key = corr_key("splice", ds_name)
               )
               dyn_dl_store[[plotname]] <- heat_res$heatmap
               heat_res$heatmap  # <-- make sure to return $heatmap, not $plot
             })
-            plot_ui <- plotOutput(plotname, height = "500px")
+            plot_ui <- plotOutput(plotname, height = corr_plot_height(corr_key("splice", ds_name)))
             dl_id <- paste0("dl_", plotname)
             output[[dl_id]] <- make_dyn_dl_handler(plotname, paste0("splicing_discovery_", plotname))
             dl_ui <- downloadButton(dl_id, "↓ Download plot",
@@ -3294,12 +3306,13 @@ server <- function(input, output, session) {
                 correl_num = correl_num,
                 n_pos = n_pos,
                 n_neg = n_neg,
-                other_rbps = if(!is.null(selected_rbps) && length(selected_rbps) > 1) selected_rbps else NULL
+                other_rbps = if(!is.null(selected_rbps) && length(selected_rbps) > 1) selected_rbps else NULL,
+                ref_key = corr_key(if (mode == "expr") "expr" else "gsea", ds_name)
               )
               # always return ggplot object
               heat_res$heatmap
             })
-            plot_ui <- plotOutput(plotname, height = "500px")
+            plot_ui <- plotOutput(plotname, height = corr_plot_height(corr_key(if (mode == "expr") "expr" else "gsea", ds_name)))
           }
           
           # Return the column for renderUI
@@ -3546,11 +3559,12 @@ server <- function(input, output, session) {
                 correl_num = correl_num,
                 n_pos = n_pos,
                 n_neg = n_neg,
-                other_rbps = if (!is.null(selected_rbps) && length(selected_rbps) > 1) selected_rbps else NULL
+                other_rbps = if (!is.null(selected_rbps) && length(selected_rbps) > 1) selected_rbps else NULL,
+                ref_key = corr_key("splice", ds_name)
               )
               heat_res$heatmap
             })
-            plot_ui <- plotOutput(plotname, height = "500px")
+            plot_ui <- plotOutput(plotname, height = corr_plot_height(corr_key("splice", ds_name)))
           }
           
           column(
@@ -4489,6 +4503,7 @@ server <- function(input, output, session) {
         "Show top N most dissimilar profiles (optional):",
         value = NA, min = 1
       ),
+      checkboxInput("binding_sim_zoom", "Zoom the density plots to the data range", value = TRUE),
       
       div(
         style = "display: flex; align-items: center; margin-top: 15px;",
@@ -4559,7 +4574,21 @@ server <- function(input, output, session) {
     sim_objs <- binding_sim_objects()
     dataset_names <- c("Both Cells", "K562", "HEPG2")
     directions    <- c("inc", "dec")
+    ev_prefix     <- if (grepl("Intron Retention", input$binding_eventtype, ignore.case = TRUE)) "IR" else "ES"
     
+    # One full-width row per cell line: increased and decreased events pooled in one density plot
+    bind_combined_ui <- function(ds_label, ds_key) {
+      if (is.null(BIND_REF)) return(NULL)
+      fluidRow(column(12,
+        tags$h5(paste0(ds_label, " \u2014 Increased and Decreased Events together"), style = "text-align:center;"),
+        shinycssloaders::withSpinner(
+          plotOutput(paste0("binding_sim_plot_", ds_key, "_comb"), height = "340px"), type = 6),
+        div(style = "text-align:center; margin-top:5px;",
+            downloadButton(paste0("dl_binding_sim_plot_", ds_key, "_comb"), "\u2193 Download plot",
+                           class = "btn btn-sm btn-default"))
+      ))
+    }
+
     output$binding_similar_profiles_plot_ui <- renderUI({
       tagList(
         hr(),
@@ -4571,7 +4600,7 @@ server <- function(input, output, session) {
           column(6,
                  tags$h5("Both Cells — Increased Events", style = "text-align:center;"),
                  shinycssloaders::withSpinner(
-                   plotOutput("binding_sim_plot_both_inc", height = "400px"), type = 6),
+                   plotOutput("binding_sim_plot_both_inc", height = bind_plot_height()), type = 6),
                  div(style = "text-align:center; margin-top:5px;",
                      downloadButton("dl_binding_sim_plot_both_inc", "↓ Download plot",
                                     class = "btn btn-sm btn-default"))
@@ -4579,19 +4608,21 @@ server <- function(input, output, session) {
           column(6,
                  tags$h5("Both Cells — Decreased Events", style = "text-align:center;"),
                  shinycssloaders::withSpinner(
-                   plotOutput("binding_sim_plot_both_dec", height = "400px"), type = 6),
+                   plotOutput("binding_sim_plot_both_dec", height = bind_plot_height()), type = 6),
                  div(style = "text-align:center; margin-top:5px;",
                      downloadButton("dl_binding_sim_plot_both_dec", "↓ Download plot",
                                     class = "btn btn-sm btn-default"))
           )
         ),
         
+        bind_combined_ui("Both Cells", "both"),
+
         # Row 2 — K562
         fluidRow(
           column(6,
                  tags$h5("K562 — Increased Events", style = "text-align:center;"),
                  shinycssloaders::withSpinner(
-                   plotOutput("binding_sim_plot_K562_inc", height = "400px"), type = 6),
+                   plotOutput("binding_sim_plot_K562_inc", height = bind_plot_height()), type = 6),
                  div(style = "text-align:center; margin-top:5px;",
                      downloadButton("dl_binding_sim_plot_K562_inc", "↓ Download plot",
                                     class = "btn btn-sm btn-default"))
@@ -4599,19 +4630,21 @@ server <- function(input, output, session) {
           column(6,
                  tags$h5("K562 — Decreased Events", style = "text-align:center;"),
                  shinycssloaders::withSpinner(
-                   plotOutput("binding_sim_plot_K562_dec", height = "400px"), type = 6),
+                   plotOutput("binding_sim_plot_K562_dec", height = bind_plot_height()), type = 6),
                  div(style = "text-align:center; margin-top:5px;",
                      downloadButton("dl_binding_sim_plot_K562_dec", "↓ Download plot",
                                     class = "btn btn-sm btn-default"))
           )
         ),
         
+        bind_combined_ui("K562", "K562"),
+
         # Row 3 — HEPG2
         fluidRow(
           column(6,
                  tags$h5("HEPG2 — Increased Events", style = "text-align:center;"),
                  shinycssloaders::withSpinner(
-                   plotOutput("binding_sim_plot_HEPG2_inc", height = "400px"), type = 6),
+                   plotOutput("binding_sim_plot_HEPG2_inc", height = bind_plot_height()), type = 6),
                  div(style = "text-align:center; margin-top:5px;",
                      downloadButton("dl_binding_sim_plot_HEPG2_inc", "↓ Download plot",
                                     class = "btn btn-sm btn-default"))
@@ -4619,12 +4652,13 @@ server <- function(input, output, session) {
           column(6,
                  tags$h5("HEPG2 — Decreased Events", style = "text-align:center;"),
                  shinycssloaders::withSpinner(
-                   plotOutput("binding_sim_plot_HEPG2_dec", height = "400px"), type = 6),
+                   plotOutput("binding_sim_plot_HEPG2_dec", height = bind_plot_height()), type = 6),
                  div(style = "text-align:center; margin-top:5px;",
                      downloadButton("dl_binding_sim_plot_HEPG2_dec", "↓ Download plot",
                                     class = "btn btn-sm btn-default"))
           )
-        )
+        ),
+        bind_combined_ui("HEPG2", "HEPG2")
       )
     })
     
@@ -4652,7 +4686,9 @@ server <- function(input, output, session) {
               n_far         = if (!is.na(n_far))   n_far   else NULL,
               other_ids     = compare_ids,
               direction     = dir_local,
-              dataset_label = ds_local
+              dataset_label = ds_local,
+              ref_key       = bind_key(ev_prefix, ds_local, dir_local),
+              zoom          = !isFALSE(input$binding_sim_zoom)
             )
             dyn_dl_store[[plot_id]] <- res$heatmap
             res$heatmap
@@ -4662,6 +4698,34 @@ server <- function(input, output, session) {
           output[[dl_id]] <- make_dyn_dl_handler(
             plot_id,
             paste0("binding_similar_profile_", ds_key, "_", dir_local)
+          )
+        })
+      }
+    }
+
+    # Increased + decreased events together: one pooled plot per cell line
+    if (!is.null(BIND_REF)) {
+      for (ds in dataset_names) {
+        local({
+          ds_local <- ds
+          ds_key   <- c("Both Cells" = "both", "K562" = "K562", "HEPG2" = "HEPG2")[[ds_local]]
+          plot_id  <- paste0("binding_sim_plot_", ds_key, "_comb")
+          output[[plot_id]] <- renderPlot({
+            profiles_of <- function(d) {
+              mp <- sim_objs[[ds_local]][[d]]$mean_profiles
+              if (is.null(mp)) NULL else mp[!duplicated(rownames(mp)), , drop = FALSE]
+            }
+            p <- bind_density_panel_combined(
+              query_id,
+              bind_pool_key(ev_prefix, ds_local),
+              profiles_of("inc"), profiles_of("dec"),
+              zoom = !isFALSE(input$binding_sim_zoom)
+            )
+            dyn_dl_store[[plot_id]] <- p
+            p
+          })
+          output[[paste0("dl_", plot_id)]] <- make_dyn_dl_handler(
+            plot_id, paste0("binding_similar_profile_", ds_key, "_together")
           )
         })
       }

@@ -661,7 +661,8 @@ exp_correl <- function(rbp_results, rbp, correl_num = NULL,
                        n_pos = NULL, n_neg = NULL, other_rbps = NULL,
                        up_color = "#BA3B46",
                        down_color = "#53A2BE",
-                       show_legend = FALSE) {
+                       show_legend = FALSE,
+                       ref_key = NULL) {   # e.g. "expr|K562": adds percentile / null context
 
   if (is.data.frame(rbp)) {
     ref_df <- rbp
@@ -742,6 +743,12 @@ exp_correl <- function(rbp_results, rbp, correl_num = NULL,
     ) +
     theme_charm() +
     theme(legend.position = if (show_legend) "right" else "none")
+
+  # Percentile + permutation-null context (see correlation_reference.R); falls back
+  # to the plain bar plot when no reference is available for this dataset.
+  decorated <- corr_decorate(cor_results, top_cor, heatmap_plot, ref_key, up_color, down_color)
+  if (!is.null(decorated)) return(decorated)
+
   return(list(
     correlation_table = cor_results,
     top_table = top_cor,
@@ -753,7 +760,8 @@ exp_correl <- function(rbp_results, rbp, correl_num = NULL,
 gsea_correl <- function(gsea_df, rbp, correl_num = NULL,
                         n_pos = NULL, n_neg = NULL, other_rbps = NULL,
                         up_color = "#BA3B46", down_color = "#53A2BE",
-                        show_legend = FALSE) {
+                        show_legend = FALSE,
+                        ref_key = NULL) {   # e.g. "gsea|K562": adds percentile / null context
 
   # Helper: safely coerce various shiny inputs to non-negative integer (0 if not valid)
   safe_positive_int <- function(x) {
@@ -902,6 +910,9 @@ gsea_correl <- function(gsea_df, rbp, correl_num = NULL,
     theme_charm() +
     ggplot2::theme(legend.position = if (show_legend) "right" else "none")
 
+  decorated <- corr_decorate(cor_results, top_cor, heatmap_plot, ref_key, up_color, down_color)
+  if (!is.null(decorated)) return(decorated)
+
   return(list(
     correlation_table = cor_results,
     top_table = top_cor,
@@ -914,7 +925,8 @@ gsea_correl <- function(gsea_df, rbp, correl_num = NULL,
 splicing_correl <- function(charmobj, rbp, correl_num = NULL,
                             n_pos = NULL, n_neg = NULL, other_rbps = NULL,
                             up_color = "#BA3B46", down_color = "#53A2BE",
-                            show_legend = FALSE) {
+                            show_legend = FALSE,
+                            ref_key = NULL) {   # e.g. "splice|K562": adds percentile / null context
 
   # --- Determine if input is user file or Charm object ---
   if (is.data.frame(rbp)) {
@@ -1044,6 +1056,10 @@ splicing_correl <- function(charmobj, rbp, correl_num = NULL,
     ) +
     theme_charm() +
     ggplot2::theme(legend.position = if (show_legend) "right" else "none")
+
+  # Percentile + permutation-null context (see correlation_reference.R)
+  decorated <- corr_decorate(cor_results, top_cor, heatmap_plot, ref_key, up_color, down_color)
+  if (!is.null(decorated)) return(decorated)
 
   return(list(
     correlation_table = cor_results,
@@ -1783,8 +1799,10 @@ eCLIPSE_raw_user <- function(rnamapfile,
     MaintainedEvents = as.numeric(cs_maint$comp + 1)
   )
   
-  pval_inc     <- numeric(n_pos)
+  pval_inc     <- numeric(n_pos)   # raw chi-square p-values (BH-adjusted after the loop)
   pval_dec     <- numeric(n_pos)
+  sign_inc     <- rep(1, n_pos)    # -1 = binding depleted relative to maintained
+  sign_dec     <- rep(1, n_pos)
   oddsratio_inc <- numeric(n_pos)
   oddsratio_dec <- numeric(n_pos)
   
@@ -1841,39 +1859,51 @@ eCLIPSE_raw_user <- function(rnamapfile,
     dec_p    <- dec_res$p.value
     dec_odds <- dec_res$statistic
 
-    inc_p <- -log10(p.adjust(inc_p, method = "BH", n = n_pos))
-    dec_p <- -log10(p.adjust(dec_p, method = "BH", n = n_pos))
+    # NOTE: inc_p / dec_p stay RAW here. They are BH-adjusted across ALL positions
+    # together after the loop. (Adjusting one p-value at a time with
+    # p.adjust(p, "BH", n = n_pos) is just p * n_pos, i.e. a Bonferroni correction,
+    # which did not match the precomputed binding maps -- those use true BH.)
+    inc_sgn <- 1
+    dec_sgn <- 1
 
     # Sign flip: negative = RBP binding depleted relative to maintained.
     # IR uses combined increased+maintained as denominator (original IR logic)
     if (is_IR) {
       if ((inc_fish / cs_inc$incomp[i]) <=
           (inc_vs / (cs_dec$incomp[i] + cs_maint$incomp[i]))) {
-        inc_p    <- inc_p    * -1
+        inc_sgn  <- -1
         inc_odds <- inc_odds * -1
       }
       if ((dec_fish / cs_dec$incomp[i]) <=
           (dec_vs / (cs_inc$incomp[i] + cs_maint$incomp[i]))) {
-        dec_p    <- dec_p    * -1
+        dec_sgn  <- -1
         dec_odds <- dec_odds * -1
       }
     } else {
       if ((inc_fish / cs_inc$incomp[i]) <= (inc_vs / cs_maint$incomp[i])) {
-        inc_p    <- inc_p    * -1
+        inc_sgn  <- -1
         inc_odds <- inc_odds * -1
       }
       if ((dec_fish / cs_dec$incomp[i]) <= (dec_vs / cs_maint$incomp[i])) {
-        dec_p    <- dec_p    * -1
+        dec_sgn  <- -1
         dec_odds <- dec_odds * -1
       }
     }
 
     pval_inc[i]      <- inc_p
     pval_dec[i]      <- dec_p
+    sign_inc[i]      <- inc_sgn
+    sign_dec[i]      <- dec_sgn
     oddsratio_inc[i] <- inc_odds
     oddsratio_dec[i] <- dec_odds
   }
   
+  # True Benjamini-Hochberg across all positions of the profile (NA positions are
+  # ignored by p.adjust), then -log10 and the direction sign. Matches the precomputed
+  # maps (Charm_eCLIPSE.py: multipletests(..., method = "fdr_bh")).
+  pval_inc <- sign_inc * -log10(p.adjust(pval_inc, method = "BH"))
+  pval_dec <- sign_dec * -log10(p.adjust(pval_dec, method = "BH"))
+
   dfforvis_pval     <- data.frame(pos = seq_len(n_pos), pvalinc = pval_inc,      pvaldec = pval_dec)
   dfforvis_oddsratio <- data.frame(pos = seq_len(n_pos), oddsratinc = oddsratio_inc, oddsratdec = oddsratio_dec)
   
@@ -2185,7 +2215,9 @@ binding_profile_correl <- function(sim_obj,
                                    direction     = "inc",
                                    dataset_label = "Both Cells",
                                    up_color      = "#BA3B46",
-                                   down_color    = "#53A2BE") {
+                                   down_color    = "#53A2BE",
+                                   ref_key       = NULL,
+                                   zoom          = TRUE) {   # density x-axis zoomed to the data range; ref_key = bind_key(...) adds percentile + density panel
   
   mean_profiles <- sim_obj$mean_profiles
 
@@ -2292,7 +2324,22 @@ binding_profile_correl <- function(sim_obj,
   plot_subtitle <- paste0(dataset_label, "  |  Query: ", query_id)
   
   cor_df$Status  <- ifelse(cor_df$Correlation > 0, "Positive", "Negative")
-  cor_df$Profile <- factor(cor_df$Profile, levels = cor_df$Profile[order(cor_df$Correlation)])
+
+  # Context from the all-pairs reference: where does each correlation fall among
+  # ALL profile pairs, and is it the same eCLIP target as the query?
+  has_ref <- bind_has_ref(ref_key)
+  if (has_ref) {
+    cor_df$Percentile <- bind_percentile(cor_df$Correlation, ref_key)
+    cor_df$SameTarget <- cor_df$Target == sub("^[^_]*__", "", query_id) &
+                         cor_df$RBP    != sub("__.*", "", query_id)
+    cor_df$ctx_label  <- paste0(sprintf("%.2f", cor_df$Correlation), "  |  ",
+                                corr_bar_label(cor_df$Correlation, cor_df$Percentile),
+                                ifelse(cor_df$SameTarget, "  |  same target", ""))
+  } else {
+    cor_df$ctx_label  <- sprintf("%.2f", cor_df$Correlation)
+  }
+  profile_levels <- cor_df$Profile[order(cor_df$Correlation)]
+  cor_df$Profile <- factor(cor_df$Profile, levels = profile_levels)
   
   heatmap_plot <- ggplot2::ggplot(
     cor_df,
@@ -2302,7 +2349,7 @@ binding_profile_correl <- function(sim_obj,
     ggplot2::scale_fill_manual(values = c("Positive" = up_color, "Negative" = down_color)) +
     ggplot2::coord_flip() +
     ggplot2::geom_text(
-      ggplot2::aes(label = sprintf("%.2f", Correlation)),
+      ggplot2::aes(label = ctx_label),
       hjust = ifelse(cor_df$Correlation > 0, -0.1, 1.1),
       color = "black", size = CHARM_GEOM_TEXT , family = CHARM_FONT) +
     ggplot2::labs(
@@ -2315,8 +2362,21 @@ binding_profile_correl <- function(sim_obj,
     theme_charm() +
     ggplot2::theme(legend.position = "none")
   
+  tbl_cols <- c("Profile", "RBP", "Target", "Correlation", if (has_ref) c("Percentile", "SameTarget"))
+  if (has_ref) {
+    heatmap_plot <- heatmap_plot +
+      ggplot2::scale_y_continuous(breaks = c(-1, -0.5, 0, 0.5, 1),
+                                  expand = ggplot2::expansion(mult = c(0.55, 0.75)))   # room for the labels
+    cor_df$Profile <- as.character(cor_df$Profile)
+    dens <- if (bind_has_target_ref(ref_key)) {
+      bind_density_panel(query_id, ref_key, mean_profiles, zoom = zoom)   # 3 densities + line for the query
+    } else {
+      bind_density_panel_basic(cor_df, ref_key, up_color = up_color, down_color = down_color)   # older reference file
+    }
+    heatmap_plot <- ggpubr::ggarrange(heatmap_plot, dens, ncol = 1, heights = c(1, 0.9))
+  }
   list(
-    correlation_table = cor_df[, c("Profile", "RBP", "Target", "Correlation")],
+    correlation_table = cor_df[, tbl_cols],
     heatmap           = heatmap_plot
   )
 }
