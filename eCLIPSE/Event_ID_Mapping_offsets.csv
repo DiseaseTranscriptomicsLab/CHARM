@@ -1,0 +1,5 @@
+event_type,offset_start,offset_end,pairs
+ES,0,0,37131
+ES,0,1,1
+ES,0,-1,1
+IR,0,0,378

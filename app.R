@@ -22,6 +22,7 @@ schematic_b64 <- base64enc::dataURI(file = "www/charm_schematic.svg", mime = "im
 
 source("plot_theme.R")       # one font/size/style for every plot
 source("correlation_reference.R")   # percentile / permutation-null context for correlations
+source("rmats_mapping.R")           # rMATS IDs anchored on VAST-TOOLS IDs (Splicing tab)
 source("helper_functions.R")
 
 # --- Data directory -----------------------------------------------------
@@ -50,6 +51,9 @@ qload <- function(name) {
 CORR_REF <- tryCatch(qload("Correlation_Reference"), error = function(e) NULL)
 # Same idea for binding profiles (built by build_binding_reference.R)
 BIND_REF <- tryCatch(qload("Binding_Correlation_Reference"), error = function(e) NULL)
+# VAST-TOOLS -> rMATS event ID cross-reference (built by eCLIPSE/map_vast_rmats_events.R). Optional: without
+# the file the "Show rMATS IDs" option is simply not offered.
+RMATS_MAP <- tryCatch(qload("RMATS_Event_Mapping"), error = function(e) NULL)
 # Taller plot box when the density panel is stacked under the bar plot
 corr_plot_height <- function(key) if (corr_has_ref(key)) "800px" else "500px"
 
@@ -271,6 +275,10 @@ ui <- fluidPage(
       .charm-card-body { padding: 22px 24px 24px; }
       .charm-card-body h3 { margin: 4px 0 8px; font-weight: bold; }
       .charm-card-body p { margin: 0; }
+      .charm-cards-three .charm-card { flex: 1 1 290px; max-width: 370px; }
+      .charm-card-go { display: block; margin-top: 12px; font-size: 13px; font-weight: bold; color: #2c3e50; }
+      .charm-modes { max-width: 760px; margin: 8px auto 0; }
+      .charm-modes .charm-layer-go { display: none; }
       .charm-tutorial { text-align: center; margin: 16px 0 0; font-size: 14px; }
       .charm-footer { text-align: center; font-size: 12px; color: #666; max-width: 900px;
                       margin: 0 auto; padding-top: 14px; border-top: 1px solid #e0e0e0; }
@@ -382,27 +390,30 @@ ui <- fluidPage(
           )
         ),
 
-        # ── What each layer adds ────────────────────────────────────────────
+        # ── The three layers (main modules): large cards ─────────────────────
         div(
-          class = "charm-layers",
-          div(class = "charm-layer",
+          class = "charm-cards charm-cards-three",
+          div(class = "charm-card",
               onclick = "Shiny.setInputValue('home_go_layer', 'Binding', {priority: 'event'});",
-              div(class = "charm-layer-num", "1"),
-              tags$h4("Binding"),
-              tags$p("Where does an RBP bind, and what are its consequences? RNA splicing maps from eCLIP show where it binds around affected events, helping to separate direct targets from indirect ones."),
-              tags$span(class = "charm-layer-go", "Open Binding \u2192")),
-          div(class = "charm-layer",
+              div(class = "charm-card-body",
+                  div(class = "charm-card-icon", fa("link", fill = "black", height = "2em")),
+                  tags$h3("Binding"),
+                  tags$p("Where does an RBP bind, and what are its consequences? RNA splicing maps from eCLIP show where it binds around affected events, helping to separate direct targets from indirect ones."),
+                  tags$span(class = "charm-card-go", "Open Binding \u2192"))),
+          div(class = "charm-card",
               onclick = "Shiny.setInputValue('home_go_layer', 'Splicing', {priority: 'event'});",
-              div(class = "charm-layer-num", "2"),
-              tags$h4("Splicing"),
-              tags$p("Which splicing events depend on the RBP? Changes in exon skipping and intron retention (dPSI) after knockdown, across VastDB-annotated events."),
-              tags$span(class = "charm-layer-go", "Open Splicing \u2192")),
-          div(class = "charm-layer",
+              div(class = "charm-card-body",
+                  div(class = "charm-card-icon", fa("scissors", fill = "black", height = "2em")),
+                  tags$h3("Splicing"),
+                  tags$p("Which splicing events depend on the RBP? Changes in exon skipping and intron retention (dPSI) after knockdown, across VastDB-annotated events."),
+                  tags$span(class = "charm-card-go", "Open Splicing \u2192"))),
+          div(class = "charm-card",
               onclick = "Shiny.setInputValue('home_go_layer', 'Expression', {priority: 'event'});",
-              div(class = "charm-layer-num", "3"),
-              tags$h4("Expression"),
-              tags$p("Which genes and cellular programs change? Differential expression after knockdown, with Hallmark gene-set enrichment."),
-              tags$span(class = "charm-layer-go", "Open Expression \u2192"))
+              div(class = "charm-card-body",
+                  div(class = "charm-card-icon", fa("dna", fill = "black", height = "2em")),
+                  tags$h3("Expression"),
+                  tags$p("Which genes and cellular programs change? Differential expression after knockdown, with Hallmark gene-set enrichment."),
+                  tags$span(class = "charm-card-go", "Open Expression \u2192")))
         ),
 
         # ── Questions CHARM can answer ──────────────────────────────────────
@@ -429,25 +440,18 @@ ui <- fluidPage(
         # ── Entry points ────────────────────────────────────────────────────
         div(
           class = "charm-section",
-          tags$h2("Start here"),
           div(
-            class = "charm-cards",
-            div(
-              class = "charm-card",
-              onclick = "Shiny.setInputValue('home_go_explore', Math.random());",
-              div(class = "charm-card-body",
-                  div(class = "charm-card-icon", fa("globe", fill = "black", height = "2em")),
-                  tags$h3("Explore"),
-                  tags$p("Investigate how a known RBP affects expression, splicing, and binding, based on ENCODE's gene silencing series and eCLIP data."))
-            ),
-            div(
-              class = "charm-card",
-              onclick = "Shiny.setInputValue('home_go_discover', Math.random());",
-              div(class = "charm-card-body",
-                  div(class = "charm-card-icon", fa("map", fill = "black", height = "2em")),
-                  tags$h3("Discovery"),
-                  tags$p("Upload your own expression, splicing, or binding data to discover which RBPs are most likely altered in your biological system."))
-            )
+            class = "charm-layers charm-modes",
+            div(class = "charm-layer",
+                onclick = "Shiny.setInputValue('home_go_explore', Math.random());",
+                div(class = "charm-layer-num", fa("globe", fill = "white", height = "0.9em")),
+                tags$h4("Explore"),
+                tags$p("Investigate how a known RBP affects expression, splicing, and binding, based on ENCODE's gene silencing series and eCLIP data.")),
+            div(class = "charm-layer",
+                onclick = "Shiny.setInputValue('home_go_discover', Math.random());",
+                div(class = "charm-layer-num", fa("map", fill = "white", height = "0.9em")),
+                tags$h4("Discovery"),
+                tags$p("Upload your own expression, splicing, or binding data to discover which RBPs are most likely altered in your biological system."))
             # DISABLED: Network module intentionally commented out. Code kept intact for a future redesign; to restore, uncomment this block, the Home card, and the home_go_network observer. [Home card]
             # ,div(
             # class = "charm-card",
@@ -823,6 +827,15 @@ ui <- fluidPage(
                     )
                   )
                 ),
+                # ---- Optional: show rMATS IDs (anchored on the VAST-TOOLS IDs) ----
+                if (!is.null(RMATS_MAP)) conditionalPanel(
+                  condition = "input.splice_dataset != 'Similar RBPs'",
+                  div(
+                    style = "margin-top: 20px;",
+                    checkboxInput("splice_show_rmats", "Show rMATS event IDs", value = FALSE),
+                    tags$p(RMATS_DISCLAIMER_SHORT, style = "font-size: 12px; color: #666; margin-top: -8px;")
+                  )
+                ),
                 conditionalPanel(
                   condition = "input.splice_dataset == 'Similar RBPs'",
                   selectizeInput("similar_rbps_select_splice", "Compare with specific RBPs (optional)", choices = NULL, multiple = TRUE, options = list(placeholder = "Select one or more RBPs")),
@@ -870,6 +883,9 @@ ui <- fluidPage(
             # --- Explore Mode (default mode, NOT Similar RBPs) ---
             conditionalPanel(
               condition = "input.splice_mode == 'Explore' && input.splice_dataset != 'Similar RBPs'",
+              
+              # --- Disclaimer, shown while "Show rMATS event IDs" is ticked ---
+              uiOutput("splice_rmats_note"),
               
               # --- Top panel: Event ID plot, shown when searched (server-controlled) ---
               uiOutput("splice_top_panel_ui"),
@@ -1615,7 +1631,7 @@ server <- function(input, output, session) {
       # plot's hover text. Leaving it in wrote raw <br> tags into the CSV --
       # the on-screen table already excludes it the same way (see splice_volcano_table
       # renderDT above), so the download should match what the user sees.
-      res$top_table %>% dplyr::select(-dplyr::any_of("text"))
+      splice_table_view(res$top_table, note = TRUE)
     }),
     "splicing_volcano_table"
   )
@@ -1991,7 +2007,7 @@ server <- function(input, output, session) {
       })
       output$splice_volcano_table <- DT::renderDataTable({
         req(result_splice())
-        result_splice()$top_table %>% select(-text)
+        splice_table_view(result_splice()$top_table)
       }, rownames = FALSE, selection = "single", options = list(pageLength = 10))
     }
     
@@ -2111,6 +2127,23 @@ server <- function(input, output, session) {
   # Splicing Explore page: "event" or NULL (none).
   splice_top_panel <- reactiveVal(NULL)
   
+  # ---- rMATS IDs (anchored on VAST-TOOLS IDs) ----
+  splice_rmats_on <- function() isTRUE(input$splice_show_rmats) && !is.null(RMATS_MAP)
+  
+  # Table shown / downloaded in the Splicing volcano: internal "text" column dropped and, when requested,
+  # the rMATS columns inserted after Event.ID (the row order never changes).
+  splice_table_view <- function(tbl, note = FALSE) {
+    if (is.null(tbl)) return(NULL)
+    tbl <- dplyr::select(tbl, -dplyr::any_of("text"))
+    if (splice_rmats_on()) rmats_add_columns(tbl, RMATS_MAP, note = note) else tbl
+  }
+  
+  output$splice_rmats_note <- renderUI({
+    req(splice_rmats_on())
+    div(class = "alert alert-warning", style = "font-size: 12.5px; padding: 8px 12px; margin-bottom: 10px;",
+        tags$b("About the rMATS IDs. "), RMATS_DISCLAIMER_LONG)
+  })
+  
   output$splice_top_panel_ui <- renderUI({
     panel <- splice_top_panel()
     if (is.null(panel)) return(NULL)
@@ -2134,7 +2167,11 @@ server <- function(input, output, session) {
     splice_top_panel("event")
     
     output$heatmap_splicing_dpsi <- renderPlot({
-      p <- plot_event_dpsi_barplot(charm_obj, event_id)
+      show_rmats <- splice_rmats_on()
+      p <- plot_event_dpsi_barplot(
+        charm_obj, event_id,
+        extra_subtitle = if (show_rmats) paste0("rMATS ID: ", rmats_label(event_id, RMATS_MAP)) else NULL,
+        extra_caption  = if (show_rmats) "rMATS IDs mapped from VAST-TOOLS IDs by genomic coordinates (\u00b11 nt); dPSI from VAST-TOOLS" else NULL)
       dl_store$event_dpsi(p)
       p
     })
@@ -3003,16 +3040,26 @@ server <- function(input, output, session) {
     highlight_colors <- c("None" = "#CCCCCC", "RBP" = "#A10702", "Selected" = "#008057")
     plot_df <- tbl
     plot_df$point_color <- unname(highlight_colors[plot_df$highlight])
+    show_rmats <- splice_rmats_on()
+    if (show_rmats) {
+      plot_df <- rmats_add_columns(plot_df, RMATS_MAP)
+      plot_df$rmats <- plot_df[["rMATS ID"]]
+    }
+    tip <- if (show_rmats) "Event: {point.key}<br>rMATS: {point.rmats}" else "Event: {point.key}"
 
-    highcharter::hchart(
+    (if (show_rmats) highcharter::hchart(
+      plot_df, "scatter",
+      highcharter::hcaes(x = dPSI, y = Pdiff, color = point_color, key = Event.ID, rmats = rmats),
+      fast = TRUE
+    ) else highcharter::hchart(
       plot_df, "scatter",
       highcharter::hcaes(x = dPSI, y = Pdiff, color = point_color, key = Event.ID),
       fast = TRUE
-    ) %>%
+    )) %>%
       charm_hc_style() %>% highcharter::hc_title(text = paste0("Volcano Plot: ", rbp, " KD")) %>%
       highcharter::hc_xAxis(title = list(text = "dPSI (shRNA - CTRL)")) %>%
       highcharter::hc_yAxis(title = list(text = "PDiff")) %>%
-      highcharter::hc_tooltip(pointFormat = "Event: {point.key}") %>%
+      highcharter::hc_tooltip(pointFormat = tip) %>%
       highcharter::hc_plotOptions(scatter = list(marker = list(radius = 5, lineWidth = 1, lineColor = "black"))) %>%
       highcharter::hc_legend(enabled = FALSE) %>%
       hc_add_click_input(output_id)
@@ -3424,7 +3471,7 @@ server <- function(input, output, session) {
     # ---- Render table ----
     output$splice_volcano_table <- DT::renderDataTable({
       req(result_splice())
-      result_splice()$top_table %>% select(-text)
+      splice_table_view(result_splice()$top_table)
     }, rownames = FALSE, selection = "single", options = list(pageLength = 10))
     
     # ---- Shared function to update highlights ----
