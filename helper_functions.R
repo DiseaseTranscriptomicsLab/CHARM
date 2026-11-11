@@ -1368,7 +1368,9 @@ plot_hallmark_nes_barplot <- function(CharmObj, geneset,
 plot_event_dpsi_barplot <- function(CharmObj, Event.ID,
                                     up_color = "#BA3B46",
                                     down_color = "#53A2BE",
-                                    show_legend = FALSE) {
+                                    show_legend = FALSE,
+                                    extra_subtitle = NULL,
+                                    extra_caption = NULL) {
 
   # --- Extract dPSI for the event across all RBPs safely ---
   dpsi_data <- lapply(names(CharmObj), function(rbp) {
@@ -1424,8 +1426,8 @@ plot_event_dpsi_barplot <- function(CharmObj, Event.ID,
       x = "RBP KD",
       y = "dPSI",
       title = paste0("Top/bottom RBPs by dPSI for event ", Event.ID),
-      subtitle = paste0("Event ID: ", Event.ID),
-      caption = "Only top/bottom 10 shown"
+      subtitle = paste(c(paste0("Event ID: ", Event.ID), extra_subtitle), collapse = "  |  "),
+      caption = paste(c("Only top/bottom 10 shown", extra_caption), collapse = "\n")
     ) +
     theme_charm() +
     ggplot2::theme(legend.position = if (show_legend) "right" else "none")

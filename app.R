@@ -22,6 +22,7 @@ schematic_b64 <- base64enc::dataURI(file = "www/charm_schematic.svg", mime = "im
 
 source("plot_theme.R")       # one font/size/style for every plot
 source("correlation_reference.R")   # percentile / permutation-null context for correlations
+source("rmats_mapping.R")           # rMATS IDs anchored on VAST-TOOLS IDs (Splicing tab)
 source("helper_functions.R")
 
 # --- Data directory -----------------------------------------------------
@@ -50,6 +51,13 @@ qload <- function(name) {
 CORR_REF <- tryCatch(qload("Correlation_Reference"), error = function(e) NULL)
 # Same idea for binding profiles (built by build_binding_reference.R)
 BIND_REF <- tryCatch(qload("Binding_Correlation_Reference"), error = function(e) NULL)
+# VAST-TOOLS -> rMATS event ID cross-reference (built by eCLIPSE/map_vast_rmats_events.R). Optional: without
+# the file no rMATS IDs are shown.
+.rmats_raw <- tryCatch(qload("RMATS_Event_Mapping"), error = function(e) NULL)
+.rmats_parts <- rmats_unpack(.rmats_raw)
+RMATS_MAP <- .rmats_parts$forward      # one row per VAST event: its rMATS IDs
+RMATS_REV <- .rmats_parts$reverse      # one row per VAST/rMATS pair: used to search by rMATS ID
+rm(.rmats_raw, .rmats_parts)
 # Taller plot box when the density panel is stacked under the bar plot
 corr_plot_height <- function(key) if (corr_has_ref(key)) "800px" else "500px"
 
@@ -141,6 +149,13 @@ get_binding_object <- function(eventtype, dataset) {
 # This normalizes line endings up front and auto-detects the delimiter from
 # the header row (tab > comma > semicolon > whitespace, by whichever splits
 # the header into the most fields) before handing off to read.table().
+# Example files offered in Discovery mode ("Load example data" buttons)
+EXAMPLE_FILES <- list(
+  expr    = list(path = file.path("example_data", "Stressresponse_u2os.txt"), label = "Stress response (U2OS)"),
+  splice  = list(path = file.path("example_data", "SF3B1 KD.txt"),            label = "SF3B1 knockdown"),
+  binding = list(path = file.path("example_data", "AllwSG.txt"),              label = "AllwSG")
+)
+
 read_user_table <- function(path) {
   raw_bytes <- readBin(path, what = "raw", n = file.info(path)$size)
   txt <- rawToChar(raw_bytes)
@@ -271,6 +286,10 @@ ui <- fluidPage(
       .charm-card-body { padding: 22px 24px 24px; }
       .charm-card-body h3 { margin: 4px 0 8px; font-weight: bold; }
       .charm-card-body p { margin: 0; }
+      .charm-cards-three .charm-card { flex: 1 1 290px; max-width: 370px; }
+      .charm-card-go { display: block; margin-top: 12px; font-size: 13px; font-weight: bold; color: #2c3e50; }
+      .charm-modes { max-width: 760px; margin: 8px auto 0; }
+      .charm-modes .charm-layer-go { display: none; }
       .charm-tutorial { text-align: center; margin: 16px 0 0; font-size: 14px; }
       .charm-footer { text-align: center; font-size: 12px; color: #666; max-width: 900px;
                       margin: 0 auto; padding-top: 14px; border-top: 1px solid #e0e0e0; }
@@ -382,27 +401,30 @@ ui <- fluidPage(
           )
         ),
 
-        # ── What each layer adds ────────────────────────────────────────────
+        # ── The three layers (main modules): large cards ─────────────────────
         div(
-          class = "charm-layers",
-          div(class = "charm-layer",
+          class = "charm-cards charm-cards-three",
+          div(class = "charm-card",
               onclick = "Shiny.setInputValue('home_go_layer', 'Binding', {priority: 'event'});",
-              div(class = "charm-layer-num", "1"),
-              tags$h4("Binding"),
-              tags$p("Where does an RBP bind, and what are its consequences? RNA splicing maps from eCLIP show where it binds around affected events, helping to separate direct targets from indirect ones."),
-              tags$span(class = "charm-layer-go", "Open Binding \u2192")),
-          div(class = "charm-layer",
+              div(class = "charm-card-body",
+                  div(class = "charm-card-icon", fa("link", fill = "black", height = "2em")),
+                  tags$h3("Binding"),
+                  tags$p("Where does an RBP bind, and what are its consequences? RNA splicing maps from eCLIP show where it binds around affected events, helping to separate direct targets from indirect ones."),
+                  tags$span(class = "charm-card-go", "Open Binding \u2192"))),
+          div(class = "charm-card",
               onclick = "Shiny.setInputValue('home_go_layer', 'Splicing', {priority: 'event'});",
-              div(class = "charm-layer-num", "2"),
-              tags$h4("Splicing"),
-              tags$p("Which splicing events depend on the RBP? Changes in exon skipping and intron retention (dPSI) after knockdown, across VastDB-annotated events."),
-              tags$span(class = "charm-layer-go", "Open Splicing \u2192")),
-          div(class = "charm-layer",
+              div(class = "charm-card-body",
+                  div(class = "charm-card-icon", fa("scissors", fill = "black", height = "2em")),
+                  tags$h3("Splicing"),
+                  tags$p("Which splicing events depend on the RBP? Changes in exon skipping and intron retention (dPSI) after knockdown, across VastDB-annotated events."),
+                  tags$span(class = "charm-card-go", "Open Splicing \u2192"))),
+          div(class = "charm-card",
               onclick = "Shiny.setInputValue('home_go_layer', 'Expression', {priority: 'event'});",
-              div(class = "charm-layer-num", "3"),
-              tags$h4("Expression"),
-              tags$p("Which genes and cellular programs change? Differential expression after knockdown, with Hallmark gene-set enrichment."),
-              tags$span(class = "charm-layer-go", "Open Expression \u2192"))
+              div(class = "charm-card-body",
+                  div(class = "charm-card-icon", fa("dna", fill = "black", height = "2em")),
+                  tags$h3("Expression"),
+                  tags$p("Which genes and cellular programs change? Differential expression after knockdown, with Hallmark gene-set enrichment."),
+                  tags$span(class = "charm-card-go", "Open Expression \u2192")))
         ),
 
         # ── Questions CHARM can answer ──────────────────────────────────────
@@ -429,25 +451,18 @@ ui <- fluidPage(
         # ── Entry points ────────────────────────────────────────────────────
         div(
           class = "charm-section",
-          tags$h2("Start here"),
           div(
-            class = "charm-cards",
-            div(
-              class = "charm-card",
-              onclick = "Shiny.setInputValue('home_go_explore', Math.random());",
-              div(class = "charm-card-body",
-                  div(class = "charm-card-icon", fa("globe", fill = "black", height = "2em")),
-                  tags$h3("Explore"),
-                  tags$p("Investigate how a known RBP affects expression, splicing, and binding, based on ENCODE's gene silencing series and eCLIP data."))
-            ),
-            div(
-              class = "charm-card",
-              onclick = "Shiny.setInputValue('home_go_discover', Math.random());",
-              div(class = "charm-card-body",
-                  div(class = "charm-card-icon", fa("map", fill = "black", height = "2em")),
-                  tags$h3("Discovery"),
-                  tags$p("Upload your own expression, splicing, or binding data to discover which RBPs are most likely altered in your biological system."))
-            )
+            class = "charm-layers charm-modes",
+            div(class = "charm-layer",
+                onclick = "Shiny.setInputValue('home_go_explore', Math.random());",
+                div(class = "charm-layer-num", fa("globe", fill = "white", height = "0.9em")),
+                tags$h4("Explore"),
+                tags$p("Investigate how a known RBP affects expression, splicing, and binding, based on ENCODE's gene silencing series and eCLIP data.")),
+            div(class = "charm-layer",
+                onclick = "Shiny.setInputValue('home_go_discover', Math.random());",
+                div(class = "charm-layer-num", fa("map", fill = "white", height = "0.9em")),
+                tags$h4("Discovery"),
+                tags$p("Upload your own expression, splicing, or binding data to discover which RBPs are most likely altered in your biological system."))
             # DISABLED: Network module intentionally commented out. Code kept intact for a future redesign; to restore, uncomment this block, the Home card, and the home_go_network observer. [Home card]
             # ,div(
             # class = "charm-card",
@@ -644,6 +659,7 @@ ui <- fluidPage(
                 hr(),
                 tags$p("Alternatively, upload your own table with differential expression values. Data must have a header, and the first column must be the HGNC gene symbol, and the second column the t-stats."),
                 fileInput("user_file_expr", "Upload your file:", accept = c(".txt", ".csv", ".tsv")),
+                actionButton("example_expr", tagList(fa("flask"), " Load example data"), class = "btn btn-outline-secondary btn-sm", style = "border-radius: 20px; margin: -10px 0 8px 0;"),
                 uiOutput("file_warning_expr"),
                 uiOutput("user_file_options")
               )
@@ -791,7 +807,8 @@ ui <- fluidPage(
                           target = "_blank",
                           style = "color: #007bff; text-decoration: none;"
                         ),
-                        "."
+                        ".",
+                        if (!is.null(RMATS_REV)) " You can also search by rMATS ID (e.g. SE:12345); it is converted to the matching VAST-TOOLS event." else NULL
                       ),
                       style = "font-size: 12px; color: #666; margin-top: -5px;"
                     ),
@@ -802,7 +819,7 @@ ui <- fluidPage(
                         label = NULL,
                         choices = NULL,
                         multiple = FALSE,
-                        options = list(placeholder = "Event ID"),
+                        options = list(placeholder = if (!is.null(RMATS_REV)) "Event ID (VAST-TOOLS or rMATS)" else "Event ID"),
                         width = "400px"
                       ),
                       div(
@@ -852,6 +869,7 @@ ui <- fluidPage(
                   )
                 ),
                 fileInput("user_file_splice", "Upload your file:", accept = c(".txt", ".csv", ".tsv")),
+                actionButton("example_splice", tagList(fa("flask"), " Load example data"), class = "btn btn-outline-secondary btn-sm", style = "border-radius: 20px; margin: -10px 0 8px 0;"),
                 uiOutput("file_warning_splice"),
                 uiOutput("user_file_options_splice")
               )
@@ -892,7 +910,8 @@ ui <- fluidPage(
                 ),
                 column(width = 6,
                   DTOutput("splice_volcano_table"),
-                  uiOutput("dl_ui_splice_volcano_table")
+                  uiOutput("dl_ui_splice_volcano_table"),
+                  uiOutput("splice_rmats_footnote")
                 )
               )
             ),
@@ -1014,6 +1033,7 @@ ui <- fluidPage(
                   )
                 ),
                 fileInput("user_file_binding", "Upload your file:", accept = c(".txt", ".csv", ".tsv")),
+                actionButton("example_binding", tagList(fa("flask"), " Load example data"), class = "btn btn-outline-secondary btn-sm", style = "border-radius: 20px; margin: -10px 0 8px 0;"),
                 uiOutput("file_warning_binding"),
                 uiOutput("binding_discovery_options")
               )
@@ -1338,7 +1358,7 @@ server <- function(input, output, session) {
                else if (!is.null(input$splice_search_event) && nchar(input$splice_search_event) > 0)
                  input$splice_search_event
                else "plot"
-        paste0(filename_prefix, "_", rbp, "_", Sys.Date(), ".png")
+        paste0(filename_prefix, "_", gsub("[^A-Za-z0-9._-]", "_", rbp), "_", Sys.Date(), ".png")
       },
       content = function(file) {
         p <- dl_store[[store_key]]()
@@ -1615,7 +1635,7 @@ server <- function(input, output, session) {
       # plot's hover text. Leaving it in wrote raw <br> tags into the CSV --
       # the on-screen table already excludes it the same way (see splice_volcano_table
       # renderDT above), so the download should match what the user sees.
-      res$top_table %>% dplyr::select(-dplyr::any_of("text"))
+      splice_table_view(res$top_table, note = TRUE)
     }),
     "splicing_volcano_table"
   )
@@ -1991,7 +2011,7 @@ server <- function(input, output, session) {
       })
       output$splice_volcano_table <- DT::renderDataTable({
         req(result_splice())
-        result_splice()$top_table %>% select(-text)
+        splice_table_view(result_splice()$top_table)
       }, rownames = FALSE, selection = "single", options = list(pageLength = 10))
     }
     
@@ -2086,18 +2106,26 @@ server <- function(input, output, session) {
     updateSelectizeInput(session, "similar_rbps_select_splice", choices = rbp_choices_splice)
   })
   
-  # ---- Populate Event ID choices based on dataset ----
-  observe({
-    req(current_charm_splice())
-    req(input$splice_dataset)
-    
-    event_choices <- switch(
+  # VAST-TOOLS event IDs available in the selected dataset
+  splice_event_ids <- function() {
+    ev <- switch(
       input$splice_dataset,
       "Both Cells" = EventsBoth,
       "K562"       = EventsK562,
       "HEPG2"      = EventsHEPG2,
       NULL
     )
+    if (is.null(ev)) NULL else as.character(unlist(ev))
+  }
+  
+  # ---- Populate Event ID choices based on dataset ----
+  observe({
+    req(current_charm_splice())
+    req(input$splice_dataset)
+    
+    event_choices <- splice_event_ids()
+    # VAST-TOOLS IDs plus the rMATS IDs anchored on them (searching an rMATS ID opens its VAST event)
+    if (!is.null(event_choices)) event_choices <- rmats_event_choices(event_choices, RMATS_REV)
     
     updateSelectizeInput(
       session,
@@ -2110,6 +2138,25 @@ server <- function(input, output, session) {
   # Tracks whether the Event ID panel should appear pinned at the top of the
   # Splicing Explore page: "event" or NULL (none).
   splice_top_panel <- reactiveVal(NULL)
+  
+  # ---- rMATS IDs (anchored on VAST-TOOLS IDs) ----
+  splice_rmats_on <- function() !is.null(RMATS_MAP)
+  
+  # Table shown / downloaded in the Splicing volcano: internal "text" column dropped and, when requested,
+  # the rMATS ID column inserted after Event.ID (the row order never changes).
+  splice_table_view <- function(tbl, note = FALSE) {
+    if (is.null(tbl)) return(NULL)
+    tbl <- dplyr::select(tbl, -dplyr::any_of("text"))
+    if (splice_rmats_on()) rmats_add_columns(tbl, RMATS_MAP, note = note) else tbl
+  }
+  
+  # Disclaimer under the volcano table (always visible next to the rMATS IDs)
+  output$splice_rmats_footnote <- renderUI({
+    req(splice_rmats_on())
+    res <- result_splice()                      # only once a volcano table is on screen
+    req(!is.null(res), !is.null(res$top_table), nrow(res$top_table) > 0)
+    tags$p(style = "font-size: 11.5px; color: #666; margin-top: 8px;", tags$b("rMATS IDs: "), RMATS_DISCLAIMER_LONG)
+  })
   
   output$splice_top_panel_ui <- renderUI({
     panel <- splice_top_panel()
@@ -2127,14 +2174,30 @@ server <- function(input, output, session) {
   # ---- Event ID Search button ----
   observeEvent(input$search_btn_event, {
     req(input$splice_search_event)
-    event_id <- input$splice_search_event
+    event_id   <- input$splice_search_event
+    from_rmats <- NULL          # set when the user searched by rMATS ID
+    also_vast  <- NULL
+    if (!is.null(RMATS_REV) && event_id %in% RMATS_REV$rmats_tag) {
+      hit <- rmats_resolve(event_id, RMATS_REV, splice_event_ids())
+      req(!is.null(hit))
+      from_rmats <- hit$tag
+      also_vast  <- hit$others
+      event_id   <- hit$vast_id            # everything below runs on the anchoring VAST-TOOLS event
+    }
     
     charm_obj <- current_charm_splice()
     
     splice_top_panel("event")
     
     output$heatmap_splicing_dpsi <- renderPlot({
-      p <- plot_event_dpsi_barplot(charm_obj, event_id)
+      show_rmats <- splice_rmats_on()
+      cap <- c(if (!is.null(from_rmats)) paste0("Searched as rMATS ", from_rmats, ", matched to this VAST-TOOLS event",
+                                                 if (length(also_vast)) paste0(" (also matches: ", paste(also_vast, collapse = ", "), ")") else ""),
+               if (show_rmats) RMATS_DISCLAIMER_SHORT)
+      p <- plot_event_dpsi_barplot(
+        charm_obj, event_id,
+        extra_subtitle = if (show_rmats) paste0("rMATS ID: ", rmats_label(event_id, RMATS_MAP)) else NULL,
+        extra_caption  = cap)
       dl_store$event_dpsi(p)
       p
     })
@@ -2144,9 +2207,9 @@ server <- function(input, output, session) {
   upload_ok <- reactiveVal(FALSE)
   user_expr_df <- reactiveVal(NULL)
   
-  observeEvent(input$user_file_expr, {
-    req(input$user_file_expr)
-    file_path <- input$user_file_expr$datapath
+  load_expr <- function(file_path, example_label = NULL) {
+
+
     
     df <- tryCatch(
       read_user_table(file_path),
@@ -2181,7 +2244,7 @@ server <- function(input, output, session) {
         df_prev <- user_expr_df()
         tagList(
           div(style = "color:green; font-weight:bold; margin-top:10px;",
-              sprintf("\u2713 Upload successful — %d genes detected.", nrow(df_prev))),
+              paste0(sprintf("\u2713 Upload successful — %d genes detected.", nrow(df_prev)), if (!is.null(example_label)) paste0(" (example data: ", example_label, ")") else "")),
           tags$small(style = "color:#666;",
                      paste("Columns:", paste(colnames(df_prev), collapse = ", "))),
           br(),
@@ -2197,6 +2260,18 @@ server <- function(input, output, session) {
             paste("Upload failed:", error_msg))
       }
     })
+  }
+  observeEvent(input$user_file_expr, {
+    req(input$user_file_expr)
+    load_expr(input$user_file_expr$datapath)
+  })
+  observeEvent(input$example_expr, {
+    ex <- EXAMPLE_FILES[["expr"]]
+    if (!file.exists(ex$path)) {
+      showNotification(paste("Example file not found:", ex$path), type = "error")
+      return()
+    }
+    load_expr(ex$path, example_label = ex$label)
   })
   
   # Only show extra options if upload is successful
@@ -2404,9 +2479,9 @@ server <- function(input, output, session) {
   user_splice_df <- reactiveVal(NULL)
   
   # ---- File upload ----
-  observeEvent(input$user_file_splice, {
-    req(input$user_file_splice)
-    file_path <- input$user_file_splice$datapath
+  load_splice <- function(file_path, example_label = NULL) {
+
+
     
     df <- tryCatch(
       read_user_table(file_path),
@@ -2442,7 +2517,7 @@ server <- function(input, output, session) {
         df_prev <- user_splice_df()
         tagList(
           div(style = "color:green; font-weight:bold; margin-top:10px;",
-              sprintf("\u2713 Upload successful — %d events detected.", nrow(df_prev))),
+              paste0(sprintf("\u2713 Upload successful — %d events detected.", nrow(df_prev)), if (!is.null(example_label)) paste0(" (example data: ", example_label, ")") else "")),
           tags$small(style = "color:#666;",
                      paste("Columns:", paste(colnames(df_prev), collapse = ", "))),
           br(),
@@ -2458,6 +2533,18 @@ server <- function(input, output, session) {
             paste("Upload failed:", error_msg))
       }
     })
+  }
+  observeEvent(input$user_file_splice, {
+    req(input$user_file_splice)
+    load_splice(input$user_file_splice$datapath)
+  })
+  observeEvent(input$example_splice, {
+    ex <- EXAMPLE_FILES[["splice"]]
+    if (!file.exists(ex$path)) {
+      showNotification(paste("Example file not found:", ex$path), type = "error")
+      return()
+    }
+    load_splice(ex$path, example_label = ex$label)
   })
   # ---- Only show extra options if upload is successful ----
   output$user_file_options_splice <- renderUI({
@@ -2642,15 +2729,15 @@ server <- function(input, output, session) {
   upload_ok_binding <- reactiveVal(FALSE)
   user_binding_df   <- reactiveVal(NULL)
 
-  observeEvent(input$user_file_binding, {
-    req(input$user_file_binding)
+  load_binding <- function(file_path, example_label = NULL) {
+
     # Unlike the Expression/Splicing upload handlers, this one had no status
     # feedback at all -- the user just sees nothing happen until the file
     # preview AND the Discovery options panel both pop in together, which
     # reads as "this takes forever" even when the actual parsing is quick.
     show_status("Reading uploaded file — please wait…")
     on.exit(hide_status(), add = TRUE)
-    file_path <- input$user_file_binding$datapath
+
 
     df <- tryCatch(
       read_user_table(file_path),
@@ -2684,7 +2771,7 @@ server <- function(input, output, session) {
         df_prev <- user_binding_df()
         tagList(
           div(style = "color:green; font-weight:bold; margin-top:10px;",
-              sprintf("\u2713 Upload successful — %d events detected.", nrow(df_prev))),
+              paste0(sprintf("\u2713 Upload successful — %d events detected.", nrow(df_prev)), if (!is.null(example_label)) paste0(" (example data: ", example_label, ")") else "")),
           tags$small(style = "color:#666;",
                      paste("Columns:", paste(colnames(df_prev), collapse = ", "))),
           br(),
@@ -2700,6 +2787,18 @@ server <- function(input, output, session) {
             paste("Upload failed:", error_msg))
       }
     })
+  }
+  observeEvent(input$user_file_binding, {
+    req(input$user_file_binding)
+    load_binding(input$user_file_binding$datapath)
+  })
+  observeEvent(input$example_binding, {
+    ex <- EXAMPLE_FILES[["binding"]]
+    if (!file.exists(ex$path)) {
+      showNotification(paste("Example file not found:", ex$path), type = "error")
+      return()
+    }
+    load_binding(ex$path, example_label = ex$label)
   })
 
   # ---- Binding Discovery Mode: dynamic options shown after successful upload ----
@@ -3003,16 +3102,26 @@ server <- function(input, output, session) {
     highlight_colors <- c("None" = "#CCCCCC", "RBP" = "#A10702", "Selected" = "#008057")
     plot_df <- tbl
     plot_df$point_color <- unname(highlight_colors[plot_df$highlight])
+    show_rmats <- splice_rmats_on()
+    if (show_rmats) {
+      plot_df <- rmats_add_columns(plot_df, RMATS_MAP)
+      plot_df$rmats <- plot_df[["rMATS ID"]]
+    }
+    tip <- if (show_rmats) "Event: {point.key}<br>rMATS: {point.rmats}" else "Event: {point.key}"
 
-    highcharter::hchart(
+    (if (show_rmats) highcharter::hchart(
+      plot_df, "scatter",
+      highcharter::hcaes(x = dPSI, y = Pdiff, color = point_color, key = Event.ID, rmats = rmats),
+      fast = TRUE
+    ) else highcharter::hchart(
       plot_df, "scatter",
       highcharter::hcaes(x = dPSI, y = Pdiff, color = point_color, key = Event.ID),
       fast = TRUE
-    ) %>%
+    )) %>%
       charm_hc_style() %>% highcharter::hc_title(text = paste0("Volcano Plot: ", rbp, " KD")) %>%
       highcharter::hc_xAxis(title = list(text = "dPSI (shRNA - CTRL)")) %>%
       highcharter::hc_yAxis(title = list(text = "PDiff")) %>%
-      highcharter::hc_tooltip(pointFormat = "Event: {point.key}") %>%
+      highcharter::hc_tooltip(pointFormat = tip) %>%
       highcharter::hc_plotOptions(scatter = list(marker = list(radius = 5, lineWidth = 1, lineColor = "black"))) %>%
       highcharter::hc_legend(enabled = FALSE) %>%
       hc_add_click_input(output_id)
@@ -3424,7 +3533,7 @@ server <- function(input, output, session) {
     # ---- Render table ----
     output$splice_volcano_table <- DT::renderDataTable({
       req(result_splice())
-      result_splice()$top_table %>% select(-text)
+      splice_table_view(result_splice()$top_table)
     }, rownames = FALSE, selection = "single", options = list(pageLength = 10))
     
     # ---- Shared function to update highlights ----

@@ -1,0 +1,3 @@
+event_type,rmats_events,rmats_quantified,rmats_quantified_mapped,rmats_mapped,pct_rmats_mapped,best_identical,best_exon_identical_flanks_differ,best_within_tolerance,rmats_unmapped_overlapping_VAST,rmats_unmapped_no_VAST_overlap,vast_events_total,vast_events_mapped,pairs,reciprocal_best_pairs,rmats_with_multiple_vast,vast_with_multiple_rmats,gene_symbol_agrees_pct
+ES,44140,33282,28983,37128,84.1,25986,11140,2,1727,5285,223565,30398,37133,30394,5,5123,92.4
+IR,1325,620,227,378,28.5,378,0,0,285,662,192965,378,378,378,0,0,88.4
