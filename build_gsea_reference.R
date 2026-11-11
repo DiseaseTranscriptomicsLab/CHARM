@@ -17,6 +17,11 @@
 #   Because the random sets are scored against each RBP's real ranking, genome-wide similarity
 #   between two RBPs' rankings is kept in the null; only the hallmark biology is removed.
 #
+#   gene-set background (used by the "click a gene set" window of the Expression > GSEA plot): the SAME random
+#   NES values are also kept per hallmark set -- a histogram (bin 0.02) of the NES that random gene sets of
+#   that set's size get against ALL RBP rankings (identical for every RBP, so stored once) -- together with
+#   the observed NES of every RBP for that set ("gsea_sets" element of each entry).
+#
 # Settings (set before sourcing, or edit): B = replicates (each = one random set per hallmark set;
 #   100 as in the earlier mito script), CORES, ONLY (e.g. "gsea|K562"), SEED, MIN_SIZE.
 # Needs: fgsea, msigdbr (the app already uses both), qs2.
@@ -28,6 +33,7 @@ if (!exists("MIN_SIZE")) MIN_SIZE <- 5
 if (!exists("CORES"))    CORES    <- if (.Platform$OS.type == "windows") 1 else max(1, min(4, parallel::detectCores() - 1))
 if (!exists("DATA_DIR")) DATA_DIR <- "data/QS2_Files"
 UNIVERSE_FRACTION <- 0.95          # random genes are drawn from genes ranked in >= 95% of the RBPs
+GSEA_PW_LO <- -6; GSEA_PW_HI <- 6; GSEA_PW_BIN <- 0.02   # NES histogram of the per-gene-set null
 MIN_SHARED <- 3                    # same minimum overlap gsea_correl() requires
 source("correlation_reference.R", local = TRUE)    # CORR_BIN_WIDTH
 
@@ -146,8 +152,22 @@ build_gsea_entry <- function(label, gsea_list, rank_list, hallmark_sets) {
   }
   cat(sprintf("[%s] null: %d replicates x %d sets, %s null pairs (%s total)\n", label, B, K,
               format(sum(counts), big.mark = ","), fmt_dur(as.numeric(difftime(Sys.time(), t0, units = "secs")))))
+  # ---- per-gene-set background: observed NES of every RBP + null NES histogram of size-matched random sets ----
+  pw_ids  <- names(sizes)                                            # K sets, same order as the random sets
+  nbin    <- as.integer(round((GSEA_PW_HI - GSEA_PW_LO) / GSEA_PW_BIN))
+  null_pw <- matrix(0L, K, nbin, dimnames = list(sub("^HALLMARK_", "", pw_ids), NULL))
+  for (k in seq_len(K)) {
+    v <- as.numeric(NES[(seq_len(B) - 1L) * K + k, , drop = FALSE])  # B replicates x all RBPs
+    v <- v[is.finite(v)]
+    null_pw[k, ] <- tabulate(pmin(pmax(floor((v - GSEA_PW_LO) / GSEA_PW_BIN) + 1L, 1L), nbin), nbins = nbin)
+  }
+  obs_pw <- Mobs[match(sub("^HALLMARK_", "", pw_ids), sub("^HALLMARK_", "", rownames(Mobs))), , drop = FALSE]
+  rownames(obs_pw) <- sub("^HALLMARK_", "", pw_ids)
+  gsea_sets <- list(ids = rownames(null_pw), size = as.integer(sizes), obs = round(obs_pw, 4),
+                    null_counts = null_pw, null_n = as.numeric(rowSums(null_pw)),
+                    lo = GSEA_PW_LO, hi = GSEA_PW_HI, bin = GSEA_PW_BIN)
   list(observed = observed, null_counts = as.integer(counts), null_n = sum(counts), B = B,
-       n_rows = K, n_rbps = length(ranks), null_type = "gsea", built = Sys.time())
+       n_rows = K, n_rbps = length(ranks), null_type = "gsea", gsea_sets = gsea_sets, built = Sys.time())
 }
 
 if (!exists("CORR_BUILD_NO_RUN")) {

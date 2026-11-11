@@ -235,6 +235,17 @@ plot_rbp_volcano <- function(charmobj, rbp, other_genes = NULL) {
   return(list(top_table = top.table, volcano_plot = volcano_plot))
 }
 
+# msigdbr() rebuilds the whole gene-set table on every call (a second or more); the result never changes during a
+# session, so it is fetched once per process and reused (plot_gsea, run_user_gsea).
+.msigdb_cache <- new.env(parent = emptyenv())
+get_msigdb_sets <- function(species = "Homo sapiens", collection = "H", subcollection = NULL) {
+  key <- paste(species, collection, if (is.null(subcollection)) "" else subcollection, sep = "|")
+  if (is.null(.msigdb_cache[[key]])) {
+    .msigdb_cache[[key]] <- msigdbr(species = species, collection = collection, subcollection = subcollection)
+  }
+  .msigdb_cache[[key]]
+}
+
 plot_gsea <- function(charmobj, rbp, thresh = 0.05,
                       species = "Homo sapiens",
                       collection = "H", subcollection = NULL,
@@ -329,7 +340,7 @@ plot_gsea <- function(charmobj, rbp, thresh = 0.05,
   }
 
   hallmarks.gs <- tryCatch(
-    msigdbr(species = species, collection = collection, subcollection = subcollection),
+    get_msigdb_sets(species, collection, subcollection),
     error = function(e) NULL
   )
   if (is.null(hallmarks.gs) || nrow(hallmarks.gs) == 0) {
@@ -404,7 +415,22 @@ plot_gsea <- function(charmobj, rbp, thresh = 0.05,
 # shape of the precomputed RBPs.gsea_All/K562/HEPG2 objects, so it
 # can be merged/correlated against them directly.
 # ============================================================
+.user_gsea_cache <- new.env(parent = emptyenv())
 run_user_gsea <- function(user_df, species = "Homo sapiens",
+                          collection = "H", subcollection = NULL) {
+  # Discovery > GSEA calls this once per cell line with the same uploaded ranks: run fgsea once and reuse it
+  key <- if (is.data.frame(user_df) && nrow(user_df) > 0 && ncol(user_df) >= 2)
+    paste(nrow(user_df), format(sum(suppressWarnings(as.numeric(user_df[[2]])), na.rm = TRUE), digits = 12),
+          paste(utils::head(as.character(user_df[[1]]), 3), collapse = ","), species, collection, sep = "|") else NULL
+  if (!is.null(key) && !is.null(.user_gsea_cache[[key]])) return(.user_gsea_cache[[key]])
+  res <- .run_user_gsea_uncached(user_df, species, collection, subcollection)
+  if (!is.null(key) && nrow(res) > 0) {
+    ks <- ls(.user_gsea_cache); if (length(ks) >= 3) rm(list = ks[1], envir = .user_gsea_cache)
+    .user_gsea_cache[[key]] <- res
+  }
+  res
+}
+.run_user_gsea_uncached <- function(user_df, species = "Homo sapiens",
                           collection = "H", subcollection = NULL) {
   if (is.null(user_df) || nrow(user_df) == 0 || ncol(user_df) < 2) {
     return(data.frame())
@@ -428,7 +454,7 @@ run_user_gsea <- function(user_df, species = "Homo sapiens",
   }
 
   hallmarks.gs <- tryCatch(
-    msigdbr(species = species, collection = collection, subcollection = subcollection),
+    get_msigdb_sets(species, collection, subcollection),
     error = function(e) NULL
   )
   if (is.null(hallmarks.gs) || nrow(hallmarks.gs) == 0) {
@@ -474,7 +500,7 @@ pval_display <- function(pval, digits = 3) {
   }
 }
 
-correl_exp_rbp_hc <- function(rbp_results, rbp, other_rbp, plot_title = NULL) {
+correl_exp_rbp_hc <- function(rbp_results, rbp, other_rbp, plot_title = NULL, ref_key = NULL) {
 
   # --- Determine if reference is user file or internal RBP ---
   if (is.data.frame(rbp)) {
@@ -562,6 +588,7 @@ correl_exp_rbp_hc <- function(rbp_results, rbp, other_rbp, plot_title = NULL) {
     fast = TRUE
   ) %>%
     charm_hc_style() %>% highcharter::hc_title(text = title_txt) %>%
+    highcharter::hc_subtitle(text = corr_scatter_subtitle(rho, ref_key)) %>%
     highcharter::hc_xAxis(title = list(text = paste0(ref_display, " t-statistics"))) %>%
     highcharter::hc_yAxis(title = list(text = paste0(other_display, " t-statistics"))) %>%
     highcharter::hc_tooltip(pointFormat = "Gene: {point.gene}") %>%
@@ -574,7 +601,7 @@ correl_exp_rbp_hc <- function(rbp_results, rbp, other_rbp, plot_title = NULL) {
 
 correl_scatter_gsea_hc <- function(gsea_results, rbp, other_rbp, plot_title = NULL,
                                        up_color = "#BA3B46", down_color = "#53A2BE",
-                                       show_legend = FALSE) {
+                                       show_legend = FALSE, ref_key = NULL) {
 
   if (is.data.frame(rbp)) {
     user_df <- rbp
@@ -645,6 +672,7 @@ correl_scatter_gsea_hc <- function(gsea_results, rbp, other_rbp, plot_title = NU
     fast = TRUE
   ) %>%
     charm_hc_style() %>% highcharter::hc_title(text = title_txt) %>%
+    highcharter::hc_subtitle(text = corr_scatter_subtitle(rho, ref_key)) %>%
     highcharter::hc_xAxis(title = list(text = paste0(ref_display, " NES"))) %>%
     highcharter::hc_yAxis(title = list(text = paste0(other_display, " NES"))) %>%
     highcharter::hc_tooltip(pointFormat = "Pathway: {point.pathway}") %>%
@@ -1153,7 +1181,7 @@ plot_splice_volcano <- function(charmobj, rbp, other_events = NULL) {
 }
 
 
-correl_splicing_rbp_hc <- function(charmobj, rbp, other_rbp, plot_title = NULL) {
+correl_splicing_rbp_hc <- function(charmobj, rbp, other_rbp, plot_title = NULL, ref_key = NULL) {
 
   # --- Determine reference RBP ---
   if (is.data.frame(rbp)) {
@@ -1221,6 +1249,7 @@ correl_splicing_rbp_hc <- function(charmobj, rbp, other_rbp, plot_title = NULL) 
     fast = TRUE
   ) %>%
     charm_hc_style() %>% highcharter::hc_title(text = title_txt) %>%
+    highcharter::hc_subtitle(text = corr_scatter_subtitle(rho, ref_key)) %>%
     highcharter::hc_xAxis(title = list(text = paste0(ref_display, " dPSI"))) %>%
     highcharter::hc_yAxis(title = list(text = paste0(other_display, " dPSI"))) %>%
     highcharter::hc_tooltip(pointFormat = paste0(

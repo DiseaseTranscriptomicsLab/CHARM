@@ -51,6 +51,11 @@ qload <- function(name) {
 CORR_REF <- tryCatch(qload("Correlation_Reference"), error = function(e) NULL)
 # Same idea for binding profiles (built by build_binding_reference.R)
 BIND_REF <- tryCatch(qload("Binding_Correlation_Reference"), error = function(e) NULL)
+# The helpers in correlation_reference.R / helper_functions.R are sourced into the GLOBAL environment and look the
+# references up there (get0("CORR_REF")). When the app is started with runApp(), app.R itself runs in a child
+# environment, so the two objects must be published globally or those helpers see NULL (= no percentile/FPR panels).
+assign("CORR_REF", CORR_REF, envir = globalenv())
+assign("BIND_REF", BIND_REF, envir = globalenv())
 # VAST-TOOLS -> rMATS event ID cross-reference (built by eCLIPSE/map_vast_rmats_events.R). Optional: without
 # the file no rMATS IDs are shown.
 .rmats_raw <- tryCatch(qload("RMATS_Event_Mapping"), error = function(e) NULL)
@@ -133,6 +138,32 @@ get_binding_object <- function(eventtype, dataset) {
   binding_cache$obj
 }
 
+# similar_binding_* objects (the binding profiles behind "Similar Profiles"). Only $mean_profiles is ever used, so
+# only that is kept. They are loaded one file at a time, on demand, into a cache shared by ALL sessions (not one
+# copy per session), and at most BINDING_SIM_MAX files stay in memory (= one event type: 3 cell lines x inc/dec);
+# the oldest is dropped first, e.g. when someone switches from Exon Skipping to Intron Retention.
+BINDING_SIM_MAX <- 6L
+binding_sim_store <- new.env(parent = emptyenv())
+binding_sim_store$order <- character(0)
+get_binding_sim <- function(key) {            # key e.g. "ES_both_inc"
+  if (!is.null(binding_sim_store[[key]])) {
+    binding_sim_store$order <- c(setdiff(binding_sim_store$order, key), key)   # most recently used last
+    return(binding_sim_store[[key]])
+  }
+  obj  <- qload(paste0("similar_binding_", key))
+  slim <- list(mean_profiles = obj$mean_profiles)
+  rm(obj)
+  binding_sim_store[[key]] <- slim
+  binding_sim_store$order <- c(setdiff(binding_sim_store$order, key), key)
+  while (length(binding_sim_store$order) > BINDING_SIM_MAX) {
+    drop <- binding_sim_store$order[1]
+    rm(list = drop, envir = binding_sim_store)
+    binding_sim_store$order <- binding_sim_store$order[-1]
+  }
+  gc(FALSE)
+  slim
+}
+
 `%||%` <- function(a, b) if (is.null(a) || (length(a) == 1 && is.na(a))) b else a
 
 # Flexible reader for the three Discovery-mode file uploads (Expression,
@@ -201,13 +232,20 @@ sh_effect_vector_HEPG2 <- qload("shRNA_Efficiency_HEPG2")
 ALL_RBP_NAMES <- names(.default_charm)
 HALLMARK_CHOICES <- sort(unique(.default_charm[["RBFOX2"]]$GSEA$pathway))
 
-.default_binding_es <- get_binding_object("Exon Skipping", "Both Cells")
-ALL_BINDING_RBP_NAMES_ES <- names(.default_binding_es)
-# Intron Retention isn't the default event type, so this read gets evicted
-# again the moment a session actually requests ES data -- that's fine, it's
-# a one-time startup cost just to capture the name list.
-ALL_BINDING_RBP_NAMES_IR <- names(qload("Binding_IR_both"))
-rm(.default_charm, .default_binding_es)
+# RBP name lists of the binding objects. Reading the two ~1 GB binding files just for their names made every start
+# slow and memory-hungry, so the names are kept in a tiny file (Binding_RBP_Names) that is created on the first
+# start and read afterwards. Delete the file if the binding data are ever rebuilt with different RBPs.
+.bn <- tryCatch(if (file.exists(file.path(DATA_DIR, paste0("Binding_RBP_Names", DATA_EXT)))) qload("Binding_RBP_Names") else NULL,
+                error = function(e) NULL)
+if (is.null(.bn)) {
+  .bn <- list(ES = names(get_binding_object("Exon Skipping", "Both Cells")),
+              IR = names(qload("Binding_IR_both")))
+  if (DATA_EXT == ".qs2") try(qs2::qs_save(.bn, file.path(DATA_DIR, "Binding_RBP_Names.qs2")), silent = TRUE)
+  binding_cache$obj <- NULL; binding_cache$key <- NULL; gc(FALSE)
+}
+ALL_BINDING_RBP_NAMES_ES <- .bn$ES
+ALL_BINDING_RBP_NAMES_IR <- .bn$IR
+rm(.default_charm, .bn)
 
 #Similarity stuff
 similar_expression_all    <- qload("RBPs.t_All")
@@ -230,7 +268,7 @@ EventsK562  <- qload("AvailableEvents_K562")
 EventsHEPG2 <- qload("AvailableEvents_HEPG2")
 
 #Binding similarity stuff — loaded lazily on first Network tab use (see server)
-# similar_binding_* objects are loaded via the binding_sim_cache reactive below
+# similar_binding_* objects are loaded on demand by get_binding_sim() (defined above)
 
 
 ui <- fluidPage(
@@ -708,7 +746,9 @@ ui <- fluidPage(
               ),
               fluidRow(
                 column(width = 6,
-                  plotOutput("gsea_plot", height = "600px"),
+                  plotOutput("gsea_plot", height = "600px", click = "gsea_plot_click"),
+                  tags$p(tags$small(tagList(fa("hand-pointer"), " Click a bar (or select a row in the table) to compare that gene set with the background of all RBPs and with random gene sets.")),
+                         style = "color:#666; margin: 2px 0 6px 0;"),
                   uiOutput("dl_ui_gsea")
                 ),
                 column(width = 6,
@@ -1248,7 +1288,7 @@ ui <- fluidPage(
       id = "charm-info-panel",
     tags$div(
       style = "font-size: 11px; color: #2c3e50; margin-bottom: 4px;",
-      "Version: 0.9.3"
+      "Version: 0.9.4"
     ),
     tags$div(
       style = "margin-bottom: 4px;",
@@ -1658,25 +1698,6 @@ server <- function(input, output, session) {
                    class = "btn btn-sm btn-default", style = "margin-top:5px;")
   })
   
-  # ── Lazy-load all 12 similar_binding_* objects on first Network/Binding use ──
-  # Using a reactive means the 12 qs::qread() calls only happen the first time
-  # this reactive is evaluated, and the result is cached for all subsequent calls.
-  # This shaves the 12 file reads off app startup time.
-  binding_sim_cache <- reactive({
-    keys <- c(
-      "ES_both_inc",  "ES_both_dec",
-      "ES_K562_inc",  "ES_K562_dec",
-      "ES_HEPG2_inc", "ES_HEPG2_dec",
-      "IR_both_inc",  "IR_both_dec",
-      "IR_K562_inc",  "IR_K562_dec",
-      "IR_HEPG2_inc", "IR_HEPG2_dec"
-    )
-    objs <- lapply(keys, function(k) {
-      qload(paste0("similar_binding_", k))
-    })
-    names(objs) <- paste0("similar_binding_", keys)
-    objs
-  })
   # Home: the three layer boxes ("Binding" / "Splicing" / "Expression") open their tab
   observeEvent(input$home_go_layer, {
     req(input$home_go_layer %in% c("Binding", "Splicing", "Expression"))
@@ -1739,6 +1760,64 @@ server <- function(input, output, session) {
   display_table <- reactiveVal(NULL)
   rbp_current   <- reactiveVal(NULL)
   gsea_table_rv <- reactiveVal(NULL)
+  gsea_ds       <- reactiveVal(NULL)     # cell line the GSEA table/plot on screen was computed for
+
+  # ── GSEA gene-set window ─────────────────────────────────────────────────
+  # Click a bar of the GSEA plot (or select a row of the gene-set table): a window shows this RBP's NES
+  # against (1) the NES of every RBP for the same gene set and (2) random gene sets of the same size
+  # (false-positive rate). Backgrounds come from the Correlation_Reference file (build_gsea_reference.R).
+  gsea_pw_current <- reactiveVal(NULL)
+  gsea_open_window <- function(pathway) {
+    tbl <- gsea_table_rv(); rbp <- rbp_current()
+    req(!is.null(tbl), nrow(tbl) > 0, !is.null(rbp))
+    row <- tbl[tbl$pathway == pathway, , drop = FALSE]
+    req(nrow(row) > 0, is.finite(row$NES[1]))
+    ds  <- gsea_ds(); if (is.null(ds) || !ds %in% c("Both Cells", "K562", "HEPG2")) ds <- "Both Cells"
+    fb  <- switch(ds, "K562" = similar_gsea_K562, "HEPG2" = similar_gsea_HEPG2, similar_gsea_all)
+    ctx <- gsea_pw_context(corr_key("gsea", ds), pathway, row$NES[1], obs_fallback = fb)
+    gsea_pw_current(list(ctx = ctx, rbp = rbp, ds = ds))
+    showModal(modalDialog(
+      title = tagList(tags$b(pathway), tags$span(paste0("  \u2014  ", rbp, " KD, ", ds), style = "color:#666; font-size:14px;")),
+      size = "l", easyClose = TRUE,
+      plotOutput("gsea_pw_plot", height = "640px"),
+      footer = tagList(downloadButton("dl_gsea_pw", "\u2193 Download plot", class = "btn btn-sm btn-default"),
+                       modalButton("Close"))
+    ))
+  }
+  output$gsea_pw_plot <- renderPlot({
+    x <- gsea_pw_current(); req(x)
+    gsea_pw_plot(x$ctx, x$rbp, x$ds)
+  })
+  output$dl_gsea_pw <- downloadHandler(
+    filename = function() {
+      x <- gsea_pw_current()
+      paste0("gsea_", gsub("[^A-Za-z0-9._-]", "_", x$rbp), "_", gsub("[^A-Za-z0-9._-]", "_", x$ctx$id), ".png")
+    },
+    content = function(file) {
+      x <- gsea_pw_current(); req(x)
+      ggsave(file, gsea_pw_plot(x$ctx, x$rbp, x$ds), width = 8, height = 9, dpi = 300, bg = "white")
+    }
+  )
+  observeEvent(input$gsea_plot_click, {
+    tbl <- gsea_table_rv(); cl <- input$gsea_plot_click
+    req(!is.null(tbl), nrow(tbl) > 0, !is.null(cl$y))
+    # bars are the significant sets, ordered by NES (bottom = lowest); the plot's own axis labels are used when
+    # Shiny reports them, otherwise the same order is rebuilt from the table
+    lim <- cl$domain$discrete_limits$y
+    ord <- if (!is.null(lim)) gsub("_", " ", unlist(lim)) else {
+      sg <- tbl[!is.na(tbl$padj) & tbl$padj < 0.05, , drop = FALSE]
+      sg$pathway[order(sg$NES)]
+    }
+    i <- round(cl$y)
+    req(i >= 1, i <= length(ord))
+    gsea_open_window(ord[i])
+  })
+  observeEvent(input$geneset_table_rows_selected, {
+    i <- input$geneset_table_rows_selected
+    tbl <- gsea_table_rv(); req(!is.null(tbl), length(i) == 1, i <= nrow(tbl))
+    gsea_open_window(tbl$pathway[i])
+    DT::selectRows(DT::dataTableProxy("geneset_table"), NULL)    # so the same row can be clicked again
+  }, ignoreNULL = TRUE)
   
   # ── Cross-tab RBP navigation ──────────────────────────────────────────────
   # nav_rbp holds the RBP to jump to, plus the source tab so we don't
@@ -1967,11 +2046,12 @@ server <- function(input, output, session) {
       })
       gsea_result <- plot_gsea(charm_obj, rbp_sel, thresh = 0.05)
       gsea_table_rv(gsea_result$geneset_table)
+      gsea_ds(input$expr_dataset)
       output$gsea_plot <- renderPlot({
         p <- gsea_result$gsea_plot; dl_store$gsea(p); p
       })
       output$geneset_table <- renderDT({
-        datatable(gsea_result$geneset_table, filter = "none", rownames = FALSE,
+        datatable(gsea_result$geneset_table, filter = "none", rownames = FALSE, selection = "single",
                   options = list(pageLength = 10, scrollX = TRUE))
       })
     }
@@ -2412,6 +2492,9 @@ server <- function(input, output, session) {
     
     if (length(selected_rbps) == 0) selected_rbps <- NULL
     
+    # show only the panel of the mode being plotted
+    other_ui <- setdiff(c("userfilesimilar_expr", "userfilesimilar_gsea"), target_ui)
+    output[[other_ui]] <- renderUI(NULL)
     output[[target_ui]] <- renderUI({
       tagList(
         # Generate all dataset plots dynamically
@@ -2420,7 +2503,9 @@ server <- function(input, output, session) {
           # is an invalid Shiny output ID. plotOutput/renderPlot tolerated
           # it, but highchartOutput/renderHighchart's widget binding does
           # not -- the plot silently never appears, no error anywhere.
-          plotname <- paste0("userfile_plot_", gsub("[^A-Za-z0-9_]+", "_", ds_name))
+          # the mode is part of the id: the Expression and GSEA panels live in the same page, and two
+          # outputs sharing an id (e.g. after plotting Expression and then GSEA) leave the second one blank
+          plotname <- paste0("userfile_plot_", mode, "_", gsub("[^A-Za-z0-9_]+", "_", ds_name))
           dl_ui <- NULL
 
           # Dynamic output creation
@@ -2430,7 +2515,8 @@ server <- function(input, output, session) {
                 datasets[[ds_name]],
                 user_expr_df(),
                 selected_rbps[1],
-                plot_title = ds_name
+                plot_title = ds_name,
+                ref_key = corr_key(if (mode == "expr") "expr" else "gsea", ds_name)
               )
             })
             plot_ui <- highchartOutput(plotname, height = "500px")
@@ -2677,7 +2763,7 @@ server <- function(input, output, session) {
 
           if (is_scatter) {
             output[[plotname]] <- renderHighchart({
-              correl_splicing_rbp_hc(datasets[[ds_name]], user_splice_df(), selected_rbps)
+              correl_splicing_rbp_hc(datasets[[ds_name]], user_splice_df(), selected_rbps, ref_key = corr_key("splice", ds_name))
             })
             plot_ui <- highchartOutput(plotname, height = "500px")
           } else {
@@ -3276,6 +3362,7 @@ server <- function(input, output, session) {
     
     gsea_result <- plot_gsea(charm_obj, rbp_sel, thresh = 0.05)
     gsea_table_rv(gsea_result$geneset_table)
+    gsea_ds(input$expr_dataset)
     output$gsea_plot <- renderPlot({
       # on.exit guarantees the "generating plots" banner clears even if
       # something in this render throws -- a plain hide_status() call at the
@@ -3289,6 +3376,7 @@ server <- function(input, output, session) {
       datatable(gsea_result$geneset_table,
                 filter = "none",
                 rownames = FALSE,
+                selection = "single",
                 options = list(pageLength = 10, scrollX = TRUE))
     })
   })
@@ -3405,7 +3493,8 @@ server <- function(input, output, session) {
           
           if (!is.null(selected_rbps) && length(selected_rbps) == 1) {
             output[[plotname]] <- renderHighchart({
-              scatter_fun(datasets[[ds_name]], rbp1, selected_rbps[1], plot_title = ds_name)
+              scatter_fun(datasets[[ds_name]], rbp1, selected_rbps[1], plot_title = ds_name,
+                           ref_key = corr_key(if (mode == "expr") "expr" else "gsea", ds_name))
             })
             plot_ui <- highchartOutput(plotname, height = "500px")
           } else {
@@ -3648,7 +3737,7 @@ server <- function(input, output, session) {
                 need(all(selected_rbps %in% names(datasets[[ds_name]])),
                      paste0("Selected RBP(s) not available in ", ds_name, "."))
               )
-              scatter_fun(datasets[[ds_name]], rbp1, selected_rbps)
+              scatter_fun(datasets[[ds_name]], rbp1, selected_rbps, ref_key = corr_key("splice", ds_name))
             })
             plot_ui <- highchartOutput(plotname, height = "500px")
           } else {
@@ -4364,20 +4453,21 @@ server <- function(input, output, session) {
     req(input$binding_eventtype)
     is_IR  <- grepl("Intron Retention", input$binding_eventtype, ignore.case = TRUE)
     prefix <- if (is_IR) "IR" else "ES"
-    cache  <- binding_sim_cache()   # triggers lazy load on first call
+    # each file is loaded on demand (shared across sessions, see get_binding_sim)
+    cache  <- function(k) get_binding_sim(sub("^similar_binding_", "", k))
     
     list(
       "Both Cells" = list(
-        inc = cache[[paste0("similar_binding_", prefix, "_both_inc")]],
-        dec = cache[[paste0("similar_binding_", prefix, "_both_dec")]]
+        inc = cache(paste0("similar_binding_", prefix, "_both_inc")),
+        dec = cache(paste0("similar_binding_", prefix, "_both_dec"))
       ),
       "K562" = list(
-        inc = cache[[paste0("similar_binding_", prefix, "_K562_inc")]],
-        dec = cache[[paste0("similar_binding_", prefix, "_K562_dec")]]
+        inc = cache(paste0("similar_binding_", prefix, "_K562_inc")),
+        dec = cache(paste0("similar_binding_", prefix, "_K562_dec"))
       ),
       "HEPG2" = list(
-        inc = cache[[paste0("similar_binding_", prefix, "_HEPG2_inc")]],
-        dec = cache[[paste0("similar_binding_", prefix, "_HEPG2_dec")]]
+        inc = cache(paste0("similar_binding_", prefix, "_HEPG2_inc")),
+        dec = cache(paste0("similar_binding_", prefix, "_HEPG2_dec"))
       )
     )
   })
@@ -4612,7 +4702,6 @@ server <- function(input, output, session) {
         "Show top N most dissimilar profiles (optional):",
         value = NA, min = 1
       ),
-      checkboxInput("binding_sim_zoom", "Zoom the density plots to the data range", value = TRUE),
       
       div(
         style = "display: flex; align-items: center; margin-top: 15px;",
@@ -4661,8 +4750,8 @@ server <- function(input, output, session) {
     req(input$binding_dataset == "Similar Profiles",
         input$binding_sim_query_id,
         input$binding_eventtype)
-    # This can trigger the first (lazy) load of all 12 similar_binding_*
-    # objects via binding_sim_cache() below, which had no loading feedback
+    # This can trigger the first (lazy) load of the six similar_binding_*
+    # files of the chosen event type, which had no loading feedback
     # at all -- give the user something while that (and the "Both Cells"
     # correlation, the larger of the three) computes.
     show_status("Computing similar binding profiles — please wait…")
@@ -4797,7 +4886,7 @@ server <- function(input, output, session) {
               direction     = dir_local,
               dataset_label = ds_local,
               ref_key       = bind_key(ev_prefix, ds_local, dir_local),
-              zoom          = !isFALSE(input$binding_sim_zoom)
+              zoom          = TRUE
             )
             dyn_dl_store[[plot_id]] <- res$heatmap
             res$heatmap
@@ -4828,7 +4917,7 @@ server <- function(input, output, session) {
               query_id,
               bind_pool_key(ev_prefix, ds_local),
               profiles_of("inc"), profiles_of("dec"),
-              zoom = !isFALSE(input$binding_sim_zoom)
+              zoom = TRUE
             )
             dyn_dl_store[[plot_id]] <- p
             p
@@ -4976,11 +5065,9 @@ server <- function(input, output, session) {
           if ("Decreased" %in% dirs) dir_keys <- c(dir_keys, "dec")
 
           binding_cor_list <- list()
-          cache <- binding_sim_cache()
           for (tk in type_keys) {
             for (dk in dir_keys) {
-              obj_name <- paste0("similar_binding_", tk, "_", cell_key_binding, "_", dk)
-              obj <- cache[[obj_name]]
+              obj <- tryCatch(get_binding_sim(paste0(tk, "_", cell_key_binding, "_", dk)), error = function(e) NULL)
               if (is.null(obj) || is.null(obj$mean_profiles)) next
               mat       <- obj$mean_profiles
               rbp_names <- sub("__.*", "", rownames(mat))

@@ -67,6 +67,17 @@ corr_bar_label <- function(r, pct) {
   ifelse(is.na(pct), "", paste0(ifelse(r >= 0, "top ", "bottom "), corr_fmt_pct(pct)))
 }
 
+# One-line context for a single scatter plot (one RBP vs one RBP / uploaded data): where the Spearman rho falls among
+# all observed RBP pairs, and its tail probability under the permutation null. NULL when no reference is available.
+corr_scatter_subtitle <- function(rho, ref_key, ref = get0("CORR_REF", inherits = TRUE)) {
+  if (is.na(rho) || !corr_has_ref(ref_key, ref)) return(NULL)
+  ctx     <- corr_context(rho, ref_key, ref)
+  floor_p <- 1 / (1 + ref[[ref_key]]$null_n)
+  p_txt   <- corr_fmt_p(ctx$NullP, floor_p)
+  paste0(corr_bar_label(rho, ctx$Percentile), " of all CHARM RBP pairs  |  permutation p ",
+         ifelse(startsWith(p_txt, "<"), "", "= "), p_txt, " (false-positive rate under shuffled data)")
+}
+
 # Density panel: observed (all RBP pairs) vs null (shuffled), a vertical line per
 # displayed correlation.
 corr_density_panel <- function(top_cor, key, up_color = "#BA3B46", down_color = "#53A2BE",
@@ -97,19 +108,11 @@ corr_density_panel <- function(top_cor, key, up_color = "#BA3B46", down_color = 
 
   lines_df <- data.frame(x = top_cor$Correlation,
                          Status = ifelse(top_cor$Correlation > 0, "Positive", "Negative"))
-  lab_df <- top_cor[order(-abs(top_cor$Correlation)), , drop = FALSE]
-  lab_df <- utils::head(lab_df, 3)
-  lab_df <- data.frame(x = lab_df$Correlation, y = ymax, label = as.character(lab_df$RBP))
-
   ggplot2::ggplot() +
     ggplot2::geom_area(data = dd, ggplot2::aes(x = x, y = y, fill = Distribution),
                        alpha = 0.55, position = "identity", colour = NA) +
     ggplot2::geom_vline(data = lines_df, ggplot2::aes(xintercept = x, colour = Status),
                         linewidth = 0.5, alpha = 0.8) +
-    ggrepel::geom_text_repel(data = lab_df, ggplot2::aes(x = x, y = y, label = label),
-                             direction = "x", size = CHARM_GEOM_TEXT, family = CHARM_FONT,
-                             fontface = "italic", segment.size = 0.2, min.segment.length = 0,
-                             box.padding = 0.2, max.overlaps = Inf) +
     ggplot2::scale_fill_manual(values = stats::setNames(c("#7272AB", "#8C8C8C"), c(lab_obs, lab_nul)),
                                name = NULL) +
     ggplot2::scale_colour_manual(values = c("Positive" = up_color, "Negative" = down_color), guide = "none") +
@@ -505,4 +508,116 @@ bind_density_panel_combined <- function(query_id, key_pool, mp_inc, mp_dec,
                   title = "Increased and decreased events together (all profiles pooled)", caption = caption) +
     theme_charm() +
     ggplot2::theme(legend.position = "bottom", legend.direction = "vertical", legend.box = "vertical")
+}
+
+
+# =============================================================================
+# GSEA gene-set window (Expression > GSEA plot: click a gene set)
+# -----------------------------------------------------------------------------
+# build_gsea_reference.R stores, per cell line ("gsea|K562" ... in CORR_REF), a "gsea_sets" element:
+#   obs         : NES of every RBP for every hallmark set (set x RBP)
+#   null_counts : per hallmark set, histogram (bin 0.02, -6..6) of the NES that random gene sets of the same size
+#                 get against ALL RBP rankings. It does not depend on the RBP, so it is stored once.
+# The window shows (1) where the selected RBP's NES sits among all RBPs for that set and (2) its false-positive
+# rate: the share of size-matched random gene sets with an NES at least as extreme in the same direction.
+# Without the reference only (1) is shown (computed from the loaded per-RBP GSEA tables).
+# =============================================================================
+gsea_pw_id <- function(x) sub("^HALLMARK_", "", gsub(" ", "_", as.character(x)))
+
+gsea_pw_has_ref <- function(key, ref = get0("CORR_REF", inherits = TRUE)) {
+  !is.null(key) && !is.null(ref) && !is.null(ref[[key]]) && !is.null(ref[[key]]$gsea_sets)
+}
+
+# obs_fallback: named list (one data.frame per RBP with columns pathway, NES), used when no reference is built
+gsea_pw_context <- function(key, pathway, nes, ref = get0("CORR_REF", inherits = TRUE), obs_fallback = NULL) {
+  id <- gsea_pw_id(pathway)
+  out <- list(id = id, nes = nes, obs = NULL, pct = NA_real_, null = NULL, null_n = NA_real_, size = NA_integer_,
+              fpr = NA_real_, floor_p = NA_real_)
+  out$why <- if (is.null(ref)) "Correlation_Reference.qs2 was not found when the app started."
+             else if (is.null(ref[[key]])) sprintf("The reference has no entry '%s' (available: %s).", key, paste(names(ref), collapse = ", "))
+             else if (is.null(ref[[key]]$gsea_sets)) sprintf("Entry '%s' has no gene-set backgrounds: rerun build_gsea_reference.R, then restart the app.", key)
+             else NULL
+  if (gsea_pw_has_ref(key, ref)) {
+    g <- ref[[key]]$gsea_sets
+    i <- match(id, g$ids)
+    if (is.na(i)) out$why <- sprintf("Gene set '%s' not found in the reference (it has: %s ...).", id, paste(utils::head(g$ids, 3), collapse = ", "))
+    if (!is.na(i)) {
+      out$obs    <- stats::setNames(as.numeric(g$obs[i, ]), colnames(g$obs))
+      out$size   <- g$size[i]
+      cnt        <- g$null_counts[i, ]
+      nb         <- length(cnt)
+      out$null_n <- g$null_n[i]
+      out$null   <- data.frame(x = g$lo + (seq_len(nb) - 0.5) * g$bin, w = cnt / sum(cnt))
+      idx        <- min(max(floor((nes - g$lo) / g$bin) + 1, 1), nb)
+      cs         <- cumsum(cnt)
+      k          <- if (nes >= 0) out$null_n - c(0, cs)[idx] else cs[idx]   # bin holding nes counts as "at least as extreme"
+      out$fpr    <- (1 + k) / (1 + out$null_n)
+      out$floor_p <- 1 / (1 + out$null_n)
+    }
+  }
+  if (is.null(out$obs) && !is.null(obs_fallback)) {
+    out$obs <- vapply(obs_fallback, function(d) {
+      if (is.null(d) || !all(c("pathway", "NES") %in% colnames(d))) return(NA_real_)
+      v <- d$NES[match(id, gsea_pw_id(d$pathway))]
+      if (length(v)) as.numeric(v[1]) else NA_real_
+    }, numeric(1))
+  }
+  if (!is.null(out$obs)) {
+    o <- out$obs[is.finite(out$obs)]
+    out$obs <- o
+    if (length(o)) out$pct <- 100 * max(if (nes >= 0) sum(o >= nes) else sum(o <= nes), 1) / length(o)
+  }
+  out
+}
+
+gsea_pw_plot <- function(ctx, rbp, dataset = NULL, up_color = "#BA3B46", down_color = "#53A2BE") {
+  line_col <- if (ctx$nes >= 0) up_color else down_color
+  pw_label <- gsub("_", " ", ctx$id)
+  xr <- range(c(ctx$obs, ctx$nes, if (!is.null(ctx$null)) ctx$null$x[ctx$null$w > 1e-4]), na.rm = TRUE)
+  pad <- 0.08 * diff(xr); xlim <- c(xr[1] - pad, xr[2] + pad)
+  vline <- function(lab) list(
+    ggplot2::geom_vline(xintercept = ctx$nes, colour = line_col, linewidth = 0.9),
+    ggplot2::annotate("text", x = ctx$nes, y = Inf, label = lab, colour = line_col, vjust = 1.4,
+                      hjust = if (ctx$nes >= mean(xlim)) 1.08 else -0.08, size = CHARM_GEOM_TEXT, family = CHARM_FONT, fontface = "bold"))
+  base_theme <- list(ggplot2::coord_cartesian(xlim = xlim), theme_charm())
+  wrap <- function(x, w = 70) paste(strwrap(x, w), collapse = "\n")
+
+  # (1) observed background: this gene set's NES across all RBPs
+  if (length(ctx$obs) > 0) {
+    da <- if (length(ctx$obs) >= 3) stats::density(ctx$obs, adjust = 1.2, from = xlim[1], to = xlim[2], n = 512) else NULL
+    pa <- ggplot2::ggplot(if (!is.null(da)) data.frame(x = da$x, y = da$y) else data.frame(x = numeric(), y = numeric()),
+                          ggplot2::aes(x, y)) +
+      ggplot2::geom_area(fill = "grey80", colour = "grey40") +
+      ggplot2::geom_rug(data = data.frame(x = ctx$obs), ggplot2::aes(x = x), inherit.aes = FALSE, colour = "grey45", alpha = 0.6) +
+      vline(sprintf("%s  NES %.2f", rbp, ctx$nes)) + base_theme +
+      ggplot2::labs(title = "Where this RBP falls among all RBPs",
+                    subtitle = wrap(sprintf("NES of %s across %d RBP knockdowns%s  |  %s of all RBPs", pw_label, length(ctx$obs),
+                                       if (!is.null(dataset)) paste0(" (", dataset, ")") else "",
+                                       paste0(if (ctx$nes >= 0) "top " else "bottom ", corr_fmt_pct(ctx$pct)))),
+                    x = NULL, y = "Density") +
+      ggplot2::theme(axis.text.y = ggplot2::element_blank(), axis.ticks.y = ggplot2::element_blank())
+  } else {
+    pa <- ggplot2::ggplot() + ggplot2::annotate("text", x = 0, y = 0, label = "No NES values available for this gene set", family = CHARM_FONT) + theme_charm_void()
+  }
+
+  # (2) random gene sets of the same size -> false-positive rate
+  if (!is.null(ctx$null)) {
+    d <- stats::density(ctx$null$x, weights = ctx$null$w, bw = 0.12, from = xlim[1], to = xlim[2], n = 512)
+    dd <- data.frame(x = d$x, y = d$y)
+    p_txt <- corr_fmt_p(ctx$fpr, ctx$floor_p)
+    pb <- ggplot2::ggplot(dd, ggplot2::aes(x, y)) +
+      ggplot2::geom_area(fill = "grey80", colour = "grey40") +
+      vline(sprintf("NES %.2f", ctx$nes)) + base_theme +
+      ggplot2::labs(title = sprintf("False-positive rate: FPR %s%s", ifelse(startsWith(p_txt, "<"), "", "= "), p_txt),
+                    subtitle = wrap(sprintf("NES of %s random gene sets of the same size (%s genes) scored on every RBP ranking",
+                                       bind_fmt_n(ctx$null_n), ctx$size)),
+                    caption = wrap("FPR = share of random gene sets with an NES at least as extreme, in the same direction. The random background is identical for every RBP.", 80),
+                    x = "Normalised Enrichment Score (NES)", y = "Density") +
+      ggplot2::theme(axis.text.y = ggplot2::element_blank(), axis.ticks.y = ggplot2::element_blank(),
+                     plot.caption = ggplot2::element_text(hjust = 0))
+  } else {
+    pb <- ggplot2::ggplot() + ggplot2::annotate("text", x = 0, y = 0, family = CHARM_FONT,
+            label = paste(strwrap(paste("Random-signature background unavailable.", if (!is.null(ctx$why)) ctx$why else ""), 60), collapse = "\n")) + theme_charm_void()
+  }
+  ggpubr::ggarrange(pa, pb, ncol = 1, heights = c(1, 1))
 }
