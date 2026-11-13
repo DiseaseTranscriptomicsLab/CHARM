@@ -2394,6 +2394,8 @@ binding_profile_correl <- function(sim_obj,
     ggplot2::theme(legend.position = "none")
   
   tbl_cols <- c("Profile", "RBP", "Target", "Correlation", if (has_ref) c("Percentile", "SameTarget"))
+  bar_plot_only <- heatmap_plot   # bar plot alone (separate download)
+  dens_only     <- NULL           # density plot alone (separate download)
   if (has_ref) {
     heatmap_plot <- heatmap_plot +
       ggplot2::scale_y_continuous(breaks = c(-1, -0.5, 0, 0.5, 1),
@@ -2404,11 +2406,15 @@ binding_profile_correl <- function(sim_obj,
     } else {
       bind_density_panel_basic(cor_df, ref_key, up_color = up_color, down_color = down_color)   # older reference file
     }
+    bar_plot_only <- heatmap_plot
+    dens_only     <- dens
     heatmap_plot <- ggpubr::ggarrange(heatmap_plot, dens, ncol = 1, heights = c(1, 0.9))
   }
   list(
     correlation_table = cor_df[, tbl_cols],
-    heatmap           = heatmap_plot
+    heatmap           = heatmap_plot,
+    bar_plot          = bar_plot_only,
+    density_plot      = dens_only
   )
 }
 

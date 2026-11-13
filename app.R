@@ -1373,6 +1373,29 @@ server <- function(input, output, session) {
     )
   }
   
+  # Similar-profiles downloads. Heatmap plots that carry the percentile/null context are a bar plot
+  # stacked over a density plot: those two are stored and downloaded SEPARATELY (one image each,
+  # sized to drop into a figure panel). Plots without a reference have a single button.
+  corr_store_plots <- function(plotname, heat_res) {
+    dyn_dl_store[[plotname]] <- heat_res$heatmap
+    dyn_dl_store[[paste0(plotname, "_bar")]]     <- if (!is.null(heat_res$bar_plot)) heat_res$bar_plot else heat_res$heatmap
+    dyn_dl_store[[paste0(plotname, "_density")]] <- heat_res$density_plot
+  }
+  corr_dl_buttons <- function(plotname, prefix, key) {
+    btn <- function(id, label) downloadButton(id, label, class = "btn btn-sm btn-default",
+                                              style = "margin-top:5px; margin-right:6px;")
+    if (!corr_has_ref(key)) {
+      id <- paste0("dl_", plotname)
+      output[[id]] <- make_dyn_dl_handler(plotname, prefix, width = 8, height = 6)
+      return(btn(id, "\u2193 Download plot"))
+    }
+    id_b <- paste0("dl_", plotname, "_bar")
+    id_d <- paste0("dl_", plotname, "_density")
+    output[[id_b]] <- make_dyn_dl_handler(paste0(plotname, "_bar"),     paste0(prefix, "_barplot"), width = 8, height = 6)
+    output[[id_d]] <- make_dyn_dl_handler(paste0(plotname, "_density"), paste0(prefix, "_density"), width = 16, height = 4)
+    tagList(btn(id_b, "\u2193 Download bar plot"), btn(id_d, "\u2193 Download density plot"))
+  }
+  
   # ── Status bar helpers ────────────────────────────────────────────────────
   show_status <- function(msg = "Loading\u2026") {
     session$sendCustomMessage("showStatus", list(show = TRUE, text = msg))
@@ -1500,13 +1523,13 @@ server <- function(input, output, session) {
   # ── Plot download handlers ─────────────────────────────────────────────────
   output$dl_expr_violin   <- make_dl_handler("expr_violin",   "expression_violin",   width = 8,  height = 6)
   output$dl_shrna         <- make_dl_handler("shrna",         "shrna_efficiency",    width = 8,  height = 6)
-  output$dl_volcano       <- make_dl_handler("volcano",       "expression_volcano",  width = 8,  height = 7)
+  output$dl_volcano       <- make_dl_handler("volcano",       "expression_volcano",  width = 6,  height = 5)
   output$dl_gsea          <- make_dl_handler("gsea",          "expression_gsea",     width = 10, height = 8)
   output$dl_expr_gene     <- make_dl_handler("expr_gene",     "expression_gene",     width = 8,  height = 7)
   output$dl_expr_hallmark <- make_dl_handler("expr_hallmark", "expression_hallmark", width = 8,  height = 7)
   output$dl_splice_violin <- make_dl_handler("splice_violin", "splicing_violin",     width = 8,  height = 6)
   output$dl_shrna_splice  <- make_dl_handler("shrna_splice",  "shrna_efficiency_splice", width = 8, height = 6)
-  output$dl_splice_volcano<- make_dl_handler("splice_volcano","splicing_volcano",    width = 8,  height = 7)
+  output$dl_splice_volcano<- make_dl_handler("splice_volcano","splicing_volcano",    width = 8,  height = 6)
   # dl_binding is NOT built via make_dl_handler(): the Binding "All targets"
   # heatmap can have 100+ rows, and a fixed 12x9in export crammed every row
   # label on top of the next -- unreadable, even though the same heatmap
@@ -1572,7 +1595,7 @@ server <- function(input, output, session) {
     }
   )
   output$dl_network       <- make_dl_handler("network",       "network",             width = 12, height = 9)
-  output$dl_event_dpsi    <- make_dl_handler("event_dpsi",    "splicing_event_dpsi", width = 10, height = 8)
+  output$dl_event_dpsi    <- make_dl_handler("event_dpsi",    "splicing_event_dpsi", width = 8,  height = 6)
 
   # Discovery-mode (user-uploaded-file) plots -- previously not saveable.
   output$dl_splice_initial <- make_dl_handler("splice_initial", "splicing_discovery_overview", width = 8,  height = 6)
@@ -2082,7 +2105,7 @@ server <- function(input, output, session) {
         req(result_splice())
         tbl <- result_splice()$top_table
         p <- ggplot(tbl, aes(x = dPSI, y = Pdiff, key = Event.ID, color = highlight)) +
-          geom_point(alpha = 0.7) +
+          geom_point(alpha = 0.7, size = 1) +
           scale_color_manual(values = c("None" = "#CCCCCC", "RBP" = "#A10702", "Selected" = "#008057")) +
           theme_charm() + theme(legend.position = "none") +
           labs(title = paste0("Volcano Plot: ", rbp_sel, " KD"), x = "dPSI (shRNA - CTRL)", y = "PDiff")
@@ -2278,7 +2301,7 @@ server <- function(input, output, session) {
         charm_obj, event_id,
         extra_subtitle = if (show_rmats) paste0("rMATS ID: ", rmats_label(event_id, RMATS_MAP)) else NULL,
         extra_caption  = cap)
-      dl_store$event_dpsi(p)
+      dl_store$event_dpsi(p + ggplot2::labs(caption = NULL))   # download: no "top/bottom 10" / rMATS note
       p
     })
   })
@@ -2531,14 +2554,11 @@ server <- function(input, output, session) {
                 other_rbps = if (!is.null(selected_rbps) && length(selected_rbps) > 1) selected_rbps else NULL,
                 ref_key    = corr_key(if (mode == "expr") "expr" else "gsea", ds_name)
               )
-              dyn_dl_store[[plotname]] <- heat_res$heatmap
+              corr_store_plots(plotname, heat_res)
               heat_res$heatmap   # ✅ FIXED
             })
             plot_ui <- plotOutput(plotname, height = corr_plot_height(corr_key(if (mode == "expr") "expr" else "gsea", ds_name)))
-            dl_id <- paste0("dl_", plotname)
-            output[[dl_id]] <- make_dyn_dl_handler(plotname, paste0("expression_discovery_", plotname))
-            dl_ui <- downloadButton(dl_id, "↓ Download plot",
-                                    class = "btn btn-sm btn-default", style = "margin-top:5px;")
+            dl_ui <- corr_dl_buttons(plotname, paste0("expression_discovery_", plotname), corr_key(if (mode == "expr") "expr" else "gsea", ds_name))
           }
 
           # Return UI element for each dataset
@@ -2777,14 +2797,11 @@ server <- function(input, output, session) {
                 other_rbps = if (!is.null(selected_rbps) && length(selected_rbps) > 1) selected_rbps else NULL,
                 ref_key = corr_key("splice", ds_name)
               )
-              dyn_dl_store[[plotname]] <- heat_res$heatmap
+              corr_store_plots(plotname, heat_res)
               heat_res$heatmap  # <-- make sure to return $heatmap, not $plot
             })
             plot_ui <- plotOutput(plotname, height = corr_plot_height(corr_key("splice", ds_name)))
-            dl_id <- paste0("dl_", plotname)
-            output[[dl_id]] <- make_dyn_dl_handler(plotname, paste0("splicing_discovery_", plotname))
-            dl_ui <- downloadButton(dl_id, "↓ Download plot",
-                                    class = "btn btn-sm btn-default", style = "margin-top:5px;")
+            dl_ui <- corr_dl_buttons(plotname, paste0("splicing_discovery_", plotname), corr_key("splice", ds_name))
           }
 
           column(
@@ -3490,6 +3507,7 @@ server <- function(input, output, session) {
         lapply(names(datasets), function(ds_name) {
           # See the "userfile_plot_" block above for why this is sanitized.
           plotname <- paste0("similar_plot_", gsub("[^A-Za-z0-9_]+", "_", ds_name))
+          dl_ui <- NULL
           
           if (!is.null(selected_rbps) && length(selected_rbps) == 1) {
             output[[plotname]] <- renderHighchart({
@@ -3507,17 +3525,20 @@ server <- function(input, output, session) {
                 other_rbps = if(!is.null(selected_rbps) && length(selected_rbps) > 1) selected_rbps else NULL,
                 ref_key = corr_key(if (mode == "expr") "expr" else "gsea", ds_name)
               )
-              # always return ggplot object
+              # always return ggplot object (kept for the download button)
+              corr_store_plots(plotname, heat_res)
               heat_res$heatmap
             })
             plot_ui <- plotOutput(plotname, height = corr_plot_height(corr_key(if (mode == "expr") "expr" else "gsea", ds_name)))
+            dl_ui <- corr_dl_buttons(plotname, paste0(if (mode == "expr") "expression" else "gsea", "_similar_rbps_", plotname), corr_key(if (mode == "expr") "expr" else "gsea", ds_name))
           }
           
           # Return the column for renderUI
           column(
             width = 12,
             tags$h4(ds_name, style = "text-align:center;"),
-            shinycssloaders::withSpinner(plot_ui)
+            shinycssloaders::withSpinner(plot_ui),
+            dl_ui
           )
         }) %>% tagList()  # <-- flatten the list of columns
       )
@@ -3604,7 +3625,7 @@ server <- function(input, output, session) {
     # ---- Helper to render volcano ----
     render_volcano <- function(tbl) {
       p <- ggplot(tbl, aes(x = dPSI, y = Pdiff, key = Event.ID, color = highlight)) +
-        geom_point(alpha = 0.7) +
+        geom_point(alpha = 0.7, size = 1) +
         scale_color_manual(values = c("None"="#CCCCCC","RBP"="#A10702","Selected"="#008057")) +
         theme_charm() +
         theme(legend.position = "none") +
@@ -3723,6 +3744,7 @@ server <- function(input, output, session) {
           plotname <- paste0("similar_splice_plot_",
                              if (is_scatter) "scatter_" else "bar_",
                              gsub("[^A-Za-z0-9_]+", "_", ds_name))
+          dl_ui <- NULL
 
           if (is_scatter) {
             output[[plotname]] <- renderHighchart({
@@ -3760,15 +3782,18 @@ server <- function(input, output, session) {
                 other_rbps = if (!is.null(selected_rbps) && length(selected_rbps) > 1) selected_rbps else NULL,
                 ref_key = corr_key("splice", ds_name)
               )
+              corr_store_plots(plotname, heat_res)   # kept for the download button
               heat_res$heatmap
             })
             plot_ui <- plotOutput(plotname, height = corr_plot_height(corr_key("splice", ds_name)))
+            dl_ui <- corr_dl_buttons(plotname, paste0("splicing_similar_rbps_", plotname), corr_key("splice", ds_name))
           }
           
           column(
             width = 12,
             tags$h4(ds_name, style = "text-align:center;"),
-            shinycssloaders::withSpinner(plot_ui)
+            shinycssloaders::withSpinner(plot_ui),
+            dl_ui
           )
         }) %>% tagList()  # flatten
       )
@@ -4800,16 +4825,14 @@ server <- function(input, output, session) {
                  shinycssloaders::withSpinner(
                    plotOutput("binding_sim_plot_both_inc", height = bind_plot_height()), type = 6),
                  div(style = "text-align:center; margin-top:5px;",
-                     downloadButton("dl_binding_sim_plot_both_inc", "↓ Download plot",
-                                    class = "btn btn-sm btn-default"))
+                     tagList(downloadButton("dl_binding_sim_plot_both_inc_bar", "\u2193 Download bar plot", class = "btn btn-sm btn-default", style = "margin-right:6px;"), downloadButton("dl_binding_sim_plot_both_inc_density", "\u2193 Download density plot", class = "btn btn-sm btn-default")))
           ),
           column(6,
                  tags$h5("Both Cells — Decreased Events", style = "text-align:center;"),
                  shinycssloaders::withSpinner(
                    plotOutput("binding_sim_plot_both_dec", height = bind_plot_height()), type = 6),
                  div(style = "text-align:center; margin-top:5px;",
-                     downloadButton("dl_binding_sim_plot_both_dec", "↓ Download plot",
-                                    class = "btn btn-sm btn-default"))
+                     tagList(downloadButton("dl_binding_sim_plot_both_dec_bar", "\u2193 Download bar plot", class = "btn btn-sm btn-default", style = "margin-right:6px;"), downloadButton("dl_binding_sim_plot_both_dec_density", "\u2193 Download density plot", class = "btn btn-sm btn-default")))
           )
         ),
         
@@ -4822,16 +4845,14 @@ server <- function(input, output, session) {
                  shinycssloaders::withSpinner(
                    plotOutput("binding_sim_plot_K562_inc", height = bind_plot_height()), type = 6),
                  div(style = "text-align:center; margin-top:5px;",
-                     downloadButton("dl_binding_sim_plot_K562_inc", "↓ Download plot",
-                                    class = "btn btn-sm btn-default"))
+                     tagList(downloadButton("dl_binding_sim_plot_K562_inc_bar", "\u2193 Download bar plot", class = "btn btn-sm btn-default", style = "margin-right:6px;"), downloadButton("dl_binding_sim_plot_K562_inc_density", "\u2193 Download density plot", class = "btn btn-sm btn-default")))
           ),
           column(6,
                  tags$h5("K562 — Decreased Events", style = "text-align:center;"),
                  shinycssloaders::withSpinner(
                    plotOutput("binding_sim_plot_K562_dec", height = bind_plot_height()), type = 6),
                  div(style = "text-align:center; margin-top:5px;",
-                     downloadButton("dl_binding_sim_plot_K562_dec", "↓ Download plot",
-                                    class = "btn btn-sm btn-default"))
+                     tagList(downloadButton("dl_binding_sim_plot_K562_dec_bar", "\u2193 Download bar plot", class = "btn btn-sm btn-default", style = "margin-right:6px;"), downloadButton("dl_binding_sim_plot_K562_dec_density", "\u2193 Download density plot", class = "btn btn-sm btn-default")))
           )
         ),
         
@@ -4844,16 +4865,14 @@ server <- function(input, output, session) {
                  shinycssloaders::withSpinner(
                    plotOutput("binding_sim_plot_HEPG2_inc", height = bind_plot_height()), type = 6),
                  div(style = "text-align:center; margin-top:5px;",
-                     downloadButton("dl_binding_sim_plot_HEPG2_inc", "↓ Download plot",
-                                    class = "btn btn-sm btn-default"))
+                     tagList(downloadButton("dl_binding_sim_plot_HEPG2_inc_bar", "\u2193 Download bar plot", class = "btn btn-sm btn-default", style = "margin-right:6px;"), downloadButton("dl_binding_sim_plot_HEPG2_inc_density", "\u2193 Download density plot", class = "btn btn-sm btn-default")))
           ),
           column(6,
                  tags$h5("HEPG2 — Decreased Events", style = "text-align:center;"),
                  shinycssloaders::withSpinner(
                    plotOutput("binding_sim_plot_HEPG2_dec", height = bind_plot_height()), type = 6),
                  div(style = "text-align:center; margin-top:5px;",
-                     downloadButton("dl_binding_sim_plot_HEPG2_dec", "↓ Download plot",
-                                    class = "btn btn-sm btn-default"))
+                     tagList(downloadButton("dl_binding_sim_plot_HEPG2_dec_bar", "\u2193 Download bar plot", class = "btn btn-sm btn-default", style = "margin-right:6px;"), downloadButton("dl_binding_sim_plot_HEPG2_dec_density", "\u2193 Download density plot", class = "btn btn-sm btn-default")))
           )
         ),
         bind_combined_ui("HEPG2", "HEPG2")
@@ -4888,14 +4907,20 @@ server <- function(input, output, session) {
               ref_key       = bind_key(ev_prefix, ds_local, dir_local),
               zoom          = TRUE
             )
-            dyn_dl_store[[plot_id]] <- res$heatmap
+            corr_store_plots(plot_id, res)
             res$heatmap
           })
 
-          dl_id <- paste0("dl_", plot_id)
-          output[[dl_id]] <- make_dyn_dl_handler(
-            plot_id,
-            paste0("binding_similar_profile_", ds_key, "_", dir_local)
+          # bar plot and density plot are downloaded as two independent images
+          output[[paste0("dl_", plot_id, "_bar")]] <- make_dyn_dl_handler(
+            paste0(plot_id, "_bar"),
+            paste0("binding_similar_profile_", ds_key, "_", dir_local, "_barplot"),
+            width = 8, height = 6
+          )
+          output[[paste0("dl_", plot_id, "_density")]] <- make_dyn_dl_handler(
+            paste0(plot_id, "_density"),
+            paste0("binding_similar_profile_", ds_key, "_", dir_local, "_density"),
+            width = 8, height = 4
           )
         })
       }
@@ -4923,7 +4948,8 @@ server <- function(input, output, session) {
             p
           })
           output[[paste0("dl_", plot_id)]] <- make_dyn_dl_handler(
-            plot_id, paste0("binding_similar_profile_", ds_key, "_together")
+            plot_id, paste0("binding_similar_profile_", ds_key, "_together"),
+            width = 16, height = 4
           )
         })
       }
