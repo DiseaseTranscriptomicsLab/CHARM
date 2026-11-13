@@ -79,22 +79,21 @@
       <h2 class="sub" id="home-tab">The Home Tab</h2>
       <p class="purpose"><b>Purpose:</b> Orient yourself and jump straight to the module you need.</p>
       <figure class="screenshot">
-        <!-- ORIGINAL (with Network): <img src="assets/screenshots/charm-home-screen.png" alt="CHARM Home tab, showing the logo and the three navigation cards: Explore, Discovery, and Network"> -->
-        <img src="assets/screenshots/charm-home-screen.png" alt="CHARM Home tab, showing the logo and the two navigation cards: Explore and Discovery">
-        <!-- ORIGINAL (with Network): <figcaption>The CHARM Home tab, with its three navigation cards: Explore, Discovery, and Network.</figcaption> -->
-        <figcaption>The CHARM Home tab, with its two navigation cards: Explore and Discovery.</figcaption>
+        <img src="assets/screenshots/charm-home-screen.png" alt="CHARM Home tab, showing the logo, the three module cards (Binding, Splicing, Expression) and the Explore and Discovery modes">
+        <figcaption>The CHARM Home tab: three module cards (Binding, Splicing, Expression), followed by the two usage modes, Explore and Discovery.</figcaption>
       </figure>
-      <!-- ORIGINAL (with Network): <p>The Home tab greets you with the CHARM logo and three clickable cards:</p> -->
-      <p>The Home tab greets you with the CHARM logo and two clickable cards:</p>
+      <p>The Home tab greets you with the CHARM logo, a short introduction to what CHARM does, and three large, clickable <strong>module</strong> cards, one for each layer of evidence:</p>
       <ul>
-        <li><strong>Explore</strong> — takes you to the Expression tab in Explore mode, to investigate how a known RBP affects expression, using ENCODE's gene-silencing series.</li>
-        <li><strong>Discover</strong> — takes you to the Expression tab in Discovery mode, to upload your own expression data and discover which RBPs are most likely altered in your biological system.</li>
-        <!-- DISABLED: Network module is commented out in this version. Original content kept below for a future redesign.
-        <li><strong>Network</strong> — takes you directly to the Network tab, to explore multi-omic RBP similarity via an integrated network combining expression, splicing, and binding layers.</li>
-        -->
+        <li><strong>Binding</strong> — takes you to the Binding tab, to see where an RBP binds around splicing events and what happens to that binding when an RBP is knocked down (eCLIP-based RNA splicing maps).</li>
+        <li><strong>Splicing</strong> — takes you to the Splicing tab, to see which splicing events (exon skipping and intron retention) change after an RBP knockdown.</li>
+        <li><strong>Expression</strong> — takes you to the Expression tab, to see which genes and Hallmark gene sets change after an RBP knockdown.</li>
       </ul>
-      <!-- ORIGINAL (with Network): <p>You can also reach any tab directly at any time using the tab bar at the top of the page (Home, Expression, Splicing, Binding, Network), and from each tab switch from Explore (default) to Discover modes.</p> -->
-      <p>You can also reach any tab directly at any time using the tab bar at the top of the page (Home, Expression, Splicing, Binding), and from each tab switch from Explore (default) to Discover modes.</p>
+      <p>Below the module cards, <strong>Explore</strong> and <strong>Discovery</strong> are shown as the two ways of using every module (they are sub-modes of each tab, not separate tabs):</p>
+      <ul>
+        <li><strong>Explore</strong> — investigate how a known RBP affects expression, splicing, and binding, using ENCODE's gene-silencing series and eCLIP data. This is the default mode of every tab. Clicking its card opens the Expression tab in Explore mode.</li>
+        <li><strong>Discovery</strong> — upload your own expression, splicing, or binding data to discover which RBPs are most likely altered in your biological system. Clicking its card opens the Expression tab in Discovery mode.</li>
+      </ul>
+      <p>You can also reach any tab directly at any time using the tab bar at the top of the page (Home, Expression, Splicing, Binding), and switch between Explore (default) and Discovery with “Select mode” in the sidebar of each tab.</p>
 
       <h2 class="sub" id="glossary">Glossary of Key Terms</h2>
       <p>CHARM's interface uses a small set of recurring terms drawn from RNA biology and statistics. This glossary is meant as a quick reference list.</p>
@@ -133,6 +132,8 @@
         <li>Search by Hallmark Gene Set (reverse search): type a Hallmark gene set name to see which RBP knockdown most shifts that gene set's enrichment (NES).</li>
         <li>Similar RBPs: set “Select option” to Similar RBPs, choose whether to correlate by gene expression or by GSEA enrichment. You can chose to obtain a scatter of your selected RBP with another RBP of interest. Alternatively, you can obtain a bar plot of selected RBPs, or restrict to the top RBPs whose knockdowns lead to most similar or different effect, or top overall (module). All of these correlations compare t-statistics of differential expression, or alternatively, if the GSEA option is selected, NES.</li>
       </ol>
+      <div class="box good"><b class="tag">Good to know:</b> <b>Gene-set window (step 3).</b> Click a bar of the GSEA barplot (or select a row of the GSEA table) to open a window for that gene set. The top panel shows the NES of that gene set across <i>all</i> RBP knockdowns, with your RBP marked and its percentile; the bottom panel shows the NES obtained for random gene sets of the same size and the resulting false-positive rate (FPR). Both backgrounds are precomputed and are the same for every RBP.</div>
+      <div class="box good"><b class="tag">Good to know:</b> <b>Significance of similarities (step 6).</b> Every bar is labelled with its correlation, its <b>percentile</b> among all RBP pairs (e.g. “top 0.8%”) and a <b>permutation p-value</b> (the false-positive rate, FPR). Below the bars, a density plot shows the observed distribution of all RBP-pair correlations, the permutation background, and one vertical line per displayed RBP. See “Percentile and permutation background” in Section 4 for how to read them.</div>
       <figure class="screenshot">
         <img src="assets/screenshots/charm-expression-explore.png" alt="CHARM Expression tab in Explore mode, showing the sidebar search controls and the resulting knockdown-efficacy violin plots, differential expression volcano plot, and results table">
         <figcaption>The Expression tab in Explore mode: search by RBP, gene, or Hallmark gene set to see knockdown-efficacy, differential expression, and GSEA results.</figcaption>
@@ -147,7 +148,8 @@
       <ol class="steps">
         <li>Switch “Select mode” to Discovery.</li>
         <li>Upload a .txt, .csv, or .tsv file with a header row: the first column must contain HGNC gene symbols, and the second column the corresponding differential-expression t-statistics (<i>e.g.</i> from a limma–voom analysis of your own data). Alternatively, any "differential expression metric" should suffice, but bear in mind these will always be compared with t-statistics. Once the file is accepted, CHARM runs a live GSEA on your ranked metric and shows how your data's expression signature and pathway enrichment correlate with each reference RBP knockdown, letting you ask “which RBP knockdown most resembles my experiment?” </li>
-        <li>Users can then choose to compare their uploaded data with expression (t-statistics) or GSEA (NES). Like in the Similar RBPs sub-mode, users can chose to obtain a Scatter, or a bar plot, and the top N RBPs that (anti)-correlate with their data.</li>
+        <li><b>Load example data:</b> not ready to upload a file? Click “Load example data” under the upload box to load a stress-response (U2-OS) differential-expression table. It is processed exactly like an uploaded file.</li>
+        <li>Users can then choose to compare their uploaded data with expression (t-statistics) or GSEA (NES). Like in the Similar RBPs sub-mode, users can chose to obtain a Scatter, or a bar plot, and the top N RBPs that (anti)-correlate with their data. Percentile and permutation p-values (FPR) are shown here too, relative to the same backgrounds.</li>
       </ol>
       <figure class="screenshot">
         <img src="assets/screenshots/charm-expression-discovery.png" alt="CHARM Expression tab in Discovery mode, showing an uploaded differential expression file, the detected gene/t-statistic table, and the correlation-type options">
@@ -161,10 +163,11 @@
       <p class="navlabel">Navigation</p>
       <ol class="steps">
         <li>Leave “Select mode” on Explore, and choose a dataset scope (Both Cells, K562, HEPG2, or Similar RBPs).</li>
-        <li>Search by RBP: type an RBP symbol and click Search to see dPSI violin plots (exon skipping and intron retention, separately) and a differential splicing analysis (DSA) volcano plot with its results table.</li>
-        <li>Search by Event ID: enter a <a href="https://vastdb.crg.eu/wiki/Main_Page" target="_blank" rel="noopener">VastDB</a> event identifier to see, across every profiled RBP knockdown, which knockdown most changes that specific event's inclusion.</li>
-        <li>Similar RBPs: correlate a chosen RBP's splicing signature against all others to find RBPs with similar splicing footprints.</li>
+        <li>Search by RBP: type an RBP symbol and click Search to see dPSI violin plots (exon skipping and intron retention, separately) and a differential splicing analysis (DSA) volcano plot with its results table. The table has an <b>rMATS ID</b> column and hovering over a point in the volcano plot also shows the rMATS ID(s) of the event (see the note below).</li>
+        <li>Search by Event ID: enter a <a href="https://vastdb.crg.eu/wiki/Main_Page" target="_blank" rel="noopener">VastDB</a> event identifier to see, across every profiled RBP knockdown, which knockdown most changes that specific event's inclusion. You can also type an <b>rMATS event ID</b> (for example <code>SE:37285</code> for exon skipping or <code>RI:1234</code> for intron retention): CHARM opens the VAST-TOOLS event it is anchored on and indicates this in the plot subtitle.</li>
+        <li>Similar RBPs: correlate a chosen RBP's splicing signature against all others to find RBPs with similar splicing footprints. As in Expression, each correlation is shown with its percentile and permutation p-value (FPR), together with the density plot of the backgrounds.</li>
       </ol>
+      <div class="box good"><b class="tag">About rMATS IDs:</b> CHARM quantifies splicing with VAST-TOOLS, so every event is identified by a VastDB ID. The rMATS IDs shown (exon skipping and intron retention only) are <b>not measured</b>: they were assigned by matching splice-site coordinates (hg38, &plusmn;1 nt) between VastDB and the rMATS annotation. The match is based on the alternative exon (or intron); rMATS may pair it with different neighbouring exons. One VAST-TOOLS event can match several rMATS events and some have none (“no rMATS match”). dPSI values and p-values always come from VAST-TOOLS.</div>
       <figure class="screenshot">
         <img src="assets/screenshots/charm-splicing-explore.png" alt="CHARM Splicing tab in Explore mode, showing dPSI violin plots for exon skipping and intron retention, a differential splicing volcano plot, and the knockdown-efficacy plot">
         <figcaption>The Splicing tab in Explore mode: search by RBP or event ID to see dPSI violin plots, the differential splicing volcano plot, and knockdown efficacy.</figcaption>
@@ -176,6 +179,7 @@
         <li>Switch “Select mode” to Discovery.</li>
         <li>For ease of use, we recommend uploading a differential-splicing results table exported directly from the <a href="https://compbio.imm.medicina.ulisboa.pt/app/betAS" target="_blank" rel="noopener">betAS app</a>. Alternatively, please upload a table of <a href="https://vastdb.crg.eu/wiki/Main_Page" target="_blank" rel="noopener">VastDB</a> events with their respective dPSI values.</li>
         <li>CHARM then shows an initial plot of your data and lets you compare it against the reference resource's RBP knockdowns to identify which most closely resembles your splicing signature; or how a certain RBP's knockdown correlates with your splicing data.</li>
+        <li><b>Load example data:</b> click “Load example data” under the upload box to try the module with an SF3B1-knockdown splicing table. It behaves exactly like an uploaded file.</li>
       </ol>
       <figure class="screenshot">
         <img src="assets/screenshots/charm-splicing-discovery.png" alt="CHARM Splicing tab in Discovery mode, showing an uploaded betAS/VastDB splicing table, its initial dPSI violin plot, and a correlation scatter against a chosen RBP knockdown">
@@ -204,6 +208,7 @@
 
       <h3 class="subsub">Similar Profiles</h3>
       <p>Set “Select option” to Similar Profiles to rank every RBP-knockdown / target-RBP combination in CHARM by how closely its binding profile's shape matches a chosen query pair (written as <i>shRNA RBP__Target RBP</i>), separately for the Increased-event and Decreased-event tracks. Similarity here is the Pearson correlation between the two profiles' positional density curves: close to +1 means the profiles rise and fall together across the map (the same shape), close to &minus;1 means they are close to mirror images of one another, and near 0 means unrelated. You can restrict the comparison to specific profiles, or ask for the top N most similar and/or most dissimilar instead of the full ranking.</p>
+      <div class="box good"><b class="tag">Good to know:</b> <b>Where does the profile fall?</b> Under each bar plot, a density plot places your query among reference distributions: (1) all profile pairs, (2) profiles of the same eCLIP target under different knockdowns, and (3) the target&rsquo;s own profile (<i>Target__Target</i>) against the other profiles of that target. The vertical line is the correlation of your query with that self profile, and its percentile is given in the legend. A third plot per cell line pools the Increased and Decreased profiles together (every pair of profiles counts, including Increased vs. Decreased) and draws one line per direction. No permutation p-value (FPR) is given for binding: neighbouring positions along a profile are not independent, so a shuffling background would be misleading. Use the percentiles as a guide to how unusual the similarity is.</div>
       <figure class="screenshot">
         <img src="assets/screenshots/charm-binding-similar-rbps.png" alt="CHARM Binding tab, Similar Profiles sub-mode, showing bar plots ranking RBP-knockdown/target-RBP profile pairs by Pearson correlation with a chosen query profile, for Increased and Decreased events across cell lines">
         <figcaption>The Similar Profiles sub-mode: rank other RBP-knockdown/target-RBP binding profiles by Pearson correlation with a chosen query profile.</figcaption>
@@ -215,6 +220,7 @@
         <li>Switch “Select mode” to Discovery.</li>
         <li>For ease of use we suggest uploading a differential-splicing table obtained directly from betAS, exactly as in the Splicing tab. Alternatively, please upload a table of <a href="https://vastdb.crg.eu/wiki/Main_Page" target="_blank" rel="noopener">VastDB</a> events with their respective dPSI values. </li>
         <li>Choose a target RBP (or “All” for a heatmap overview), a dPSI threshold, and a metric, exactly as in Explore mode. CHARM builds RNA binding maps from your uploaded data's Increased/Decreased/Maintained categories, letting you identify which RBPs' binding patterns are most altered in your own perturbation.</li>
+        <li><b>Load example data:</b> click “Load example data” under the upload box to try the module with the AllwSG example table. It behaves exactly like an uploaded file.</li>
       </ol>
       <figure class="screenshot">
         <img src="assets/screenshots/charm-binding-discovery.png" alt="CHARM Binding tab in Discovery mode, showing an uploaded splicing table and heatmaps of binding density for all RBPs across Decreased and Increased events">
@@ -264,6 +270,28 @@
       <p class="interp">How to interpret this:</p>
       <p>A peak in the bottom track at a position where the RBP is also enriched in the top track (for the matching colour) is the strongest evidence that the RBP directly regulates splicing at that position.</p>
 
+      
+      <h2 class="sub">Percentile and permutation background (Similar RBPs and Discovery)</h2>
+      <p>Whenever CHARM correlates two knockdown profiles (or your data with a knockdown), it reports two numbers next to the correlation, and draws them in the density plot below the bars:</p>
+      <ul>
+        <li><strong>Percentile</strong> (e.g. “top 0.8%” or “bottom 2%”): the share of all RBP-pair correlations in the resource that are at least as extreme, in the same direction. It answers “how unusual is this similarity compared with what other RBP pairs show?”.</li>
+        <li><strong>Permutation p-value (false-positive rate, FPR):</strong> the share of correlations obtained from a shuffled background that are at least as extreme, in the same direction. It answers “how often would a correlation this large arise by chance?”. For Expression and Splicing, the background is built by shuffling the values of every gene (or event) across the RBPs in which it was measured, then recomputing every RBP-pair correlation. For GSEA, it is built from random gene sets of the same size as each Hallmark set, scored on every RBP&rsquo;s real ranking. When no shuffled value reaches your correlation, the p-value is shown as “&lt; x”, the smallest value the background can resolve.</li>
+        <li><strong>Density plot:</strong> the grey curve is the permutation background, the purple curve is the observed distribution of all RBP pairs, and each vertical line is one displayed correlation (red positive, blue negative). Each curve is scaled to its own peak, so compare positions, not heights.</li>
+      </ul>
+      <p class="interp">How to interpret this:</p>
+      <p>Correlations between knockdown profiles can be <strong>spurious</strong>: two profiles may correlate for reasons that have nothing to do with a shared biological mechanism, such as common control samples, batch or cell-line effects, a general stress or toxicity response, or a handful of very strongly changed genes. The two numbers help you judge this in different ways:</p>
+      <ul>
+        <li><strong>The permutation p-value (FPR)</strong> only tests whether the correlation is larger than what random, unrelated profiles of the same size would give.</li>
+        <li><strong>The percentile</strong> compares the correlation with what other RBP pairs in the resource actually show, including whatever technical structure they share. It is the more demanding reference: a correlation in the top 1% is unusual even among real knockdown pairs. Prefer it when ranking candidates.</li>
+      </ul>
+
+      <h2 class="sub">Gene-set window (Expression, GSEA)</h2>
+      <p>The window opened by clicking a gene set has two panels sharing one x-axis (NES). <strong>Top:</strong> the density of the NES of that gene set across all RBP knockdowns in the chosen cell line, with small ticks for individual RBPs, the selected RBP marked with a vertical line, and its percentile in the subtitle. <strong>Bottom:</strong> the density of NES obtained for random gene sets of the same size scored on all RBP rankings, with the selected RBP&rsquo;s NES marked and the FPR in the title: the share of random gene sets with an NES at least as extreme, in the same direction. The random background is the same for every RBP, so it is computed once and stored.</p>
+
+      <h2 class="sub">Binding profile backgrounds</h2>
+      <p>For Binding &rarr; Similar Profiles, the density plot compares your query with all profile pairs, with profiles of the same eCLIP target, and with the target&rsquo;s own profile. Only percentiles are given, not a permutation p-value (see Section 3.3).</p>
+      
+
       <!-- DISABLED: Network module is commented out in this version. Original content kept below for a future redesign.
       <h2 class="sub">Network ordination plots</h2>
       <p>Each point is one RBP; proximity approximates similarity across the selected layers (1 minus a weighted correlation of expression, splicing, and/or binding signatures). MDS and PCA preserve global distance relationships and are easiest to interpret quantitatively (percentage of variance explained is shown for both); t-SNE better separates tight local clusters but distorts global distances (far-apart point's distances is more distorted, and thus one shouldn't compare them); the Dendrogram groups RBPs hierarchically and is useful for reading off discrete clusters.</p>
@@ -310,6 +338,16 @@
         <p>As a hypothesis, not a conclusion. Every relationship CHARM surfaces, whether an expression-independent functional change or a candidate indirect regulatory interaction, is derived from correlative binding and splicing data. A result that agrees with your own experiment is encouraging but still requires case-by-case biological interpretation, and the absence of a correlation does not, by itself, rule out a real relationship. Use CHARM to prioritise what to test next, not as a final answer.</p>
       </div>
 
+      <div class="faq-item" id="faq-percentile">
+        <h3>What do “top x%” and the p-value next to each bar mean?</h3>
+        <p>“Top x%” (or “bottom x%” for negative correlations) is the percentile of the correlation among all RBP-pair correlations in the resource. The p-value is the permutation-based false-positive rate (FPR): the share of correlations from a shuffled background that are at least as extreme. See “Percentile and permutation background” in Section 4.</p>
+      </div>
+
+      <div class="faq-item" id="faq-no-bind-fpr">
+        <h3>Why is there no p-value for Binding &rarr; Similar Profiles?</h3>
+        <p>Binding profiles are continuous curves over hundreds of neighbouring positions that are strongly dependent on each other. Shuffling values would give an unrealistically narrow background, so CHARM shows percentiles against the real distributions (all pairs, same target, self profile) instead.</p>
+      </div>
+
       <div class="faq-item" id="faq-pearson-vs-spearman">
         <h3>Why does the Binding tab's Similar Profiles use Pearson correlation, when Expression and Splicing use Spearman?</h3>
         <p>Because the two comparisons are fundamentally different kinds of data. Expression's and Splicing's Similar RBPs compare t-statistics or NES values across a set of genes or gene sets, an unordered collection that can include extreme outliers, where only the relative ranking between RBP knockdowns is meant to matter; Spearman correlation is the more robust choice there. Binding's Similar Profiles instead compares two continuous, smoothed binding-density curves across hundreds of ordered genomic positions, where the biologically meaningful question is whether the two curves rise and fall together, position by position, which is a genuinely linear notion of shape that Pearson correlation captures directly.</p>
@@ -345,6 +383,7 @@
         <h3>I'd rather not use VAST-TOOLS. Can I use rMATS or MAJIQ instead?</h3>
         <ul>
           <li><strong>rMATS:</strong> yes. rMATS reports events in a fixed format that turned out to be structurally compatible with VastDB's event-based approach, so a corresponding rMATS-compatible splicing genome already exists &mdash; see the <a href="eclipse_tutorial.html">eCLIPSE Local Pipeline tutorial</a>. This route runs through the local pipeline (for computational users), not through the Shiny app's Discovery-mode upload, which still expects a betAS- or VastDB-formatted dPSI table.</li>
+          <li><strong>Seeing rMATS IDs in the app:</strong> the Splicing tab shows rMATS IDs for exon-skipping and intron-retention events next to the VAST-TOOLS IDs, and you can search an event by its rMATS ID. These IDs are assigned by matching splice-site coordinates (&plusmn;1 nt), not measured, and dPSI and statistics are always from VAST-TOOLS.</li>
           <li><strong>MAJIQ:</strong> not currently. MAJIQ's event definitions and coordinate system differ enough from VastDB's that they aren't structurally compatible the way rMATS's are, so no MAJIQ-CHARM-compatible splicing genome exists yet.</li>
         </ul>
       </div>
@@ -364,7 +403,7 @@
 
     <footer class="page-footer">
       <p><a class="backtotop" href="#top">↑ Back to top</a></p>
-      <p>CHARM User Tutorial &middot; v0.9.3 &middot; <a href="https://github.com/DiseaseTranscriptomicsLab/CHARM" target="_blank" rel="noopener">Source &amp; data on GitHub</a> &middot; <a href="https://doi.org/10.5281/zenodo.21724194" target="_blank" rel="noopener">Data on Zenodo</a> &middot; <a href="eclipse_tutorial.html">eCLIPSE Local Pipeline Tutorial →</a></p>
+      <p>CHARM User Tutorial &middot; v0.9.4 &middot; <a href="https://github.com/DiseaseTranscriptomicsLab/CHARM" target="_blank" rel="noopener">Source &amp; data on GitHub</a> &middot; <a href="https://doi.org/10.5281/zenodo.21724194" target="_blank" rel="noopener">Data on Zenodo</a> &middot; <a href="eclipse_tutorial.html">eCLIPSE Local Pipeline Tutorial →</a></p>
     </footer>
   </main>
 
