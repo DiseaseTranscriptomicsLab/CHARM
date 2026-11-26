@@ -1840,7 +1840,7 @@ server <- function(input, output, session) {
     showModal(modalDialog(
       title = tagList(tags$b(pathway), tags$span(paste0("  \u2014  ", rbp, " KD, ", ds), style = "color:#666; font-size:14px;")),
       size = "l", easyClose = TRUE,
-      plotOutput("gsea_pw_plot", height = "640px"),
+      plotOutput("gsea_pw_plot", height = "450px"),
       footer = tagList(downloadButton("dl_gsea_pw", "\u2193 Download plot", class = "btn btn-sm btn-default"),
                        modalButton("Close"))
     ))
@@ -1856,7 +1856,7 @@ server <- function(input, output, session) {
     },
     content = function(file) {
       x <- gsea_pw_current(); req(x)
-      ggsave(file, gsea_pw_plot(x$ctx, x$rbp, x$ds), width = 8, height = 9, dpi = 300, bg = "white")
+      ggsave(file, gsea_pw_plot(x$ctx, x$rbp, x$ds), width = 8, height = 5, dpi = 300, bg = "white")
     }
   )
   observeEvent(input$gsea_plot_click, {

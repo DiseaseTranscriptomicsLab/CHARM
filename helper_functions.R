@@ -1324,8 +1324,8 @@ plot_gene_t_barplot <- function(CharmObj, gene,
       # actually renders as the plot's vertical (Y) axis title.
       x = "RBP KD",
       y = "Moderated t-statistic",
-      title = paste0("Top/bottom RBPs by t-statistic for ", gene),
-      subtitle = paste0("Gene: ", gene),
+      title = bquote(bold("Top/bottom RBPs by t-statistic for ") * bolditalic(.(gene))),   # gene names in italics
+      subtitle = bquote("Gene: " * italic(.(gene))),
       caption = paste0("Only top/bottom 10 shown")
     ) +
     theme_charm() +

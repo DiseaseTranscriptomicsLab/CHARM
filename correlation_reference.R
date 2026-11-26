@@ -544,6 +544,8 @@ gsea_pw_context <- function(key, pathway, nes, ref = get0("CORR_REF", inherits =
     if (!is.na(i)) {
       out$obs    <- stats::setNames(as.numeric(g$obs[i, ]), colnames(g$obs))
       out$size   <- g$size[i]
+      out$B      <- ref[[key]]$B          # random gene sets drawn per hallmark set
+      out$n_rank <- ref[[key]]$n_rbps     # RBP rankings each random set is scored on
       cnt        <- g$null_counts[i, ]
       nb         <- length(cnt)
       out$null_n <- g$null_n[i]
@@ -570,54 +572,63 @@ gsea_pw_context <- function(key, pathway, nes, ref = get0("CORR_REF", inherits =
   out
 }
 
-gsea_pw_plot <- function(ctx, rbp, dataset = NULL, up_color = "#BA3B46", down_color = "#53A2BE") {
+gsea_pw_plot <- function(ctx, rbp, dataset = NULL, up_color = "#BA3B46", down_color = "#53A2BE",
+                         obs_color = "#7272AB", null_color = "#8C8C8C") {
+  # One panel: observed NES of this gene set across all RBP knockdowns (purple) and NES of size-matched random
+  # gene sets (grey; same colours as the similar-RBP density plots). Each curve is scaled to a maximum of 1 so
+  # both stay readable (the random-set curve is much narrower). Definitions are in the figure legend.
   line_col <- if (ctx$nes >= 0) up_color else down_color
   pw_label <- gsub("_", " ", ctx$id)
-  xr <- range(c(ctx$obs, ctx$nes, if (!is.null(ctx$null)) ctx$null$x[ctx$null$w > 1e-4]), na.rm = TRUE)
+  has_obs  <- length(ctx$obs) >= 3
+  has_null <- !is.null(ctx$null)
+  if (!has_obs && !has_null)
+    return(ggplot2::ggplot() + ggplot2::annotate("text", x = 0, y = 0, label = "No NES values available for this gene set", family = CHARM_FONT) + theme_charm_void())
+  xr <- range(c(ctx$obs, ctx$nes, if (has_null) ctx$null$x[ctx$null$w > 1e-4]), na.rm = TRUE)
   pad <- 0.08 * diff(xr); xlim <- c(xr[1] - pad, xr[2] + pad)
-  vline <- function(lab) list(
-    ggplot2::geom_vline(xintercept = ctx$nes, colour = line_col, linewidth = 0.9),
-    ggplot2::annotate("text", x = ctx$nes, y = Inf, label = lab, colour = line_col, vjust = 1.4,
-                      hjust = if (ctx$nes >= mean(xlim)) 1.08 else -0.08, size = CHARM_GEOM_TEXT, family = CHARM_FONT, fontface = "bold"))
-  base_theme <- list(ggplot2::coord_cartesian(xlim = xlim), theme_charm())
-  wrap <- function(x, w = 70) paste(strwrap(x, w), collapse = "\n")
+  fmt3 <- function(x) format(signif(x, 3), scientific = FALSE, trim = TRUE, drop0trailing = TRUE)
 
-  # (1) observed background: this gene set's NES across all RBPs
-  if (length(ctx$obs) > 0) {
-    da <- if (length(ctx$obs) >= 3) stats::density(ctx$obs, adjust = 1.2, from = xlim[1], to = xlim[2], n = 512) else NULL
-    pa <- ggplot2::ggplot(if (!is.null(da)) data.frame(x = da$x, y = da$y) else data.frame(x = numeric(), y = numeric()),
-                          ggplot2::aes(x, y)) +
-      ggplot2::geom_area(fill = "grey80", colour = "grey40") +
-      ggplot2::geom_rug(data = data.frame(x = ctx$obs), ggplot2::aes(x = x), inherit.aes = FALSE, colour = "grey45", alpha = 0.6) +
-      vline(sprintf("%s  NES %.2f", rbp, ctx$nes)) + base_theme +
-      ggplot2::labs(title = "Where this RBP falls among all RBPs",
-                    subtitle = wrap(sprintf("NES of %s across %d RBP knockdowns%s  |  %s of all RBPs", pw_label, length(ctx$obs),
-                                       if (!is.null(dataset)) paste0(" (", dataset, ")") else "",
-                                       paste0(if (ctx$nes >= 0) "top " else "bottom ", corr_fmt_pct(ctx$pct)))),
-                    x = NULL, y = "Density") +
-      ggplot2::theme(axis.text.y = ggplot2::element_blank(), axis.ticks.y = ggplot2::element_blank())
-  } else {
-    pa <- ggplot2::ggplot() + ggplot2::annotate("text", x = 0, y = 0, label = "No NES values available for this gene set", family = CHARM_FONT) + theme_charm_void()
+  lab_obs  <- sprintf("RBP KDs (n = %d)", length(ctx$obs))
+  lab_null <- if (has_null) {
+    if (!is.null(ctx$B) && !is.null(ctx$n_rank)) sprintf("Random gene sets (%s sets \u00d7 %s RBP KDs)", ctx$B, ctx$n_rank)
+    else "Random gene sets"
+  } else NULL
+  curves <- list()
+  if (has_obs) {
+    d <- stats::density(ctx$obs, adjust = 1.2, from = xlim[1], to = xlim[2], n = 512)
+    curves$obs <- data.frame(x = d$x, y = d$y / max(d$y), grp = lab_obs)
   }
-
-  # (2) random gene sets of the same size -> false-positive rate
-  if (!is.null(ctx$null)) {
+  if (has_null) {
     d <- stats::density(ctx$null$x, weights = ctx$null$w, bw = 0.12, from = xlim[1], to = xlim[2], n = 512)
-    dd <- data.frame(x = d$x, y = d$y)
-    p_txt <- corr_fmt_p(ctx$fpr, ctx$floor_p)
-    pb <- ggplot2::ggplot(dd, ggplot2::aes(x, y)) +
-      ggplot2::geom_area(fill = "grey80", colour = "grey40") +
-      vline(sprintf("NES %.2f", ctx$nes)) + base_theme +
-      ggplot2::labs(title = sprintf("False-positive rate: FPR %s%s", ifelse(startsWith(p_txt, "<"), "", "= "), p_txt),
-                    subtitle = wrap(sprintf("NES of %s random gene sets of the same size (%s genes) scored on every RBP ranking",
-                                       bind_fmt_n(ctx$null_n), ctx$size)),
-                    caption = wrap("FPR = share of random gene sets with an NES at least as extreme, in the same direction. The random background is identical for every RBP.", 80),
-                    x = "Normalised Enrichment Score (NES)", y = "Density") +
-      ggplot2::theme(axis.text.y = ggplot2::element_blank(), axis.ticks.y = ggplot2::element_blank(),
-                     plot.caption = ggplot2::element_text(hjust = 0))
-  } else {
-    pb <- ggplot2::ggplot() + ggplot2::annotate("text", x = 0, y = 0, family = CHARM_FONT,
-            label = paste(strwrap(paste("Random-signature background unavailable.", if (!is.null(ctx$why)) ctx$why else ""), 60), collapse = "\n")) + theme_charm_void()
+    curves$null <- data.frame(x = d$x, y = d$y / max(d$y), grp = lab_null)
   }
-  ggpubr::ggarrange(pa, pb, ncol = 1, heights = c(1, 1))
+  cd <- do.call(rbind, curves); cd$grp <- factor(cd$grp, levels = c(lab_obs, lab_null))
+
+  stat_lines <- c(rbp, sprintf("NES %.2f", ctx$nes))
+  # percentile among all RBP KDs, using the NES shown in the app for the selected RBP (fgsea is permutation-based,
+  # so the stored value of the same RBP can differ slightly; it is replaced, not counted twice)
+  if (has_obs)  stat_lines <- c(stat_lines, sprintf("Percentile %s",
+                  fmt3(100 * mean(c(ctx$obs[names(ctx$obs) != rbp], ctx$nes) <= ctx$nes))))
+  if (has_null) { p_txt <- corr_fmt_p(ctx$fpr, ctx$floor_p)
+                  stat_lines <- c(stat_lines, sprintf("FPR %s%s", ifelse(startsWith(p_txt, "<"), "", "= "), p_txt)) }
+  right <- ctx$nes >= mean(xlim); nudge <- 0.012 * diff(xlim)
+
+  sub <- paste0(pw_label, if (!is.null(dataset)) paste0(", ", dataset) else "",
+                if (has_null && is.finite(ctx$size)) sprintf("  |  random sets of %s genes", ctx$size) else "")
+  p <- ggplot2::ggplot(cd, ggplot2::aes(x, y)) +
+    ggplot2::geom_area(ggplot2::aes(fill = grp), colour = NA, alpha = 0.55, position = "identity") +
+    ggplot2::scale_fill_manual(values = stats::setNames(c(obs_color, null_color)[seq_along(levels(cd$grp))], levels(cd$grp)), name = NULL) +
+    ggplot2::geom_vline(xintercept = ctx$nes, colour = line_col, linewidth = 0.9) +
+    ggplot2::annotate("text", x = ctx$nes + if (right) -nudge else nudge, y = Inf, label = paste(stat_lines, collapse = "\n"),
+                      colour = line_col, vjust = 1.15, lineheight = 0.95, hjust = if (right) 1 else 0,
+                      size = CHARM_GEOM_TEXT, family = CHARM_FONT, fontface = "bold") +
+    ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0, 0.45))) +
+    ggplot2::coord_cartesian(xlim = xlim) +
+    ggplot2::labs(title = "NES distributions", subtitle = sub,
+                  x = "Normalised Enrichment Score (NES)", y = "Relative density") +
+    theme_charm() +
+    ggplot2::theme(axis.text.y = ggplot2::element_blank(), axis.ticks.y = ggplot2::element_blank(),
+                   legend.position = "bottom")
+  if (has_obs) p <- p + ggplot2::geom_rug(data = data.frame(x = ctx$obs), ggplot2::aes(x = x), inherit.aes = FALSE,
+                                          colour = obs_color, alpha = 0.6)
+  p
 }
