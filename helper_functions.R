@@ -1359,7 +1359,7 @@ plot_hallmark_nes_barplot <- function(CharmObj, geneset,
 
   # Check that we found the geneset somewhere
   if (nrow(NES_data) == 0) {
-    stop(paste0("Geneset '", geneset, "' not found in any RBP GSEA tables."))
+    stop(paste0("Gene set '", geneset, "' not found in any RBP GSEA tables."))
   }
 
   # Add up/down status for coloring
@@ -1386,7 +1386,7 @@ plot_hallmark_nes_barplot <- function(CharmObj, geneset,
       x = "RBP KD",
       y = "Normalised Enrichment Score (NES)",
       title = paste0("Top/bottom RBPs by NES for ", gsub("_", " ", geneset)),
-      subtitle = paste0("Geneset: ", gsub("_", " ", geneset)),
+      subtitle = paste0("Gene set: ", gsub("_", " ", geneset)),
       caption = paste0("Only top/bottom 10 RBPs shown")
     ) +
     theme_charm() +

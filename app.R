@@ -3472,7 +3472,7 @@ server <- function(input, output, session) {
       on.exit(hide_status(), add = TRUE)
       shiny::validate(
         need(geneset %in% unlist(lapply(charm_obj, function(x) x$GSEA$pathway)),
-             paste0("Geneset '", geneset, "' not found in any RBP GSEA tables."))
+             paste0("Gene set '", geneset, "' not found in any RBP GSEA tables."))
       )
       p <- plot_hallmark_nes_barplot(charm_obj, geneset)
       dl_store$expr_hallmark(p)
