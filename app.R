@@ -16,6 +16,44 @@ library(ggpubr)
 library(png)
 library(grid)
 library(base64enc)
+
+# Rounds the DATA itself (not only the display format) so nothing like 0.660000000000006 can reach
+# the browser. Numeric non-integer columns -> signif(x, 3); character columns that hold long decimal
+# numbers are converted first. Whole-number columns are untouched. Downloads use the raw tables.
+sig3_df <- function(df, digits = 3) {
+  if (is.null(df) || !is.data.frame(df) || ncol(df) == 0) return(df)
+  df <- as.data.frame(df, stringsAsFactors = FALSE)
+  for (j in seq_along(df)) {
+    x <- df[[j]]
+    if (is.character(x) || is.factor(x)) {
+      xc <- as.character(x); ok <- !is.na(xc) & nzchar(xc)
+      if (any(ok) && all(grepl("^-?[0-9]*\\.[0-9]{5,}([eE][-+]?[0-9]+)?$", xc[ok]))) x <- suppressWarnings(as.numeric(xc))
+    }
+    if (is.numeric(x) && !is.integer(x) && any(is.finite(x) & x != round(x), na.rm = TRUE)) x <- signif(x, digits)
+    df[[j]] <- x
+  }
+  df
+}
+
+# ---- Table display: 3 significant figures (display only; downloads keep full precision) ----
+# Applies DT::formatSignif to every non-integer numeric column. Whole-number columns
+# (counts, positions, IDs stored as numeric) are left alone so 12345 is never shown as 12300.
+dt_sig3 <- function(dt, df, digits = 3) {
+  if (is.null(df) || !is.data.frame(df)) return(dt)
+  is_p <- grepl("p[._ ]?val|^p$|^pv$|padj|adj[._ ]?p|p[._ ]?adj|fdr|q[._ ]?val|p[._ ]?value", names(df), ignore.case = TRUE) &
+    vapply(df, is.numeric, logical(1))
+  # p-values / adjusted p-values: always scientific (3 sig. figs), sorting stays numeric
+  if (any(is_p)) {
+    sci <- DT::JS(sprintf("function(d, type, row) { if (type === 'display' && d !== null && d !== '' && !isNaN(d)) { return Number(d).toExponential(%d); } return d; }", digits - 1))
+    defs <- lapply(unname(which(is_p)) - 1L, function(i) list(targets = i, render = sci))
+    dt$x$options$columnDefs <- c(dt$x$options$columnDefs, defs)
+  }
+  cols <- names(df)[!is_p & vapply(df, function(x) {
+    is.numeric(x) && !is.integer(x) && any(is.finite(x) & x != round(x), na.rm = TRUE)
+  }, logical(1))]
+  if (length(cols)) DT::formatSignif(dt, columns = cols, digits = digits) else dt
+}
+
 logo_b64 <- base64enc::dataURI(file = "www/Charm_logo.png", mime = "image/png")
 # Embedded like the logo (not served from www/), so it cannot fail to load as a static file
 schematic_b64 <- base64enc::dataURI(file = "www/charm_schematic.svg", mime = "image/svg+xml")
@@ -2064,8 +2102,8 @@ server <- function(input, output, session) {
         make_volcano_plot_hc(display_table(), rbp_sel)
       })
       output$volcano_table <- renderDT({
-        datatable(display_table(), filter = "none", selection = "single",
-                  rownames = FALSE, options = list(pageLength = 10, scrollX = TRUE, searching = TRUE))
+        dt_sig3(datatable(sig3_df(display_table()), filter = "none", selection = "single",
+                  rownames = FALSE, options = list(pageLength = 10, scrollX = TRUE, searching = TRUE)), display_table())
       })
       gsea_result <- plot_gsea(charm_obj, rbp_sel, thresh = 0.05)
       gsea_table_rv(gsea_result$geneset_table)
@@ -2074,8 +2112,8 @@ server <- function(input, output, session) {
         p <- gsea_result$gsea_plot; dl_store$gsea(p); p
       })
       output$geneset_table <- renderDT({
-        datatable(gsea_result$geneset_table, filter = "none", rownames = FALSE, selection = "single",
-                  options = list(pageLength = 10, scrollX = TRUE))
+        dt_sig3(datatable(sig3_df(gsea_result$geneset_table), filter = "none", rownames = FALSE, selection = "single",
+                  options = list(pageLength = 10, scrollX = TRUE)), gsea_result$geneset_table)
       })
     }
     
@@ -2114,8 +2152,9 @@ server <- function(input, output, session) {
       })
       output$splice_volcano_table <- DT::renderDataTable({
         req(result_splice())
-        splice_table_view(result_splice()$top_table)
-      }, rownames = FALSE, selection = "single", options = list(pageLength = 10))
+        tv <- splice_table_view(result_splice()$top_table)
+        dt_sig3(datatable(sig3_df(tv), rownames = FALSE, selection = "single", options = list(pageLength = 10)), tv)
+      })
     }
     
     if (nav$to == "Binding") {
@@ -3364,11 +3403,11 @@ server <- function(input, output, session) {
     display_table(tbl)
 
     output$volcano_table <- renderDT({
-      datatable(display_table(),
+      dt_sig3(datatable(sig3_df(display_table()),
                 filter = "none",
                 selection = "single",
                 rownames = FALSE,
-                options = list(pageLength = 10, scrollX = TRUE, searching = TRUE))
+                options = list(pageLength = 10, scrollX = TRUE, searching = TRUE)), display_table())
     })
     
     output$volcano_plot <- renderHighchart({
@@ -3390,11 +3429,11 @@ server <- function(input, output, session) {
       p
     })
     output$geneset_table <- renderDT({
-      datatable(gsea_result$geneset_table,
+      dt_sig3(datatable(sig3_df(gsea_result$geneset_table),
                 filter = "none",
                 rownames = FALSE,
                 selection = "single",
-                options = list(pageLength = 10, scrollX = TRUE))
+                options = list(pageLength = 10, scrollX = TRUE)), gsea_result$geneset_table)
     })
   })
   # ---- Gene Search ----
@@ -3643,8 +3682,9 @@ server <- function(input, output, session) {
     # ---- Render table ----
     output$splice_volcano_table <- DT::renderDataTable({
       req(result_splice())
-      splice_table_view(result_splice()$top_table)
-    }, rownames = FALSE, selection = "single", options = list(pageLength = 10))
+      tv <- splice_table_view(result_splice()$top_table)
+      dt_sig3(datatable(sig3_df(tv), rownames = FALSE, selection = "single", options = list(pageLength = 10)), tv)
+    })
     
     # ---- Shared function to update highlights ----
     update_highlight <- function(selected_event) {

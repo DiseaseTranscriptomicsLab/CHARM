@@ -20,8 +20,11 @@
 #   ES (exon skipping)    VAST HsaEX*  <->  rMATS SE.MATS.JC.txt
 #       VAST gives, for every event, a SET of possible sites (e.g. "100+250" = two alternative
 #       donors). An rMATS exon matches when its start is one of the VAST exon starts AND its end
-#       is one of the VAST exon ends. The flanking exons are compared too, but they only
-#       change the match class, they never prevent a match (rMATS lists one SE per flank pair).
+#       is one of the VAST exon ends. With MAP_REQUIRE_FLANKS = TRUE (default) the flanking
+#       (constitutive) exons must ALSO agree: the end of the upstream exon and the start of the
+#       downstream exon must each be one of the VAST flank sites (within MAP_FLANK_TOL). rMATS lists
+#       one SE per flank pair, so one VAST event can still have several rMATS partners (one per
+#       flank pair). With MAP_REQUIRE_FLANKS = FALSE the flanks only change the match class.
 #   IR (intron retention) VAST HsaINT* <->  rMATS RI.MATS.JC.txt
 #       retained intron = [upstreamEE + 1, downstreamES(0-based)]  vs  VAST COORD.
 #
@@ -53,11 +56,13 @@ if (exists(".MAP_AUTO", envir = globalenv())) rm(list = intersect(get(".MAP_AUTO
 .set("MAP_OUT_DIR", MAP_DIR)
 .set("MAP_APP_DIR", "data/QS2_Files")   # where the Shiny app reads RMATS_Event_Mapping.qs2 (NULL = do not write)
 .set("MAP_TOL", 1L)                 # max offset (nt) per coordinate
+.set("MAP_REQUIRE_FLANKS", TRUE)    # ES: the flanking (constitutive) exons must match too, not only the alternative exon
+.set("MAP_FLANK_TOL", MAP_TOL)      # max offset (nt) of each flanking exon boundary (only used when MAP_REQUIRE_FLANKS)
 .set("MAP_MIN_LEN", 0L)             # drop SE events shorter than this (the eCLIPSE tables use 10)
 .set("MAP_RUN_LABEL", "rMATS")      # tags rMATS IDs, which are only unique within one run
 .set("MAP_MICROEXON_MAX", 27L)      # VAST's microexon range (3-27 nt)
 .MAP_AUTO <- get(".MAP_AUTO")       # (kept in the global environment for the next run)
-cat("Mapping settings: SE =", MAP_SE_FILE, "| RI =", MAP_RI_FILE, "| tolerance =", MAP_TOL, "nt\n")
+cat("Mapping settings: SE =", MAP_SE_FILE, "| RI =", MAP_RI_FILE, "| tolerance =", MAP_TOL, "nt | flanks required:", MAP_REQUIRE_FLANKS, "\n")
 
 suppressPackageStartupMessages(library(data.table))
 
@@ -187,6 +192,7 @@ map_se <- function(rm, vx, tol) {
   hits[, match_class := fifelse(exon_off == 0 & flank_up_diff == 0 & flank_down_diff == 0, CLASS_LEVELS[1],
                         fifelse(exon_off == 0, CLASS_LEVELS[2], CLASS_LEVELS[3]))]
   hits[, exon_off := NULL]
+  hits[, flanks_ok := (flank_up_diff <= MAP_FLANK_TOL) %in% TRUE & (flank_down_diff <= MAP_FLANK_TOL) %in% TRUE]
   hits
 }
 
@@ -233,6 +239,7 @@ run_mapping <- function() {
   if (MAP_MIN_LEN > 0) { vx$events <- vx$events[vast_length >= MAP_MIN_LEN]; keep <- vx$events$vast_id
     vx$alts <- vx$alts[vast_id %in% keep]; vir <- vir[vast_length >= MAP_MIN_LEN] }
 
+  flank_fail <- character(0)     # rMATS events whose alternative exon matches a VAST event but whose flanks do not
   maps <- list(); unmapped <- list(); n_rm <- list(); n_vast_total <- c(ES = nrow(vx$events), IR = nrow(vir))
 
   # ---- ES
@@ -240,12 +247,20 @@ run_mapping <- function() {
   if (!is.null(rs)) {
     n_rm$ES <- nrow(rs); msg("ES: %s rMATS SE events, matching (tolerance %d nt) ...", format(nrow(rs), big.mark = ","), MAP_TOL)
     h <- map_se(rs, vx, MAP_TOL)
+    if (isTRUE(MAP_REQUIRE_FLANKS)) {
+      kept <- h[flanks_ok == TRUE]
+      flank_fail <- setdiff(unique(h$rmats_key), unique(kept$rmats_key))
+      msg("ES: %s rMATS events match a VAST exon but not its flanking exons (within %d nt): not mapped",
+          format(length(flank_fail), big.mark = ","), MAP_FLANK_TOL)
+      h <- kept
+    }
+    h[, flanks_ok := NULL]
     h <- merge(h, vx$events[, .(vast_id, gene_vast, vast_complex, vast_length, is_microexon)], by = "vast_id")
     maps$ES <- merge(h, rs[, .(rmats_key, rmats_id, gene_rmats, gene_id, rmats_start = st, rmats_end = en, FDR, IncLevelDifference, quantified_in_run)], by = "rmats_key")
     maps$ES[, event_type := "ES"]
     unm <- rs[!rmats_key %in% maps$ES$rmats_key]
     rng <- vx$alts[, .(st = min(st), en = max(en)), by = .(vast_id, chr, strand)]
-    unm[, reason := overlap_diagnostic(unm, rng)]
+    unm[, reason := fifelse(rmats_key %in% flank_fail, "exon_matches_but_flanks_differ", overlap_diagnostic(unm, rng))]
     unmapped$ES <- unm
   }
   # ---- IR
@@ -288,6 +303,7 @@ run_mapping <- function() {
                best_identical = sum(b$match_class == CLASS_LEVELS[1]),
                best_exon_identical_flanks_differ = sum(b$match_class == CLASS_LEVELS[2]),
                best_within_tolerance = sum(b$match_class == CLASS_LEVELS[3]),
+               rmats_unmapped_exon_matches_flanks_differ = sum(u$reason == "exon_matches_but_flanks_differ"),
                rmats_unmapped_overlapping_VAST = sum(u$reason == "overlaps_other_VAST_event"),
                rmats_unmapped_no_VAST_overlap = sum(u$reason == "no_VAST_event_overlap"),
                vast_events_total = n_vast_total[[t]], vast_events_mapped = uniqueN(m$vast_id),
@@ -309,7 +325,7 @@ run_mapping <- function() {
   fwrite(offs,     file.path(MAP_OUT_DIR, "Event_ID_Mapping_offsets.csv"))
   fwrite(unm_all,  file.path(MAP_OUT_DIR, "Event_ID_Unmapped_rmats.csv"))
   res <- list(mapping = map, summary = summ, by_vast_class = by_class, offsets = offs, unmapped_rmats = unm_all,
-              settings = list(MAP_TOL = MAP_TOL, MAP_MIN_LEN = MAP_MIN_LEN, MAP_RUN_LABEL = MAP_RUN_LABEL, built = Sys.time()))
+              settings = list(MAP_TOL = MAP_TOL, MAP_REQUIRE_FLANKS = MAP_REQUIRE_FLANKS, MAP_FLANK_TOL = MAP_FLANK_TOL, MAP_MIN_LEN = MAP_MIN_LEN, MAP_RUN_LABEL = MAP_RUN_LABEL, built = Sys.time()))
   saveRDS(res, file.path(MAP_OUT_DIR, "Event_ID_Mapping.rds"))
   if (requireNamespace("qs2", quietly = TRUE)) qs2::qs_save(res, file.path(MAP_OUT_DIR, "Event_ID_Mapping.qs2"))
   msg("written to %s", normalizePath(MAP_OUT_DIR))
