@@ -2787,7 +2787,7 @@ server <- function(input, output, session) {
       theme_charm() +
       ylab("dPSI (shRNA - CTRL)") +
       xlab("Event Type") +
-      ggtitle("Uploaded data", subtitle = subtitle_text) +
+      ggtitle("Your perturbation", subtitle = subtitle_text) +
       coord_flip() +
       theme(legend.position = "bottom")
     dl_store$splice_initial(p)
@@ -2975,7 +2975,7 @@ server <- function(input, output, session) {
     tagList(
       hr(),
       tags$h5("eCLIPSE Binding Map"),
-      tags$p("Visualise where an RBP (or multiple RBPs) binds relative to splicing events in your uploaded data. Select one target for a full binding map, or multiple targets for a heatmap overview.",
+      tags$p("Visualise where an RBP (or multiple RBPs) binds relative to the splicing events altered by your perturbation. Select one target for a full binding map, or multiple targets for a heatmap overview.",
              style = "font-size: 12px; color: #666; margin-top: -5px;"),
       selectizeInput(
         "binding_disc_target",

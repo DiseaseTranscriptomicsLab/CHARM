@@ -546,9 +546,9 @@ correl_exp_rbp_hc <- function(rbp_results, rbp, other_rbp, plot_title = NULL, re
   # Discovery mode (an uploaded file, not a named RBP) reaches this via the
   # is.data.frame(rbp) branch above, which sets rbp_label to the "UserFile"
   # sentinel -- "UserFile KD" doesn't mean anything, so that case displays as
-  # "your uploaded data" instead of getting the " KD" suffix. other_rbp is
+  # "your perturbation" instead of getting the " KD" suffix. other_rbp is
   # always a real named RBP (validated above), so it always gets " KD".
-  ref_display   <- if (identical(rbp_label, "UserFile")) "your uploaded data" else paste0(rbp_label, " KD")
+  ref_display   <- if (identical(rbp_label, "UserFile")) "your perturbation" else paste0(rbp_label, " KD")
   other_display <- paste0(other_rbp, " KD")
 
   if (nrow(merged) < 3) {
@@ -589,7 +589,7 @@ correl_exp_rbp_hc <- function(rbp_results, rbp, other_rbp, plot_title = NULL, re
   ) %>%
     charm_hc_style() %>% highcharter::hc_title(text = title_txt) %>%
     highcharter::hc_subtitle(text = corr_scatter_subtitle(rho, ref_key)) %>%
-    highcharter::hc_xAxis(title = list(text = paste0(ref_display, " t-statistics"))) %>%
+    highcharter::hc_xAxis(title = list(text = paste0(sub("^your", "Your", ref_display), " t-statistics"))) %>%
     highcharter::hc_yAxis(title = list(text = paste0(other_display, " t-statistics"))) %>%
     highcharter::hc_tooltip(pointFormat = "Gene: {point.gene}") %>%
     highcharter::hc_plotOptions(scatter = list(
@@ -648,9 +648,9 @@ correl_scatter_gsea_hc <- function(gsea_results, rbp, other_rbp, plot_title = NU
   # Discovery mode (an uploaded file, not a named RBP) reaches this via the
   # is.data.frame(rbp) branch above, which sets rbp_label to the "UserFile"
   # sentinel -- "UserFile KD" doesn't mean anything, so that case displays as
-  # "your uploaded data" instead of getting the " KD" suffix. other_rbp is
+  # "your perturbation" instead of getting the " KD" suffix. other_rbp is
   # always a real named RBP (validated above), so it always gets " KD".
-  ref_display   <- if (identical(rbp_label, "UserFile")) "your uploaded data" else paste0(rbp_label, " KD")
+  ref_display   <- if (identical(rbp_label, "UserFile")) "your perturbation" else paste0(rbp_label, " KD")
   other_display <- paste0(other_rbp, " KD")
 
   # --- Spearman correlation ---
@@ -673,7 +673,7 @@ correl_scatter_gsea_hc <- function(gsea_results, rbp, other_rbp, plot_title = NU
   ) %>%
     charm_hc_style() %>% highcharter::hc_title(text = title_txt) %>%
     highcharter::hc_subtitle(text = corr_scatter_subtitle(rho, ref_key)) %>%
-    highcharter::hc_xAxis(title = list(text = paste0(ref_display, " NES"))) %>%
+    highcharter::hc_xAxis(title = list(text = paste0(sub("^your", "Your", ref_display), " NES"))) %>%
     highcharter::hc_yAxis(title = list(text = paste0(other_display, " NES"))) %>%
     highcharter::hc_tooltip(pointFormat = "Pathway: {point.pathway}") %>%
     highcharter::hc_plotOptions(scatter = list(
@@ -752,7 +752,7 @@ exp_correl <- function(rbp_results, rbp, correl_num = NULL,
   # is.data.frame(rbp) branch above, which sets rbp_label to the "UserFile"
   # sentinel -- "UserFile KD" doesn't mean anything, so that case gets its
   # own title phrase instead of the " <RBP> KD" suffix used for a real RBP.
-  title_subject <- if (identical(rbp_label, "UserFile")) "your uploaded data" else paste0(rbp_label, " KD")
+  title_subject <- if (identical(rbp_label, "UserFile")) "your perturbation" else paste0(rbp_label, " KD")
 
   heatmap_plot <- ggplot(top_cor, aes(x = reorder(RBP, Correlation), y = Correlation, fill = Status)) +
     geom_col(alpha = 0.8) +
@@ -913,7 +913,7 @@ gsea_correl <- function(gsea_df, rbp, correl_num = NULL,
   # branch above, which reassigns `rbp` itself to the "UserFile" sentinel --
   # "UserFile KD" doesn't mean anything, so that case gets its own title
   # phrase instead of the " <RBP> KD" suffix used for a real RBP.
-  title_subject <- if (identical(rbp, "UserFile")) "your uploaded data" else paste0(rbp, " KD")
+  title_subject <- if (identical(rbp, "UserFile")) "your perturbation" else paste0(rbp, " KD")
 
   heatmap_plot <- ggplot2::ggplot(top_cor, ggplot2::aes(x = reorder(RBP, Correlation), y = Correlation, fill = Status)) +
     ggplot2::geom_col(alpha = 0.8) +
@@ -1059,7 +1059,7 @@ splicing_correl <- function(charmobj, rbp, correl_num = NULL,
   # is.data.frame(rbp) branch above, which sets rbp_label to the "UserFile"
   # sentinel -- "UserFile KD" doesn't mean anything, so that case gets its
   # own title phrase instead of the " <RBP> KD" suffix used for a real RBP.
-  title_subject <- if (identical(rbp_label, "UserFile")) "your uploaded data" else paste0(rbp_label, " KD")
+  title_subject <- if (identical(rbp_label, "UserFile")) "your perturbation" else paste0(rbp_label, " KD")
 
   heatmap_plot <- ggplot2::ggplot(top_cor,
                                   ggplot2::aes(x = reorder(RBP, Correlation),
@@ -1217,9 +1217,9 @@ correl_splicing_rbp_hc <- function(charmobj, rbp, other_rbp, plot_title = NULL, 
   # Discovery mode (an uploaded file, not a named RBP) reaches this via the
   # is.data.frame(rbp) branch above, which sets rbp_label to the "UserFile"
   # sentinel -- "UserFile KD" doesn't mean anything, so that case displays as
-  # "your uploaded data" instead of getting the " KD" suffix. other_label is
+  # "your perturbation" instead of getting the " KD" suffix. other_label is
   # always a real named RBP (validated above), so it always gets " KD".
-  ref_display   <- if (identical(rbp_label, "UserFile")) "your uploaded data" else paste0(rbp_label, " KD")
+  ref_display   <- if (identical(rbp_label, "UserFile")) "your perturbation" else paste0(rbp_label, " KD")
   other_display <- paste0(other_label, " KD")
 
   if (nrow(merged) < 3) {
@@ -1254,10 +1254,10 @@ correl_splicing_rbp_hc <- function(charmobj, rbp, other_rbp, plot_title = NULL, 
   ) %>%
     charm_hc_style() %>% highcharter::hc_title(text = title_txt) %>%
     highcharter::hc_subtitle(text = corr_scatter_subtitle(rho, ref_key)) %>%
-    highcharter::hc_xAxis(title = list(text = paste0(ref_display, " dPSI"))) %>%
+    highcharter::hc_xAxis(title = list(text = paste0(sub("^your", "Your", ref_display), " dPSI"))) %>%
     highcharter::hc_yAxis(title = list(text = paste0(other_display, " dPSI"))) %>%
     highcharter::hc_tooltip(pointFormat = paste0(
-      "Event: {point.event_id}<br>", ref_display, " dPSI: {point.dpsi_ref_r}<br>",
+      "Event: {point.event_id}<br>", sub("^your", "Your", ref_display), " dPSI: {point.dpsi_ref_r}<br>",
       other_display, " dPSI: {point.dpsi_other_r}"
     )) %>%
     highcharter::hc_plotOptions(scatter = list(
@@ -1971,7 +1971,7 @@ eCLIPSE_raw_user <- function(rnamapfile,
   inc_color   <- "#de425b"
   dec_color   <- "#769fca"
   maint_color <- "black"
-  plot_title <- paste0(rnaBP, " Binding Profile - Upon Your Uploaded Splicing Alterations")
+  plot_title <- paste0(rnaBP, " Binding Profile - Upon Your Perturbation")
   if (!is.null(title) && !identical(title, rnaBP)) {
     plot_title <- paste0(plot_title, " (", title, ")")
   }
