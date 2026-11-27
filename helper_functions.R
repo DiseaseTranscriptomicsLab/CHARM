@@ -765,9 +765,8 @@ exp_correl <- function(rbp_results, rbp, correl_num = NULL,
       # coord_flip() above swaps display axes, so this "x" label is what
       # actually renders as the plot's vertical (Y) axis title.
       x = "RBP KD",
-      y = "Spearman's Correlation (ρ)",
-      title = paste0("Expression (t-statistic) correlations with ", title_subject),
-      caption = "Method: Spearman"
+      y = "Spearman's correlation (ρ)",
+      title = paste0("Differential expression (t-statistic) correlations with ", title_subject)
     ) +
     theme_charm() +
     theme(legend.position = if (show_legend) "right" else "none")
@@ -928,12 +927,11 @@ gsea_correl <- function(gsea_df, rbp, correl_num = NULL,
       # coord_flip() above swaps display axes, so this "x" label is what
       # actually renders as the plot's vertical (Y) axis title.
       x = "RBP KD",
-      y = "Spearman's Correlation (ρ)",
+      y = "Spearman's correlation (ρ)",
       # GSEA correlations are computed on NES (Normalised Enrichment Score),
       # not the t-statistic exp_correl() uses -- named accordingly so the
       # title accurately reflects what this plot actually correlates.
-      title = paste0("GSEA (NES) correlations with ", title_subject),
-      caption = "Method: Spearman"
+      title = paste0("Gene-set enrichment (NES) correlations with ", title_subject)
     ) +
     theme_charm() +
     ggplot2::theme(legend.position = if (show_legend) "right" else "none")
@@ -1078,9 +1076,8 @@ splicing_correl <- function(charmobj, rbp, correl_num = NULL,
       # coord_flip() above swaps display axes, so this "x" label is what
       # actually renders as the plot's vertical (Y) axis title.
       x = "RBP KD",
-      y = "Spearman's Correlation (ρ)",
-      title = paste0("Splicing (dPSI) correlations with ", title_subject),
-      caption = "Method: Spearman"
+      y = "Spearman's correlation (ρ)",
+      title = paste0("Differential splicing (\u0394PSI) correlations with ", title_subject)
     ) +
     theme_charm() +
     ggplot2::theme(legend.position = if (show_legend) "right" else "none")
@@ -2363,8 +2360,8 @@ binding_profile_correl <- function(sim_obj,
     cor_df$Percentile <- bind_percentile(cor_df$Correlation, ref_key)
     cor_df$SameTarget <- cor_df$Target == sub("^[^_]*__", "", query_id) &
                          cor_df$RBP    != sub("__.*", "", query_id)
-    cor_df$ctx_label  <- paste0(sprintf("%.2f", cor_df$Correlation), "  |  ",
-                                corr_bar_label(cor_df$Correlation, cor_df$Percentile),
+    cor_df$ctx_label  <- paste0("r = ", sprintf("%.2f", cor_df$Correlation), "  |  ",
+                                corr_pctl_label(cor_df$Correlation, cor_df$Percentile),
                                 ifelse(cor_df$SameTarget, "  |  same target", ""))
   } else {
     cor_df$ctx_label  <- sprintf("%.2f", cor_df$Correlation)
@@ -2385,10 +2382,9 @@ binding_profile_correl <- function(sim_obj,
       color = "black", size = CHARM_GEOM_TEXT , family = CHARM_FONT) +
     ggplot2::labs(
       x        = "RBP KD \u2013 Target Profile",
-      y        = "Pearson's Correlation (r)",
+      y        = "Pearson's correlation (r)",
       title    = plot_title,
-      subtitle = plot_subtitle,
-      caption  = "Method: Pearson"
+      subtitle = plot_subtitle
     ) +
     theme_charm() +
     ggplot2::theme(legend.position = "none")
@@ -2399,7 +2395,7 @@ binding_profile_correl <- function(sim_obj,
   if (has_ref) {
     heatmap_plot <- heatmap_plot +
       ggplot2::scale_y_continuous(breaks = c(-1, -0.5, 0, 0.5, 1),
-                                  expand = ggplot2::expansion(mult = c(0.55, 0.75)))   # room for the labels
+                                  expand = ggplot2::expansion(mult = c(0.55, 0.95)))   # room for the labels
     cor_df$Profile <- as.character(cor_df$Profile)
     dens <- if (bind_has_target_ref(ref_key)) {
       bind_density_panel(query_id, ref_key, mean_profiles, zoom = zoom)   # 3 densities + line for the query

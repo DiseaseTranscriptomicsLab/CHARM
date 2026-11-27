@@ -62,6 +62,13 @@ corr_fmt_p <- function(p, floor_p = NA_real_) {
          ifelse(!is.na(floor_p) & p <= floor_p * 1.0000001, paste0("< ", formatC(floor_p, format = "e", digits = 0)), txt))
 }
 
+# Bar-plot label: standard percentile among all observed pairs (% of pairs with a correlation <= this one).
+# `pct` is the stored "at least as extreme" share (top x% for r >= 0, bottom x% for r < 0), converted here.
+corr_pctl_label <- function(r, pct) {
+  p <- ifelse(r >= 0, 100 - pct, pct)
+  ifelse(is.na(pct), "", paste0("Percentile ", format(signif(p, 3), scientific = FALSE, trim = TRUE, drop0trailing = TRUE)))
+}
+
 # Short label for a bar: "top 0.8%" (positive) / "bottom 0.8%" (negative)
 corr_bar_label <- function(r, pct) {
   ifelse(is.na(pct), "", paste0(ifelse(r >= 0, "top ", "bottom "), corr_fmt_pct(pct)))
@@ -91,10 +98,11 @@ corr_density_panel <- function(top_cor, key, up_color = "#BA3B46", down_color = 
   sd_w     <- sqrt(sum(w * (centers - mu)^2))
   dens_nul <- stats::density(centers, weights = w, from = -1, to = 1, n = 512,
                              bw = max(0.002, 0.9 * sd_w * e$null_n^(-1/5)))
-  lab_obs <- sprintf("Observed (%s RBP pairs)", format(length(e$observed), big.mark = ","))
+  n_pairs <- format(length(e$observed), big.mark = ",")
+  lab_obs <- sprintf("Observed (%s RBP pairs)", n_pairs)
   is_gsea <- grepl("^gsea", key)
-  lab_nul <- if (is_gsea) "Null: random gene sets of matched size" else
-    sprintf("Null: values shuffled within each %s", if (grepl("^splice", key)) "event" else "gene")
+  lab_nul <- sprintf("Null (%s RBP pairs \u00d7 %d %s)", n_pairs, e$B,
+                     if (is_gsea) "random gene-set draws" else "permutations")
   # Each curve is scaled to its own peak: the null is far narrower (so far taller)
   # than the observed distribution, and on a shared density axis the observed one
   # would look flat. What matters here is where the lines fall relative to each shape.
@@ -106,29 +114,28 @@ corr_density_panel <- function(top_cor, key, up_color = "#BA3B46", down_color = 
   pad  <- max(0.05, 0.06 * diff(rng))
   xlim <- c(max(-1, rng[1] - pad), min(1, rng[2] + pad))
 
+  # Displayed RBPs: one vertical line each, red (rho > 0) / blue (rho < 0), with a legend key next to the fills
   lines_df <- data.frame(x = top_cor$Correlation,
                          Status = ifelse(top_cor$Correlation > 0, "Positive", "Negative"))
+  st <- intersect(c("Positive", "Negative"), unique(lines_df$Status))
+  line_labs <- if (length(st) == 1) c(Positive = "Displayed RBPs", Negative = "Displayed RBPs")
+               else c(Positive = "Displayed RBPs (\u03c1 > 0)", Negative = "Displayed RBPs (\u03c1 < 0)")
   ggplot2::ggplot() +
     ggplot2::geom_area(data = dd, ggplot2::aes(x = x, y = y, fill = Distribution),
                        alpha = 0.55, position = "identity", colour = NA) +
     ggplot2::geom_vline(data = lines_df, ggplot2::aes(xintercept = x, colour = Status),
-                        linewidth = 0.5, alpha = 0.8) +
+                        linewidth = 0.5, alpha = 0.8, key_glyph = "vline") +
     ggplot2::scale_fill_manual(values = stats::setNames(c("#7272AB", "#8C8C8C"), c(lab_obs, lab_nul)),
-                               name = NULL) +
-    ggplot2::scale_colour_manual(values = c("Positive" = up_color, "Negative" = down_color), guide = "none") +
+                               name = NULL, guide = ggplot2::guide_legend(order = 1)) +
+    ggplot2::scale_colour_manual(values = c("Positive" = up_color, "Negative" = down_color), breaks = st,
+                                 labels = line_labs[st], name = NULL, guide = ggplot2::guide_legend(order = 2)) +
     ggplot2::scale_x_continuous(limits = c(-1, 1)) +
     ggplot2::coord_cartesian(xlim = xlim, ylim = c(0, 1.12)) +
-    ggplot2::labs(x = "Spearman's correlation (ρ)", y = "Relative density",
-                  title = "Where these correlations fall",
-                  caption = if (is_gsea) {
-                    sprintf("Lines: displayed RBPs. Null: %s pairs from %d simulations with %d random gene sets each.",
-                            format(e$null_n, big.mark = ","), e$B, e$n_rows)
-                  } else {
-                    sprintf("Lines: displayed RBPs. Null: %s pairs from %d shuffles of the data.",
-                            format(e$null_n, big.mark = ","), e$B)
-                  }) +
+    ggplot2::labs(x = "Spearman's correlation (\u03c1)", y = "Relative density") +
     theme_charm() +
-    ggplot2::theme(legend.position = "bottom")
+    ggplot2::theme(legend.position = "bottom", legend.box = "horizontal",
+                   legend.spacing.x = ggplot2::unit(2, "pt"),
+                   legend.text = ggplot2::element_text(margin = ggplot2::margin(l = 2, r = 14)))
 }
 
 # Add Percentile / NullP columns and the density panel to a correlation result.
@@ -146,8 +153,8 @@ corr_decorate <- function(cor_results, top_cor, bar_plot, ref_key,
   floor_p <- 1 / (1 + CORR_REF[[ref_key]]$null_n)
   lab_df  <- top_cor
   p_txt <- corr_fmt_p(lab_df$NullP, floor_p)
-  lab_df$ctx_label <- paste0(sprintf("%.2f", lab_df$Correlation), "  |  ",
-                             corr_bar_label(lab_df$Correlation, lab_df$Percentile), "  |  p ",
+  lab_df$ctx_label <- paste0("\u03c1 = ", sprintf("%.2f", lab_df$Correlation), "  |  ",
+                             corr_pctl_label(lab_df$Correlation, lab_df$Percentile), "  |  FPR ",
                              ifelse(startsWith(p_txt, "<"), "", "= "), p_txt)
 
   bar <- bar_plot +
@@ -155,7 +162,7 @@ corr_decorate <- function(cor_results, top_cor, bar_plot, ref_key,
                        ggplot2::aes(x = RBP, y = pmax(Correlation, 0), label = ctx_label),
                        inherit.aes = FALSE, hjust = -0.08,      # starts at the bar end (positive) or at 0 (negative)
                        colour = "black", size = CHARM_GEOM_TEXT, family = CHARM_FONT) +
-    ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0.05, 0.9)))
+    ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0.05, 1.15)))
   dens <- corr_density_panel(top_cor, ref_key, up_color, down_color)
   combined <- ggpubr::ggarrange(bar, dens, ncol = 1, heights = c(1, 0.7))
   list(correlation_table = cor_results, top_table = top_cor, heatmap = combined,
