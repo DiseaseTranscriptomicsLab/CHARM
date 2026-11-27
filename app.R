@@ -2146,7 +2146,7 @@ server <- function(input, output, session) {
           geom_point(alpha = 0.7, size = 1) +
           scale_color_manual(values = c("None" = "#CCCCCC", "RBP" = "#A10702", "Selected" = "#008057")) +
           theme_charm() + theme(legend.position = "none") +
-          labs(title = paste0("Volcano Plot: ", rbp_sel, " KD"), x = "dPSI (shRNA - CTRL)", y = "PDiff")
+          labs(title = paste0(rbp_sel, " KD"), x = "dPSI (shRNA - CTRL)", y = "PDiff")
         dl_store$splice_volcano(p)
         make_splice_volcano_plot_hc(tbl, rbp_sel)
       })
@@ -2289,7 +2289,9 @@ server <- function(input, output, session) {
   splice_table_view <- function(tbl, note = FALSE) {
     if (is.null(tbl)) return(NULL)
     tbl <- dplyr::select(tbl, -dplyr::any_of("text"))
-    if (splice_rmats_on()) rmats_add_columns(tbl, RMATS_MAP, note = note) else tbl
+    if (splice_rmats_on()) tbl <- rmats_add_columns(tbl, RMATS_MAP, note = note)
+    names(tbl)[names(tbl) == "Event.ID"] <- "VastDB ID"     # display/download name only; internal column stays Event.ID
+    tbl
   }
   
   # Disclaimer under the volcano table (always visible next to the rMATS IDs)
@@ -2772,15 +2774,22 @@ server <- function(input, output, session) {
     subtitle_text <- paste0("Mean dPSI — EX: ", mean_EX, " | IR: ", mean_IR)
     
     # Violin + jitter plot similar to your function
+    # mean dPSI per event type, drawn as a dashed red segment across each violin
+    mean_df <- stats::aggregate(dPSI ~ Type, data = dpsi_table, FUN = mean)
+    mean_df$pos <- match(mean_df$Type, levels(factor(dpsi_table$Type)))
     p <- ggplot(dpsi_table, aes(x = Type, y = dPSI)) +
       geom_jitter(width = 0.2, alpha = 0.6, size = 1.5) +
       geom_violin(alpha = .7) +
+      geom_segment(data = mean_df, aes(x = pos - 0.3, xend = pos + 0.3, y = dPSI, yend = dPSI, colour = "Mean dPSI"),
+                   linetype = "dashed", linewidth = 0.8, key_glyph = "vline") +
+      geom_hline(aes(yintercept = 0, colour = "No change (dPSI = 0)"), linetype = "dashed", linewidth = 0.8, key_glyph = "vline") +
+      scale_colour_manual(values = c("Mean dPSI" = "#BA3B46", "No change (dPSI = 0)" = "black"), name = NULL) +
       theme_charm() +
       ylab("dPSI (shRNA - CTRL)") +
       xlab("Event Type") +
       ggtitle("Uploaded data", subtitle = subtitle_text) +
       coord_flip() +
-      geom_hline(yintercept = 0, linetype = "dashed")
+      theme(legend.position = "bottom")
     dl_store$splice_initial(p)
     p
   })
@@ -2977,7 +2986,7 @@ server <- function(input, output, session) {
       ),
       selectInput(
         "binding_disc_psi_thresh",
-        "\u0394PSI threshold:",
+        "dPSI threshold:",
         choices  = c("0.01", "0.05", "0.10", "0.15", "0.20", "0.25", "0.30"),
         selected = "0.05"
       ),
@@ -3260,7 +3269,7 @@ server <- function(input, output, session) {
       highcharter::hcaes(x = dPSI, y = Pdiff, color = point_color, key = Event.ID),
       fast = TRUE
     )) %>%
-      charm_hc_style() %>% highcharter::hc_title(text = paste0("Volcano Plot: ", rbp, " KD")) %>%
+      charm_hc_style() %>% highcharter::hc_title(text = paste0(rbp, " KD")) %>%
       highcharter::hc_xAxis(title = list(text = "dPSI (shRNA - CTRL)")) %>%
       highcharter::hc_yAxis(title = list(text = "PDiff")) %>%
       highcharter::hc_tooltip(pointFormat = tip) %>%
@@ -3668,7 +3677,7 @@ server <- function(input, output, session) {
         scale_color_manual(values = c("None"="#CCCCCC","RBP"="#A10702","Selected"="#008057")) +
         theme_charm() +
         theme(legend.position = "none") +
-        labs(title = paste0("Volcano Plot: ", rbp_sel, " KD"), x = "dPSI (shRNA - CTRL)", y = "PDiff")
+        labs(title = paste0(rbp_sel, " KD"), x = "dPSI (shRNA - CTRL)", y = "PDiff")
       dl_store$splice_volcano(p)
       make_splice_volcano_plot_hc(tbl, rbp_sel)
     }

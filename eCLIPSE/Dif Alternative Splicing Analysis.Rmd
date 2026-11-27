@@ -51,7 +51,7 @@ There are two ways to filter `dataset_control`/`dataset_shRNA` down to the event
 
 ## Option A: betAS's own `alternativeEvents()`
 
-Filters events to a PSI range, dropping events with near-0% or near-100% inclusion across all samples (which carry little information about a splicing change):
+Filters events to a PSI range, dropping events with a PSI near 0 or near 1 across all samples (which carry little information about a splicing change). Note that `alternativeEvents()` takes `minPsi`/`maxPsi` on the VAST-TOOLS 0–100 scale, so `1` and `99` correspond to PSI 0.01 and 0.99:
 
 ```{r}
 dataset_control_filtered <- alternativeEvents(dataset_control, minPsi = 1, maxPsi = 99)

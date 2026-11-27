@@ -1077,7 +1077,7 @@ splicing_correl <- function(charmobj, rbp, correl_num = NULL,
       # actually renders as the plot's vertical (Y) axis title.
       x = "RBP KD",
       y = "Spearman's correlation (ρ)",
-      title = paste0("Differential splicing (\u0394PSI) correlations with ", title_subject)
+      title = paste0("Differential splicing (dPSI) correlations with ", title_subject)
     ) +
     theme_charm() +
     ggplot2::theme(legend.position = if (show_legend) "right" else "none")
@@ -1125,15 +1125,22 @@ violin_splice_plot <- function(Charmobj, rbp) {
 
   # Make the plot
 
+  # mean dPSI per event type, drawn as a dashed red segment across each violin
+  mean_df <- stats::aggregate(dPSI ~ Type, data = dpsi_table, FUN = mean)
+  mean_df$pos <- match(mean_df$Type, levels(factor(dpsi_table$Type)))
   ggplot(dpsi_table, aes(x = Type, y = dPSI))  +
     # Violin plot
     geom_jitter(width = 0.2, alpha = 0.6, size = 1.5) +geom_violin(alpha=.7) +
+    geom_segment(data = mean_df, aes(x = pos - 0.3, xend = pos + 0.3, y = dPSI, yend = dPSI, colour = "Mean dPSI"),
+                 linetype = "dashed", linewidth = 0.8, key_glyph = "vline") +
+    geom_hline(aes(yintercept = 0, colour = "No change (dPSI = 0)"), linetype = "dashed", linewidth = 0.8, key_glyph = "vline") +
+    scale_colour_manual(values = c("Mean dPSI" = "#BA3B46", "No change (dPSI = 0)" = "black"), name = NULL) +
     theme_charm() +
     ylab("dPSI (shRNA - CTRL)") +
     xlab("Event Type") +
     ggtitle(paste0(rbp, " KD"), subtitle = subtitle_text) +
     coord_flip() +
-    geom_hline(yintercept = 0, linetype = "dashed")
+    theme(legend.position = "bottom")
 }
 
 plot_splice_volcano <- function(charmobj, rbp, other_events = NULL) {
@@ -1168,7 +1175,7 @@ plot_splice_volcano <- function(charmobj, rbp, other_events = NULL) {
     theme_charm() +
     theme(legend.position = "none") +
     labs(
-      title = paste0("Volcano Plot: ", rbp, " KD"),
+      title = paste0(rbp, " KD"),
       x = "dPSI (shRNA - CTRL)",
       y = "PDiff"
     )+
@@ -2407,7 +2414,7 @@ binding_profile_correl <- function(sim_obj,
     heatmap_plot <- ggpubr::ggarrange(heatmap_plot, dens, ncol = 1, heights = c(1, 0.9))
   }
   list(
-    correlation_table = cor_df[, tbl_cols],
+    correlation_table = within(cor_df[, tbl_cols], if (has_ref) Percentile <- corr_std_pctl(Correlation, Percentile)),
     heatmap           = heatmap_plot,
     bar_plot          = bar_plot_only,
     density_plot      = dens_only

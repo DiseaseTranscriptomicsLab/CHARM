@@ -1,0 +1,127 @@
+---
+title: "eCLIPSE: Building the betAS ASfile"
+subtitle: "Differential splicing analysis with betAS, from a VAST-TOOLS inclusion table to the Event.ID / dPSI table eCLIPSE_full() and eCLIPSE_full_IR() expect"
+author:
+  - name: "Alexandre Afonso^[Disease Transcriptomics Group, Instituto de Medicina Molecular, Faculdade de Medicina da Universidade de Lisboa]"
+    email: alexandreafonso@medicina.ulisboa.pt
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  rmdformats::downcute:
+    downcute_theme: "chaos"
+---
+
+# Introduction
+
+This notebook takes a VAST-TOOLS inclusion table and produces the `ASfile` that `eCLIPSE_full()`/`eCLIPSE_full_IR()` expect: a table with an `Event.ID` column and a `dPSI` column, computed with the [betAS](https://github.com/DiseaseTranscriptomicsLab/betAS) package. The example below compares a control group against an shRNA-knockdown group, a typical ENCODE-style eCLIP experimental design.
+
+```{r}
+library(betAS)
+library(data.table)
+```
+
+# Loading and filtering the dataset
+
+```{r}
+dataset <- getDataset(pathTables = "~/path/to/your/project/INCLUSION_LEVELS_FULL-hg38-25-v251.tab.gz", tool = "vast-tools")
+dataset <- getEvents(dataset, tool = "vast-tools")
+
+# Keep exon-skipping (S) and intron-retention (IR) events
+dataset_filtered <- filterEvents(dataset, types = c("S", "IR"), N = 0)
+dataset_filtered$PSI  <- na.omit(dataset_filtered$PSI)
+dataset_filtered$Qual <- dataset_filtered$Qual[dataset_filtered$Qual$EVENT %in% dataset_filtered$PSI$EVENT, ]
+
+# Two groups: control and shRNA-knockdown samples
+samples_control <- c("control_rep1", "control_rep2")
+samples_shRNA   <- c("shRNA_rep1", "shRNA_rep2")
+
+dataset_control <- dataset_filtered
+dataset_control[["Samples"]] <- samples_control
+dataset_control[["PSI"]]  <- dataset_control$PSI[,  c(1:6, which(colnames(dataset_control$PSI)  %in% samples_control))]
+dataset_control[["Qual"]] <- dataset_control$Qual[, c(1:6, which(colnames(dataset_control$Qual) %in% paste0(samples_control, ".Q")))]
+
+dataset_shRNA <- dataset_filtered
+dataset_shRNA[["Samples"]] <- samples_shRNA
+dataset_shRNA[["PSI"]]  <- dataset_shRNA$PSI[,  c(1:6, which(colnames(dataset_shRNA$PSI)  %in% samples_shRNA))]
+dataset_shRNA[["Qual"]] <- dataset_shRNA$Qual[, c(1:6, which(colnames(dataset_shRNA$Qual) %in% paste0(samples_shRNA, ".Q")))]
+```
+
+# Filtering to informative events
+
+There are two ways to filter `dataset_control`/`dataset_shRNA` down to the events worth testing. Pick **one** — both options below produce a same-named `_filtered` object, so running both just means the second one wins.
+
+## Option A: betAS's own `alternativeEvents()`
+
+Filters events to a PSI range, dropping events with near-0% or near-100% inclusion across all samples (which carry little information about a splicing change):
+
+```{r}
+dataset_control_filtered <- alternativeEvents(dataset_control, minPsi = 1, maxPsi = 99)
+dataset_shRNA_filtered   <- alternativeEvents(dataset_shRNA,   minPsi = 1, maxPsi = 99)
+```
+
+## Option B: `NewFilterFunction()`
+
+Not part of betAS itself. Instead of a PSI range, it keeps only events that appear in a separately-precomputed event list, `FullCassetteEvents.txt`. For information about its processing, please consult eCLIPSE-Supplementary.Rmd.
+
+```{r}
+NewFilterFunction <- function (filteredList, eventlist) 
+{
+  alternative <- list()
+  psiTable <- filteredList$PSI
+  qualTable <- filteredList$Qual
+  originalColN <- ncol(psiTable)
+  psi <- psiTable[, -c(1:6)]
+  psiTable <- psiTable[psiTable$EVENT %in% eventlist$EVENT, ]
+  qualTable <- qualTable[match(psiTable$EVENT, qualTable$EVENT), 
+    ]
+  psiTable <- psiTable[, c(1:originalColN)]
+  qualTable <- qualTable[, c(1:originalColN)]
+  alternative[[1]] <- psiTable
+  alternative[[2]] <- qualTable
+  alternative[[3]] <- table(psiTable$COMPLEX)
+  alternative[[4]] <- colnames(psiTable)[-c(1:6)]
+  names(alternative) <- c("PSI", "Qual", "EventsPerType", 
+    "Samples")
+  return(alternative)
+}
+
+```
+
+```{r}
+FullTrial <- fread("~/path/to/your/project/FullCassetteEvents.txt")
+
+dataset_control_filtered <- NewFilterFunction(dataset_control, FullTrial)
+dataset_shRNA_filtered   <- NewFilterFunction(dataset_shRNA,   FullTrial)
+```
+
+# Computing dPSI and building the ASfile
+
+```{r}
+cols_control <- convertCols(dataset_control_filtered$PSI, samples_control)
+cols_shRNA   <- convertCols(dataset_shRNA_filtered$PSI,   samples_shRNA)
+
+volcanoTable <- prepareTableVolcano(
+  psitable       = dataset_control_filtered$PSI,   # control/shRNA filtered tables share the same events by construction
+  qualtable      = dataset_control_filtered$Qual,
+  npoints        = 500,
+  colsA          = cols_control,
+  colsB          = cols_shRNA,
+  labA           = "control",
+  labB           = "shRNA",
+  basalColor     = "#89C0AE",
+  interestColor  = "#E69A9C",
+  maxDevTable    = maxDevSimulationN100,   # ships with the betAS package itself
+  seed           = TRUE,
+  CoverageWeight = FALSE
+)
+
+(volcano_plot <- plotVolcano(betasTable = volcanoTable,
+                              labA = "control", labB = "shRNA",
+                              basalColor = "#89C0AE", interestColor = "#E69A9C"))
+
+ASfile <- volcanoTable[, c("EVENT", "GENE", "deltapsi", "Pdiff")]
+colnames(ASfile) <- c("Event.ID", "Gene", "dPSI", "Pdiff")
+
+write.table(ASfile, "~/path/to/your/project/my_betAS_table.txt", row.names = FALSE, col.names = TRUE)
+```
+
+

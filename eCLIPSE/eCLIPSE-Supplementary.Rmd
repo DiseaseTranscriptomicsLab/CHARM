@@ -47,7 +47,7 @@ EventTable <- fread("~/Projects/StressGranules/AS.WC_Transcriptome/eCLIPSE/MICPr
 # Simplistic Approach (Average vs Range)
 
 ```{r}
-ggplot(EventTable, aes(y = Range, x = (Average))) + 
+ggplot(EventTable, aes(y = Range, x = (Average/100))) + 
   geom_point(fill = "#DDDDDD", alpha = 0.3, size=1, shape=21, colour='black') +   
   geom_density2d(color="#800020", size=1.2) +
   theme_bw() +

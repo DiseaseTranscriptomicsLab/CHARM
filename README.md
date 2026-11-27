@@ -29,6 +29,24 @@ CHARM integrates three main data types:
 
 ---
 
+## Interpreting Results  
+
+CHARM puts every result in context, so users can judge how unusual it is:  
+
+- **Similar RBPs (Expression, Splicing, GSEA) and Discovery mode**: each correlation is reported with its **percentile** among all RBP-knockdown pairs in CHARM and a **false-positive rate (FPR)** under a permutation null (100 permutations; for GSEA, random gene sets of the same size as each Hallmark set). A density plot shows the observed and null distributions, with the displayed RBPs marked.  
+
+- **Gene-set window**: clicking a gene set in the GSEA results compares the selected RBP's Normalised Enrichment Score (NES) with that of all other RBP knockdowns and of random gene sets of the same size, reporting its percentile and FPR.  
+
+- **Binding profile backgrounds**: in Binding → Similar Profiles, each correlation is placed among all profile pairs, profiles of the same eCLIP target, and the target's own profile.  
+
+- **rMATS IDs**: splicing events are identified by their VastDB IDs, and the Splicing tab also shows and accepts the matching rMATS IDs (exon skipping and intron retention), assigned by matching the coordinates of the alternative exon (or intron) and its flanking exons.  
+
+- **Figure-ready downloads**: plots are exported at consistent sizes, with bar plots and density plots available separately; tables are downloaded at full precision.  
+
+See the [CHARM App Tutorial](https://diseasetranscriptomicslab.github.io/CHARM/) for how to read each of these.  
+
+---
+
 ## eCLIPSE (eCLIP for Splicing Evaluation)  
 
 **eCLIPSE** is a companion tool that processes eCLIP data from ENCODE to generate **RNA splicing maps**. It aligns binding profiles to the genomic coordinates of splicing events defined in **VastDB** (Tapial et al., 2017).  

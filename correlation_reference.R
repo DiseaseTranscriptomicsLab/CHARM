@@ -64,14 +64,15 @@ corr_fmt_p <- function(p, floor_p = NA_real_) {
 
 # Bar-plot label: standard percentile among all observed pairs (% of pairs with a correlation <= this one).
 # `pct` is the stored "at least as extreme" share (top x% for r >= 0, bottom x% for r < 0), converted here.
+corr_std_pctl <- function(r, pct) ifelse(r >= 0, 100 - pct, pct)   # -> % of pairs with a correlation <= r
+corr_fmt_pctl <- function(p) format(signif(p, 3), scientific = FALSE, trim = TRUE, drop0trailing = TRUE)
 corr_pctl_label <- function(r, pct) {
-  p <- ifelse(r >= 0, 100 - pct, pct)
-  ifelse(is.na(pct), "", paste0("Percentile ", format(signif(p, 3), scientific = FALSE, trim = TRUE, drop0trailing = TRUE)))
+  ifelse(is.na(pct), "", paste0("Percentile ", corr_fmt_pctl(corr_std_pctl(r, pct))))
 }
 
 # Short label for a bar: "top 0.8%" (positive) / "bottom 0.8%" (negative)
-corr_bar_label <- function(r, pct) {
-  ifelse(is.na(pct), "", paste0(ifelse(r >= 0, "top ", "bottom "), corr_fmt_pct(pct)))
+corr_bar_label <- function(r, pct) {          # lower-case form for use inside longer labels
+  ifelse(is.na(pct), "", paste0("percentile ", corr_fmt_pctl(corr_std_pctl(r, pct))))
 }
 
 # One-line context for a single scatter plot (one RBP vs one RBP / uploaded data): where the Spearman rho falls among
@@ -81,8 +82,8 @@ corr_scatter_subtitle <- function(rho, ref_key, ref = get0("CORR_REF", inherits 
   ctx     <- corr_context(rho, ref_key, ref)
   floor_p <- 1 / (1 + ref[[ref_key]]$null_n)
   p_txt   <- corr_fmt_p(ctx$NullP, floor_p)
-  paste0(corr_bar_label(rho, ctx$Percentile), " of all CHARM RBP pairs  |  permutation p ",
-         ifelse(startsWith(p_txt, "<"), "", "= "), p_txt, " (false-positive rate under shuffled data)")
+  paste0("Percentile ", corr_fmt_pctl(corr_std_pctl(rho, ctx$Percentile)), " among all CHARM RBP pairs  |  FPR ",
+         ifelse(startsWith(p_txt, "<"), "", "= "), p_txt, " (permutation null)")
 }
 
 # Density panel: observed (all RBP pairs) vs null (shuffled), a vertical line per
@@ -165,6 +166,9 @@ corr_decorate <- function(cor_results, top_cor, bar_plot, ref_key,
     ggplot2::scale_y_continuous(expand = ggplot2::expansion(mult = c(0.05, 1.15)))
   dens <- corr_density_panel(top_cor, ref_key, up_color, down_color)
   combined <- ggpubr::ggarrange(bar, dens, ncol = 1, heights = c(1, 0.7))
+  # tables: Percentile as a standard percentile (% of RBP pairs with a correlation <= this one), as in the plot labels
+  cor_results$Percentile <- corr_std_pctl(cor_results$Correlation, cor_results$Percentile)
+  top_cor$Percentile     <- corr_std_pctl(top_cor$Correlation, top_cor$Percentile)
   list(correlation_table = cor_results, top_table = top_cor, heatmap = combined,
        bar_plot = bar, density_plot = dens)
 }

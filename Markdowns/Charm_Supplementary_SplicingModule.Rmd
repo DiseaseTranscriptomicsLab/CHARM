@@ -286,7 +286,7 @@ violin_splice_plot <- function(Charmobj, rbp) {
     )) %>%
     filter(!is.na(Type))  # Clean up
 
-  # Calculate average ΔPSI by type
+  # Calculate average dPSI by type
   avg_vals <- dpsi_table %>%
     group_by(Type) %>%
     summarise(mean_dPSI = mean(dPSI, na.rm = TRUE)) %>%
@@ -294,7 +294,7 @@ violin_splice_plot <- function(Charmobj, rbp) {
 
   # Build subtitle text
   subtitle_text <- paste0(
-    "Mean ΔPSI — ES: ",
+    "Mean dPSI — ES: ",
     sprintf("%.3f", avg_vals$ES),
     " | IR: ",
     sprintf("%.3f", avg_vals$IR)
@@ -306,7 +306,7 @@ ggplot(dpsi_table, aes(x = Type, y = dPSI))  +
            # Violin plot
   geom_jitter(width = 0.2, alpha = 0.6, size = 1.5) +geom_violin(alpha=.7) +
     theme_minimal() +
-    ylab("ΔPSI (shRNA - CTRL)") +
+    ylab("dPSI (shRNA - CTRL)") +
     xlab("Event Type") +
     ggtitle(paste0(rbp), subtitle = subtitle_text) +
     coord_flip() +
@@ -364,7 +364,7 @@ plot_splice_volcano <- function(charmobj, rbp, other_events = NULL) {
     ) +
     labs(
       title = paste("Volcano Plot:", rbp),
-      x = "ΔPSI (shRNA - CTRL)",
+      x = "dPSI (shRNA - CTRL)",
       y = "PDiff"
     )
   
@@ -479,7 +479,7 @@ splicing_correl <- function(charmobj, rbp, correl_num = NULL,
     scale_color_identity() +
     scale_fill_gradient2(low = "black", mid = "grey50", high = "#601700",
                          midpoint = 0, limits = c(-1, 1)) +
-    labs(title = paste("Spearman correlations with", rbp_label, "- ΔPSI"),
+    labs(title = paste("Spearman correlations with", rbp_label, "- dPSI"),
          x = "Reference RBP", y = "Other RBPs") +
     theme_minimal(base_size = 14) +
     theme(axis.text.x = element_text(angle = 45, hjust = 1))
@@ -544,9 +544,9 @@ correl_scatter_splicing <- function(charmobj, rbp, other_rbp) {
     geom_point(fill = "#DDDDDD", alpha = 0.4, size = 4, shape = 21, colour = "black") +
     geom_density2d(color = "#800020", size = 1.2) +
     theme_bw() +
-    xlab(paste(rbp, "ΔPSI")) +
-    ylab(paste(other_rbp, "ΔPSI")) +
-    ggtitle(paste("ΔPSI Correlation between", rbp, "and", other_rbp)) +
+    xlab(paste(rbp, "dPSI")) +
+    ylab(paste(other_rbp, "dPSI")) +
+    ggtitle(paste("dPSI Correlation between", rbp, "and", other_rbp)) +
     theme(
       axis.line = element_line(colour = "black"),
       panel.grid.minor = element_blank(),

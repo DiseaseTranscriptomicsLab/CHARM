@@ -14,13 +14,13 @@
 # =============================================================================
 
 RMATS_DISCLAIMER_LONG <- paste(
-  "rMATS IDs are not measured in CHARM: they are anchored on the VAST-TOOLS event IDs and were assigned by",
-  "matching splice-site coordinates (hg38, \u00b11 nt) between the VastDB event table and the rMATS annotation",
-  "(GENCODE v42; exon skipping and intron retention only). The match is based on the alternative exon (or intron);",
-  "rMATS may pair it with different neighbouring exons. dPSI values and p-values always come from VAST-TOOLS.",
-  "One VAST-TOOLS event can match several rMATS events, and some have no match.")
+  "rMATS IDs are not measured in CHARM: they are anchored on the VastDB event IDs and were assigned by matching",
+  "genomic coordinates (hg38, \u00b11 nt) between the VastDB event table and the rMATS annotation (GENCODE v42;",
+  "exon skipping and intron retention only). For exon skipping, the alternative exon and both flanking exons must",
+  "match; for intron retention, the retained intron. One VastDB event can match several rMATS events (rMATS lists",
+  "one event per pair of flanking exons), and some have no match. dPSI values and p-values always come from VAST-TOOLS.")
 
-RMATS_DISCLAIMER_SHORT <- "rMATS IDs are mapped from the VAST-TOOLS IDs by genomic coordinates (\u00b11 nt); dPSI and statistics are from VAST-TOOLS"
+RMATS_DISCLAIMER_SHORT <- "rMATS IDs are mapped from the VastDB IDs by matching the alternative exon (or intron) and flanking-exon coordinates; dPSI and statistics are from VAST-TOOLS"
 
 # ranking of the match classes written by map_vast_rmats_events.R (best first)
 RMATS_MATCH_ORDER <- c("identical", "exon_identical_flanks_differ", "within_tolerance")
@@ -76,7 +76,7 @@ rmats_add_columns <- function(tbl, map, id_col = "Event.ID", note = FALSE) {
   i <- match(tbl[[id_col]], map$vast_id)
   tbl <- as.data.frame(tbl, check.names = FALSE)
   add <- data.frame(`rMATS ID` = ifelse(is.na(i), "no match", map$rmats_ids[i]), check.names = FALSE, stringsAsFactors = FALSE)
-  if (note) add[["rMATS note"]] <- "rMATS IDs mapped from VAST-TOOLS IDs by genomic coordinates (+/-1 nt); dPSI and statistics are from VAST-TOOLS"
+  if (note) add[["rMATS note"]] <- "rMATS IDs mapped from VastDB IDs by matching the alternative exon (or intron) and flanking-exon coordinates (+/-1 nt); dPSI and statistics are from VAST-TOOLS"
   pos <- match(id_col, names(tbl))
   cbind(tbl[seq_len(pos)], add, tbl[setdiff(seq_along(tbl), seq_len(pos))], stringsAsFactors = FALSE)
 }

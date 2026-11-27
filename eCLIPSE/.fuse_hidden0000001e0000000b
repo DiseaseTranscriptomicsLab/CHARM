@@ -1,0 +1,185 @@
+---
+title: "Uncouvering the Stressome"
+subtitle: "A Computational Aproach to Define a Stress Granule Signature and its Implication in Cancer"
+author: 
+  - name: "Alexandre Afonso^[Disease Transcriptomics Group, Instituto de Medicina Molecular, Faculdade de Medicina da Universidade de Lisboa]"
+    email: alexandreafonso@medicina.ulisboa.pt
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: 
+  rmdformats::downcute:
+    downcute_theme: "chaos"
+---
+
+# Introduction
+
+In this document I present the analyses pertaining to my "eCLIP.SE" pipeline. 
+
+```{r}
+# These are all the libraries I used throughout the analysis. Not all of them will be required on this guidebook
+library(Rsubread)
+library(limma)
+library(edgeR)
+library(DESeq2)
+library(magrittr)
+library(ggrepel)
+library(tidyverse)
+library(vsn)
+library(ggplot2)
+library(NMF)
+library(biomaRt)
+library(ggpubr)
+library(factoextra)
+library(ggfortify)
+library(plotly)
+library(reshape2)
+library(fgsea)
+library(msigdbr)
+library(data.table)
+```
+
+# Loading up the data
+
+```{r}
+PSI_Table <- fread("~/Projects/StressGranules/AS.WC_Transcriptome/eCLIPSE/MICProjectFiles/PSI_TABLE-hg38.tab.gz")
+EventTable <- fread("~/Projects/StressGranules/AS.WC_Transcriptome/eCLIPSE/MICProjectFiles/EVENT_METRICS-hg38.tab.gz")
+```
+
+# Simplistic Approach (Average vs Range)
+
+```{r}
+ggplot(EventTable, aes(y = Range, x = (Average))) + 
+  geom_point(fill = "#DDDDDD", alpha = 0.3, size=1, shape=21, colour='black') +   
+  geom_density2d(color="#800020", size=1.2) +
+  theme_bw() +
+  ylab("Range") + 
+  xlab("Average PSI") + # Subscript "10"
+  theme(axis.line = element_line(colour = "black"),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank())  + 
+  theme(text=element_text(size=15,  family="Arial MS"))  +
+  theme(plot.title = element_text(hjust = 0.5))  + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+```
+# Complex Approaches
+
+```{r}
+#Removing Columns I wont Need
+PSI_Table <- PSI_Table[,-c(1,3,4,5)]
+
+#I only need the PSIs
+keep_odd_and_second <- function(df) {
+  # Identify column indices
+  odd_cols <- seq(1, ncol(df), by = 2)  # Get all odd column indices
+  cols_to_keep <- sort(unique(c(2, odd_cols)))  # Ensure column 2 is included
+  
+  # Subset the data frame
+  df[, ..cols_to_keep, drop = FALSE]
+}
+
+PSI_Table_Filtered <- keep_odd_and_second(PSI_Table)
+
+#To simplify, I will divide in IR and ES
+PSI_Table_Filtered_ES <- subset(PSI_Table_Filtered, COMPLEX=="S")
+PSI_Table_Filtered_ES$COMPLEX <- NULL
+
+PSI_Table_Filtered_IR <- subset(PSI_Table_Filtered, COMPLEX=="IR")
+PSI_Table_Filtered_IR$COMPLEX <- NULL
+
+PSI_Table_Filtered_ES <- melt(PSI_Table_Filtered_ES)
+PSI_Table_Filtered_ES <- PSI_Table_Filtered_ES[complete.cases(PSI_Table_Filtered_ES[, 'value'])]
+PSI_Table_Filtered_IR <- melt(PSI_Table_Filtered_IR)
+PSI_Table_Filtered_IR <- PSI_Table_Filtered_IR[complete.cases(PSI_Table_Filtered_IR[, 'value'])]
+
+PSI_Table_Filtered_ES <- as.data.frame(PSI_Table_Filtered_ES)
+PSI_Table_Filtered_IR <- as.data.frame(PSI_Table_Filtered_IR)
+
+
+#Now we prepare tables for plot
+# Compute mean and variance for each ID
+PSI_Table_Filtered_ES <- PSI_Table_Filtered_ES %>%
+  dplyr::select(-variable) %>%
+  dplyr::group_by(EVENT) %>%
+  dplyr::summarise(
+    median_value = median(value),
+    mean_value = mean(value),
+    var_value = var(value)
+  )
+PSI_Table_Filtered_IR <- PSI_Table_Filtered_IR %>%
+  dplyr::select(-variable) %>%  # Remove second column
+  dplyr::group_by(EVENT) %>%
+  dplyr::summarise(
+    median_value = median(value),
+    mean_value = mean(value),
+    var_value = var(value)
+  )
+
+#eventyboy <- PSI_Table_Filtered_ES[PSI_Table_Filtered_ES$EVENT %in% betAS_file$Event.ID,]
+
+ES <- ggplot(PSI_Table_Filtered_ES, aes(y = var_value, x = (mean_value/100))) + 
+  geom_point(fill = "#DDDDDD", alpha = 0.3, size=1, shape=21, colour='black') +
+  theme_bw() + ggtitle("Exon Skipping") +
+  ylab("Variance\n") + 
+  xlab("Average PSI") + # Subscript "10"
+  theme(axis.line = element_line(colour = "black"),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank())  +
+  theme(text=element_text(size=15,  family="Arial MS"))  +
+  theme(plot.title = element_text(hjust = 0.5))  + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+ geom_vline(xintercept = c(0.125,0.875), linetype='dashed')+ geom_hline(yintercept = 750, linetype='dashed')
+
+
+IR <- ggplot(PSI_Table_Filtered_IR, aes(y = var_value, x = (mean_value/100))) + 
+  geom_point(fill = "#DDDDDD", alpha = 0.3, size=1, shape=21, colour='black')  + 
+  theme_bw() + ggtitle("Intron Retention") +
+  ylab("Variance\n") + 
+  xlab("Average PSI") + # Subscript "10"
+  theme(axis.line = element_line(colour = "black"),
+        panel.grid.minor = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank())  + 
+  theme(text=element_text(size=15,  family="Arial MS"))  + geom_vline(xintercept = c(0.125,0.875), linetype='dashed')+ geom_hline(yintercept = 750, linetype='dashed')+
+  theme(plot.title = element_text(hjust = 0.5))  + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+(eclipser <- ggarrange(ES, IR))
+
+png("~/Images/eCLIPSE_FILT.png", width = 14, height=6, units = "in", res=300)
+eclipser
+dev.off()
+
+Trial <- subset(PSI_Table_Filtered_ES, var_value >= 750 | (mean_value >= 12.5 & mean_value <= 87.5))
+Trial2 <- subset(PSI_Table_Filtered_IR, var_value >= 750 | (mean_value >= 12.5 & mean_value <= 87.5))
+write.table(Trial, "~/Projects/StressGranules/AS.WC_Transcriptome/eCLIPSE/CassetteExonEvents.txt", row.names = F, col.names = T)
+write.table(Trial2, "~/Projects/StressGranules/AS.WC_Transcriptome/eCLIPSE/CassetteIntronEvents.txt", row.names = F, col.names = T)
+
+FullTrial <- rbind(Trial, Trial2)
+write.table(FullTrial, "~/Projects/StressGranules/AS.WC_Transcriptome/eCLIPSE/FullCassetteEvents.txt", row.names = F, col.names = T)
+
+FullTrial <- fread( "~/Projects/StressGranules/AS.WC_Transcriptome/eCLIPSE/FullCassetteEvents.txt")
+```
+
+# betAS Function
+
+```{r}
+NewFilterFunction <- function (filteredList, eventlist) 
+{
+  alternative <- list()
+  psiTable <- filteredList$PSI
+  qualTable <- filteredList$Qual
+  originalColN <- ncol(psiTable)
+  psi <- psiTable[, -c(1:6)]
+  psiTable <- psiTable[psiTable$EVENT %in% eventlist$EVENT, ]
+  qualTable <- qualTable[match(psiTable$EVENT, qualTable$EVENT), 
+    ]
+  psiTable <- psiTable[, c(1:originalColN)]
+  qualTable <- qualTable[, c(1:originalColN)]
+  alternative[[1]] <- psiTable
+  alternative[[2]] <- qualTable
+  alternative[[3]] <- table(psiTable$COMPLEX)
+  alternative[[4]] <- colnames(psiTable)[-c(1:6)]
+  names(alternative) <- c("PSI", "Qual", "EventsPerType", 
+    "Samples")
+  return(alternative)
+}
+
+```
+

@@ -164,7 +164,7 @@ python3 eCLIPSE_Intron.py \
 
     <section id="betas">
       <h1 class="sec">6. Producing the betAS (ASfile) Table</h1>
-      <p>This is the step between splicing quantification (<a href="#path-a">Section 3</a>/<a href="#path-b">Section 4</a>) and the RNA binding maps (<a href="#position-matrix">Section 7</a>/<a href="#binding-maps">Section 8</a>), where we turn a VAST-TOOLS inclusion table into the <code>ASfile</code> that <code>eCLIPSE_full()</code>/<code>eCLIPSE_full_IR()</code> expect (an <code>Event.ID</code> column plus a <code>dPSI</code> column, <a href="#calling">Section 8.1</a>). It uses the <a href="https://github.com/DiseaseTranscriptomicsLab/betAS" target="_blank" rel="noopener">betAS</a> package to go from raw per-sample PSI values to a statistically-supported per-event delta-PSI.</p>
+      <p>This is the step between splicing quantification (<a href="#path-a">Section 3</a>/<a href="#path-b">Section 4</a>) and the RNA binding maps (<a href="#position-matrix">Section 7</a>/<a href="#binding-maps">Section 8</a>), where we turn a VAST-TOOLS inclusion table into the <code>ASfile</code> that <code>eCLIPSE_full()</code>/<code>eCLIPSE_full_IR()</code> expect (an <code>Event.ID</code> column plus a <code>dPSI</code> column, <a href="#calling">Section 8.1</a>). It uses the <a href="https://github.com/DiseaseTranscriptomicsLab/betAS" target="_blank" rel="noopener">betAS</a> package to go from raw per-sample PSI values to a statistically-supported per-event dPSI (a proportion from -1 to 1).</p>
       <h2 class="sub" id="betas-load">6.1 Loading and filtering the dataset</h2>
       <p>The example below frames this as a typical ENCODE-style eCLIP experiment: a shRNA knockdown of the target RBP compared against control samples.</p>
       <pre><code>library(betAS)
@@ -194,7 +194,7 @@ dataset_shRNA[["Qual"]] <- dataset_shRNA$Qual[, c(1:6, which(colnames(dataset_sh
 
       <h2 class="sub" id="betas-filter">6.2 Filtering to informative events</h2>
       <p>There are two ways to filter <code>dataset_control</code>/<code>dataset_shRNA</code> down to the events worth testing. Pick one, not both, since both produce a same-named <code>_filtered</code> object.</p>
-      <p><strong>Option A: betAS's own <code>alternativeEvents()</code></strong>, which filters events to a PSI range:</p>
+      <p><strong>Option A: betAS's own <code>alternativeEvents()</code></strong>, which filters events to a PSI range (<code>minPsi</code>/<code>maxPsi</code> are on the VAST-TOOLS 0&ndash;100 scale, so <code>1</code> and <code>99</code> correspond to PSI 0.01 and 0.99):</p>
       <pre><code>dataset_control_filtered <- alternativeEvents(dataset_control, minPsi = 1, maxPsi = 99)
 dataset_shRNA_filtered   <- alternativeEvents(dataset_shRNA,   minPsi = 1, maxPsi = 99)</code></pre>
       <p><strong>Option B: the custom <code>NewFilterFunction()</code></strong>, which is <strong>not</strong> part of the betAS package. It's defined in <code>eCLIPSE-Supplementary.Rmd</code> and filters differently: instead of a PSI range, it keeps only events that appear in a separately-precomputed event list, <code>FullCassetteEvents.txt</code>, that contains only events with substantial evidence for true alternative splicing. This is the version that is used throughout CHARM:</p>
@@ -229,7 +229,7 @@ plotVolcano(betasTable = volcanoTable, labA = "control", labB = "shRNA",
 ASfile <- volcanoTable[, c("EVENT", "GENE", "deltapsi", "Pdiff")]
 colnames(ASfile) <- c("Event.ID", "Gene", "dPSI", "Pdiff")
 write.table(ASfile, "my_betAS_table.txt", row.names = FALSE, col.names = TRUE)</code></pre>
-      <p><code>prepareTableVolcano()</code> is betAS's core statistical step: it computes delta-PSI (<code>deltapsi</code>) between control and shRNA and a significance-like statistic (<code>Pdiff</code>), via a permutation/simulation approach.</p>
+      <p><code>prepareTableVolcano()</code> is betAS's core statistical step: it computes dPSI (<code>deltapsi</code>) between control and shRNA and a significance-like statistic (<code>Pdiff</code>), via a permutation/simulation approach.</p>
       <div class="box good"><b class="tag">Good to know:</b> the resulting <code>ASfile</code> carries a <code>Pdiff</code> column, but <a href="#binding-maps">Section 8</a>'s <code>eCLIPSE_full()</code>/<code>eCLIPSE_full_IR()</code> only ever read <code>Event.ID</code> and <code>dPSI</code> from it. This is why in CHARM's binding/splicing discovery tabs, it is only necessary to upload a table of VastDB IDs and their corresponding dPSI values.
     </section>
 

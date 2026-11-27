@@ -268,7 +268,7 @@ print(plot)
 ```
 
 `ASfile` needs a `Event.ID` column (VastDB `HsaEX...`/`HsaINT...` IDs **or** rMATS numeric IDs -
-both now work, see below) and a `dPSI` column (signed delta-PSI, used to classify events as
+both now work, see below) and a `dPSI` column (signed dPSI, a proportion from -1 to 1, used to classify events as
 increased/decreased/maintained inclusion against `PSIthreshold`, default 0.05).
 
 Use `eCLIPSE_full()` for exon-skipping data (VastDB or rMATS) and `eCLIPSE_full_IR()` for
