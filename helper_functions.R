@@ -2355,8 +2355,8 @@ binding_profile_correl <- function(sim_obj,
   
   # ── 4. Build horizontal bar plot (same style as exp_correl / splicing_correl) ─
   dir_label  <- if (direction == "inc") "Increased Events" else "Decreased Events"
-  plot_title <- paste0("Similar Profiles — ", dir_label)
-  plot_subtitle <- paste0(dataset_label, "  |  Query: ", query_id)
+  plot_title <- paste0("Most Similar Profiles — ", dir_label)
+  plot_subtitle <- paste0(dataset_label, "  |  Query: ", bind_disp(query_id))
   
   cor_df$Status  <- ifelse(cor_df$Correlation > 0, "Positive", "Negative")
 
@@ -2383,6 +2383,7 @@ binding_profile_correl <- function(sim_obj,
     ggplot2::geom_col(alpha = 0.8) +
     ggplot2::scale_fill_manual(values = c("Positive" = up_color, "Negative" = down_color)) +
     ggplot2::coord_flip() +
+    ggplot2::scale_x_discrete(labels = bind_disp) +          # "KDRBP__Target" shown as "KDRBP - Target"
     ggplot2::geom_text(
       ggplot2::aes(label = ctx_label),
       hjust = ifelse(cor_df$Correlation > 0, -0.1, 1.1),
@@ -2414,7 +2415,10 @@ binding_profile_correl <- function(sim_obj,
     heatmap_plot <- ggpubr::ggarrange(heatmap_plot, dens, ncol = 1, heights = c(1, 0.9))
   }
   list(
-    correlation_table = within(cor_df[, tbl_cols], if (has_ref) Percentile <- corr_std_pctl(Correlation, Percentile)),
+    correlation_table = within(cor_df[, tbl_cols], {
+      Profile <- bind_disp(as.character(Profile))
+      if (has_ref) Percentile <- corr_std_pctl(Correlation, Percentile)
+    }),
     heatmap           = heatmap_plot,
     bar_plot          = bar_plot_only,
     density_plot      = dens_only

@@ -1326,7 +1326,7 @@ ui <- fluidPage(
       id = "charm-info-panel",
     tags$div(
       style = "font-size: 11px; color: #2c3e50; margin-bottom: 4px;",
-      "Version: 0.9.4"
+      "Version: 0.9.4.1"
     ),
     tags$div(
       style = "margin-bottom: 4px;",
@@ -4608,7 +4608,7 @@ server <- function(input, output, session) {
     
     output$binding_explore_similar_plot_ui <- renderUI({
       tagList(
-        tags$h4(paste0("Similar Profiles to ", query_id,
+        tags$h4(paste0("Most Similar Profiles to ", bind_disp(query_id),
                        " (", if (dir_sel == "inc") "Increased" else "Decreased",
                        " Events)"),
                 style = "text-align:center;"),
@@ -4811,6 +4811,7 @@ server <- function(input, output, session) {
     if (is.null(all_profile_ids)) all_profile_ids <- character(0)
 
     all_profile_ids <- sort(all_profile_ids)
+    all_profile_ids <- stats::setNames(all_profile_ids, bind_disp(all_profile_ids))   # shown "KDRBP - Target"; value stays the ID
     updateSelectizeInput(session, "binding_sim_query_id", choices = all_profile_ids, server = TRUE)
     updateSelectizeInput(session, "binding_sim_compare",  choices = all_profile_ids, server = TRUE)
   })
@@ -4864,7 +4865,7 @@ server <- function(input, output, session) {
     output$binding_similar_profiles_plot_ui <- renderUI({
       tagList(
         hr(),
-        tags$h4("Similar Profiles Results",
+        tags$h4("Most Similar Profiles",
                 style = "font-weight:bold; color:#A10702; margin-bottom:15px;"),
         
         # Row 1 — Both Cells

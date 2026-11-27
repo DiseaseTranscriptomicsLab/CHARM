@@ -188,6 +188,9 @@ corr_decorate <- function(cor_results, top_cor, bar_plot, ref_key,
 # File: Binding_Correlation_Reference.qs2  ->  BIND_REF (NULL if missing = feature off)
 # =============================================================================
 
+# Profile IDs are stored as "KDRBP__Target"; shown to users as "KDRBP - Target"
+bind_disp <- function(x) gsub("__", " - ", x, fixed = TRUE)
+
 bind_key <- function(prefix, dataset, direction) paste("binding", prefix, dataset, direction, sep = "|")
 
 bind_has_ref <- function(key, ref = get0("BIND_REF", inherits = TRUE)) {
@@ -240,7 +243,7 @@ bind_density_panel_basic <- function(cor_df, key, ref = get0("BIND_REF", inherit
   lines_df <- data.frame(x = cor_df$Correlation,
                          Status = ifelse(cor_df$Correlation > 0, "Positive", "Negative"))
   lab_df <- utils::head(cor_df[order(-abs(cor_df$Correlation)), , drop = FALSE], 3)
-  lab_df <- data.frame(x = lab_df$Correlation, y = ymax, label = as.character(lab_df$Profile))
+  lab_df <- data.frame(x = lab_df$Correlation, y = ymax, label = bind_disp(as.character(lab_df$Profile)))
 
   ggplot2::ggplot() +
     ggplot2::geom_area(data = dd, ggplot2::aes(x = x, y = y, fill = Distribution),
@@ -294,7 +297,7 @@ bind_r_to_counts <- function(r) {
 bind_group_names <- function(target) {
   c(all    = "All profile pairs",
     target = sprintf("%s profiles vs each other (different KD RBPs)", target),
-    self   = sprintf("%s__%s vs the other %s profiles", target, target, target))
+    self   = sprintf("%s - %s vs the other %s profiles", target, target, target))
 }
 
 # r below which a fraction q of the pairs in a histogram lie
@@ -434,11 +437,11 @@ bind_density_panel <- function(query_id, key, mean_profiles, ref = get0("BIND_RE
   ymax <- max(dd$y[dd$x >= xlim[1] & dd$x <= xlim[2]])
 
   caption <- if (has_line) {
-    sprintf("Line: %s vs %s, r = %.2f. Densities are area-normalised.", D$query, D$self_id, D$r_line)
+    sprintf("Line: %s vs %s, r = %.2f. Densities are area-normalised.", bind_disp(D$query), bind_disp(D$self_id), D$r_line)
   } else if (identical(D$query, D$self_id)) {
     "This is the self profile itself, so there is no line to draw."
   } else {
-    sprintf("%s is not available in this dataset, so no line is drawn.", D$self_id)
+    sprintf("%s is not available in this dataset, so no line is drawn.", bind_disp(D$self_id))
   }
 
   p <- ggplot2::ggplot(dd, ggplot2::aes(x = x, y = y, fill = Label)) +
@@ -447,7 +450,7 @@ bind_density_panel <- function(query_id, key, mean_profiles, ref = get0("BIND_RE
     p <- p +
       ggplot2::geom_vline(xintercept = D$r_line, colour = "#BA3B46", linewidth = 0.8) +
       ggplot2::annotate("text", x = D$r_line, y = ymax * 1.12,
-                        label = sprintf("%s\nr = %.2f", D$query, D$r_line),
+                        label = sprintf("%s\nr = %.2f", bind_disp(D$query), D$r_line),
                         hjust = if (D$r_line > mean(xlim)) 1.05 else -0.05, vjust = 1,
                         colour = "#BA3B46", size = CHARM_GEOM_TEXT, family = CHARM_FONT)
   }
@@ -456,7 +459,8 @@ bind_density_panel <- function(query_id, key, mean_profiles, ref = get0("BIND_RE
     ggplot2::scale_x_continuous(limits = c(-1, 1)) +
     ggplot2::coord_cartesian(xlim = xlim, ylim = c(0, ymax * 1.25)) +
     ggplot2::labs(x = "Pearson's correlation (r)", y = "Density",
-                  title = "Where this profile falls", caption = caption) +
+                  title = if (grepl("\\|inc$", key)) "Increased Events" else if (grepl("\\|dec$", key)) "Decreased Events" else NULL,
+                  caption = caption) +
     theme_charm() +
     ggplot2::theme(legend.position = "bottom", legend.direction = "vertical")
   if (facet) {
@@ -488,11 +492,11 @@ bind_density_panel_combined <- function(query_id, key_pool, mp_inc, mp_dec,
                          short = c("inc", "dec"), stringsAsFactors = FALSE)
   lines_df <- lines_df[is.finite(lines_df$x), , drop = FALSE]
   caption <- if (nrow(lines_df) > 0) {
-    sprintf("Lines: %s vs %s. Curves use all increased and decreased profiles pooled (including inc-vs-dec pairs). Densities are area-normalised.", C$query, C$self_id)
+    sprintf("Lines: %s vs %s. Curves use all increased and decreased profiles pooled (including inc-vs-dec pairs). Densities are area-normalised.", bind_disp(C$query), bind_disp(C$self_id))
   } else if (identical(C$query, C$self_id)) {
     "This is the self profile itself, so there is no line to draw."
   } else {
-    sprintf("%s is not available in these datasets, so no lines are drawn.", C$self_id)
+    sprintf("%s is not available in these datasets, so no lines are drawn.", bind_disp(C$self_id))
   }
 
   p <- ggplot2::ggplot() +
@@ -516,7 +520,7 @@ bind_density_panel_combined <- function(query_id, key_pool, mp_inc, mp_dec,
     ggplot2::scale_x_continuous(limits = c(-1, 1)) +
     ggplot2::coord_cartesian(xlim = xlim, ylim = c(0, ymax * 1.3)) +
     ggplot2::labs(x = "Pearson's correlation (r)", y = "Density",
-                  title = "Increased and decreased events together (all profiles pooled)", caption = caption) +
+                  title = "All Events", caption = caption) +
     theme_charm() +
     ggplot2::theme(legend.position = "bottom", legend.direction = "vertical", legend.box = "vertical")
 }

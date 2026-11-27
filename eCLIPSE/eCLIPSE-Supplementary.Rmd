@@ -42,12 +42,16 @@ library(data.table)
 ```{r}
 PSI_Table <- fread("~/Projects/StressGranules/AS.WC_Transcriptome/eCLIPSE/MICProjectFiles/PSI_TABLE-hg38.tab.gz")
 EventTable <- fread("~/Projects/StressGranules/AS.WC_Transcriptome/eCLIPSE/MICProjectFiles/EVENT_METRICS-hg38.tab.gz")
+
+# VAST-TOOLS reports PSI from 0 to 100; convert to a proportion (0 to 1) straight away, so every
+# mean, range and variance below is on the proportion scale
+EventTable[, c("Average", "Range") := .(Average / 100, Range / 100)]
 ```
 
 # Simplistic Approach (Average vs Range)
 
 ```{r}
-ggplot(EventTable, aes(y = Range, x = (Average/100))) + 
+ggplot(EventTable, aes(y = Range, x = Average)) + 
   geom_point(fill = "#DDDDDD", alpha = 0.3, size=1, shape=21, colour='black') +   
   geom_density2d(color="#800020", size=1.2) +
   theme_bw() +
@@ -87,8 +91,10 @@ PSI_Table_Filtered_IR$COMPLEX <- NULL
 
 PSI_Table_Filtered_ES <- melt(PSI_Table_Filtered_ES)
 PSI_Table_Filtered_ES <- PSI_Table_Filtered_ES[complete.cases(PSI_Table_Filtered_ES[, 'value'])]
+PSI_Table_Filtered_ES[, value := value / 100]   # PSI as a proportion (0 to 1)
 PSI_Table_Filtered_IR <- melt(PSI_Table_Filtered_IR)
 PSI_Table_Filtered_IR <- PSI_Table_Filtered_IR[complete.cases(PSI_Table_Filtered_IR[, 'value'])]
+PSI_Table_Filtered_IR[, value := value / 100]   # PSI as a proportion (0 to 1)
 
 PSI_Table_Filtered_ES <- as.data.frame(PSI_Table_Filtered_ES)
 PSI_Table_Filtered_IR <- as.data.frame(PSI_Table_Filtered_IR)
@@ -115,7 +121,7 @@ PSI_Table_Filtered_IR <- PSI_Table_Filtered_IR %>%
 
 #eventyboy <- PSI_Table_Filtered_ES[PSI_Table_Filtered_ES$EVENT %in% betAS_file$Event.ID,]
 
-ES <- ggplot(PSI_Table_Filtered_ES, aes(y = var_value, x = (mean_value/100))) + 
+ES <- ggplot(PSI_Table_Filtered_ES, aes(y = var_value, x = mean_value)) + 
   geom_point(fill = "#DDDDDD", alpha = 0.3, size=1, shape=21, colour='black') +
   theme_bw() + ggtitle("Exon Skipping") +
   ylab("Variance\n") + 
@@ -125,10 +131,10 @@ ES <- ggplot(PSI_Table_Filtered_ES, aes(y = var_value, x = (mean_value/100))) +
         panel.border = element_blank(),
         panel.background = element_blank())  +
   theme(text=element_text(size=15,  family="Arial MS"))  +
-  theme(plot.title = element_text(hjust = 0.5))  + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+ geom_vline(xintercept = c(0.125,0.875), linetype='dashed')+ geom_hline(yintercept = 750, linetype='dashed')
+  theme(plot.title = element_text(hjust = 0.5))  + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())+ geom_vline(xintercept = c(0.125,0.875), linetype='dashed')+ geom_hline(yintercept = 0.075, linetype="dashed")
 
 
-IR <- ggplot(PSI_Table_Filtered_IR, aes(y = var_value, x = (mean_value/100))) + 
+IR <- ggplot(PSI_Table_Filtered_IR, aes(y = var_value, x = mean_value)) + 
   geom_point(fill = "#DDDDDD", alpha = 0.3, size=1, shape=21, colour='black')  + 
   theme_bw() + ggtitle("Intron Retention") +
   ylab("Variance\n") + 
@@ -137,7 +143,7 @@ IR <- ggplot(PSI_Table_Filtered_IR, aes(y = var_value, x = (mean_value/100))) +
         panel.grid.minor = element_blank(),
         panel.border = element_blank(),
         panel.background = element_blank())  + 
-  theme(text=element_text(size=15,  family="Arial MS"))  + geom_vline(xintercept = c(0.125,0.875), linetype='dashed')+ geom_hline(yintercept = 750, linetype='dashed')+
+  theme(text=element_text(size=15,  family="Arial MS"))  + geom_vline(xintercept = c(0.125,0.875), linetype='dashed')+ geom_hline(yintercept = 0.075, linetype="dashed")+
   theme(plot.title = element_text(hjust = 0.5))  + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
 
 (eclipser <- ggarrange(ES, IR))
@@ -146,8 +152,8 @@ png("~/Images/eCLIPSE_FILT.png", width = 14, height=6, units = "in", res=300)
 eclipser
 dev.off()
 
-Trial <- subset(PSI_Table_Filtered_ES, var_value >= 750 | (mean_value >= 12.5 & mean_value <= 87.5))
-Trial2 <- subset(PSI_Table_Filtered_IR, var_value >= 750 | (mean_value >= 12.5 & mean_value <= 87.5))
+Trial <- subset(PSI_Table_Filtered_ES, var_value >= 0.075 | (mean_value >= 0.125 & mean_value <= 0.875))
+Trial2 <- subset(PSI_Table_Filtered_IR, var_value >= 0.075 | (mean_value >= 0.125 & mean_value <= 0.875))
 write.table(Trial, "~/Projects/StressGranules/AS.WC_Transcriptome/eCLIPSE/CassetteExonEvents.txt", row.names = F, col.names = T)
 write.table(Trial2, "~/Projects/StressGranules/AS.WC_Transcriptome/eCLIPSE/CassetteIntronEvents.txt", row.names = F, col.names = T)
 
